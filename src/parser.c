@@ -281,7 +281,21 @@ static Type *parse_type(Parser *parser) {
 
     if (check(parser, TOKEN_IDENTIFIER)) {
         advance(parser);
-        return type_named(parser->arena, token_str(parser, &parser->previous));
+        Type *t = type_named(parser->arena, token_str(parser, &parser->previous));
+        /* Consume optional generic type arguments: Name<Type, Type> */
+        if (match(parser, TOKEN_LESS)) {
+            Type *args[16];
+            int arg_count = 0;
+            while (!check(parser, TOKEN_GREATER) && !check(parser, TOKEN_EOF)) {
+                if (arg_count >= 16) break;
+                args[arg_count++] = parse_type(parser);
+                if (!match(parser, TOKEN_COMMA))
+                    break;
+            }
+            consume(parser, TOKEN_GREATER, "Expected '>' after generic type arguments");
+            (void)args; (void)arg_count;
+        }
+        return t;
     }
 
     parser_error(parser, "Expected type");
@@ -1245,11 +1259,23 @@ static AstNode *parse_call(Parser *parser) {
         }
     }
 
-    /* Check for enum literal: Identifier :: Variant */
+    /* Check for :: — enum literal, static method, or namespace access */
     if (expr->kind == NODE_IDENTIFIER && check(parser, TOKEN_DOUBLE_COLON)) {
         EnumDef *ed = parser_find_enum(parser, expr->identifier.name);
         if (ed) {
             return parse_enum_literal(parser, expr->identifier.name, expr->loc);
+        }
+        /* Struct static method: Type::method(args) — consume :: and call the method directly */
+        advance(parser);
+        if (parser->current.type == TOKEN_IDENTIFIER) {
+            advance(parser);
+            char *member = token_str(parser, &parser->previous);
+            if (check(parser, TOKEN_LPAREN) && parser_is_method(parser, member)) {
+                expr = ast_identifier(parser->arena, current_loc(parser), member);
+            } else {
+                expr = ast_member(parser->arena, current_loc(parser), expr, member);
+            }
+            /* The next iteration of the while loop will handle ( or . */
         }
     }
 

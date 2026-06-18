@@ -1,0 +1,9 @@
+// Isolate the dispatch issue
+struct Rect { w: int, h: int }
+impl Rect { fn area(self) -> int { return self.w * self.h } }
+struct Square { side: int }
+impl Square { fn area(self) -> int { return self.side * self.side } }
+trait Shape { fn area(self) -> int }
+fn print_area(s: Shape) { print(s.area()) }
+print_area(Rect { w: 6, h: 7 })
+print_area(Square { side: 5 })

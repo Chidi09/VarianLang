@@ -1,0 +1,116 @@
+// Comprehensive stress test
+
+// ===== Generic enums =====
+enum Option<T> {
+    Some(T),
+    None
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E)
+}
+
+// ===== Struct with methods =====
+struct Point { x: int, y: int }
+
+impl Point {
+    fn new(x: int, y: int) -> Point {
+        return Point { x: x, y: y }
+    }
+    fn magnitude(self) -> int {
+        return self.x * self.x + self.y * self.y
+    }
+}
+
+// ===== Safe division =====
+fn safe_div(a: int, b: int) -> Result<int, string> {
+    if b == 0 {
+        return Result::Err("div by zero")
+    }
+    return Result::Ok(a / b)
+}
+
+// ===== Multiple returns =====
+fn divide(a: int, b: int) -> int, int {
+    return a / b, a % b
+}
+
+// ===== Traits + dispatch =====
+trait Shape { fn area(self) -> int }
+struct Rect { w: int, h: int }
+impl Rect { fn area(self) -> int { return self.w * self.h } }
+struct Square { side: int }
+impl Square { fn area(self) -> int { return self.side * self.side } }
+
+fn print_area(s: Shape) { print(s.area()) }
+
+// ===== ? operator =====
+fn get_val() -> Option<int> { return Option::Some(99) }
+fn test_prop() -> Option<int> {
+    let x = get_val()?
+    return Option::Some(x)
+}
+
+// ===== Main =====
+
+// Struct + method + dispatch
+let p = Point::new(3, 4)
+print(p.magnitude())
+
+// String interpolation
+print("{p.x},{p.y}")
+
+// Multiple return values
+let q, r = divide(10, 3)
+print(q)
+print(r)
+
+// Generic enum destructuring
+let val = Option::Some(42)
+match val {
+    Option::Some(x) => print(x),
+    Option::None => print(0)
+}
+
+// Result match
+let res = safe_div(10, 2)
+match res {
+    Result::Ok(v) => print(v),
+    Result::Err(m) => print(m)
+}
+
+// For + break
+for i in 0..4 {
+    if i == 2 { break }
+    print(i)
+}
+
+// While + continue
+let n = 0
+while n < 4 {
+    n = n + 1
+    if n == 2 { continue }
+    print(n)
+}
+
+// Try/catch
+try {
+    print("try")
+    throw("err")
+} catch {
+    print("catch")
+}
+
+// Traits
+print_area(Rect { w: 6, h: 7 })
+print_area(Square { side: 5 })
+
+// ? operator propagation
+let prop = test_prop()
+match prop {
+    Option::Some(v) => print(v),
+    Option::None => print(0)
+}
+
+print("done")
