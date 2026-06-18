@@ -179,6 +179,25 @@ static SourceLoc current_loc(Parser *parser) {
     return loc;
 }
 
+/* ─── Generic type parameter parsing ─── */
+static int parse_type_params(Parser *parser, char **params, int max_params) {
+    if (!check(parser, TOKEN_LESS))
+        return 0;
+    advance(parser);
+    int count = 0;
+    while (!check(parser, TOKEN_GREATER) && !check(parser, TOKEN_EOF)) {
+        if (count >= max_params) break;
+        if (parser->current.type != TOKEN_IDENTIFIER) break;
+        advance(parser);
+        params[count] = token_strdup(&parser->previous);
+        count++;
+        if (!match(parser, TOKEN_COMMA))
+            break;
+    }
+    consume(parser, TOKEN_GREATER, "Expected '>' after type parameters");
+    return count;
+}
+
 /* ─── Type Parsing ─── */
 static Type *parse_primitive_type(Parser *parser) {
     switch (parser->previous.type) {
@@ -353,6 +372,10 @@ static AstNode *parse_fn_decl(Parser *parser) {
     advance(parser);
     char *name = token_str(parser, &parser->previous);
 
+    /* Optional generic type parameters */
+    char *type_params[8];
+    int type_param_count = parse_type_params(parser, type_params, 8);
+
     /* Parameters */
     char *param_names[64];
     Type *param_types[64];
@@ -438,10 +461,13 @@ static AstNode *parse_fn_decl(Parser *parser) {
     }
 
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
-                        param_names, param_count, body, false, false);
-    /* Free malloc'd param names (ast_fn_decl copies them to arena) */
+                        param_names, param_count,
+                        type_params, type_param_count,
+                        body, false, false);
     for (int i = 0; i < param_count; i++)
         free(param_names[i]);
+    for (int i = 0; i < type_param_count; i++)
+        free(type_params[i]);
     return fn_node;
 }
 
@@ -512,6 +538,10 @@ static AstNode *parse_struct_decl(Parser *parser) {
     advance(parser);
     char *name = token_str(parser, &parser->previous);
 
+    /* Optional generic type parameters */
+    char *type_params[8];
+    int type_param_count = parse_type_params(parser, type_params, 8);
+
     consume(parser, TOKEN_LBRACE, "Expected '{' after struct name");
 
     char *field_names[64];
@@ -540,9 +570,12 @@ static AstNode *parse_struct_decl(Parser *parser) {
     /* Register struct type */
     parser_register_struct(parser, name, field_names, field_count);
 
-    AstNode *result = ast_struct_decl(parser->arena, loc, name, field_names, field_count);
+    AstNode *result = ast_struct_decl(parser->arena, loc, name, field_names, field_count,
+                                      type_params, type_param_count);
     for (int i = 0; i < field_count; i++)
         free(field_names[i]);
+    for (int i = 0; i < type_param_count; i++)
+        free(type_params[i]);
     return result;
 }
 
@@ -556,6 +589,9 @@ static AstNode *parse_enum_decl(Parser *parser) {
     }
     advance(parser);
     char *name = token_str(parser, &parser->previous);
+
+    char *type_params[8];
+    int type_param_count = parse_type_params(parser, type_params, 8);
 
     consume(parser, TOKEN_LBRACE, "Expected '{' after enum name");
 
@@ -597,9 +633,12 @@ static AstNode *parse_enum_decl(Parser *parser) {
 
     parser_register_enum(parser, name, variant_names, variant_counts, variant_count);
 
-    AstNode *result = ast_enum_decl(parser->arena, loc, name, variant_names, variant_counts, variant_count);
+    AstNode *result = ast_enum_decl(parser->arena, loc, name, variant_names, variant_counts, variant_count,
+                                      type_params, type_param_count);
     for (int i = 0; i < variant_count; i++)
         free(variant_names[i]);
+    for (int i = 0; i < type_param_count; i++)
+        free(type_params[i]);
     return result;
 }
 
@@ -788,7 +827,8 @@ static AstNode *parse_impl_block(Parser *parser) {
         }
 
         AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
-                            param_names, param_count, body, false, false);
+                            param_names, param_count, NULL, 0,
+                            body, false, false);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
 
@@ -1409,7 +1449,8 @@ static AstNode *parse_primary(Parser *parser) {
         Type *fn_type = type_function(parser->arena, param_type_list, param_count, void_type);
 
         AstNode *fn = ast_fn_decl(parser->arena, loc, "__lambda__", fn_type,
-                                  param_names, param_count, block, false, false);
+                                  param_names, param_count, NULL, 0,
+                                  block, false, false);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
         return fn;

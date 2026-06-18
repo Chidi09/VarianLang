@@ -99,6 +99,7 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
 
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
+                     char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async) {
     AstNode *node = alloc_node(arena, NODE_FN_DECL, loc);
     node->fn_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
@@ -114,6 +115,10 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     } else {
         node->fn_decl.param_names = NULL;
     }
+    node->fn_decl.type_param_count = type_param_count;
+    node->fn_decl.type_params = NULL;
+    (void)type_params;
+    (void)type_param_count;
     node->fn_decl.body = body;
     node->fn_decl.is_pub = is_pub;
     node->fn_decl.is_async = is_async;
@@ -349,7 +354,8 @@ void ast_match_add_arm(AstNode *match, AstNode *pattern, AstNode *body) {
 }
 
 AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
-                         char **field_names, int field_count) {
+                         char **field_names, int field_count,
+                         char **type_params, int type_param_count) {
     AstNode *node = alloc_node(arena, NODE_STRUCT_DECL, loc);
     node->struct_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
     strcpy(node->struct_decl.name, name);
@@ -363,6 +369,9 @@ AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
         node->struct_decl.field_names = NULL;
     }
     node->struct_decl.field_count = field_count;
+    node->struct_decl.type_params = NULL;
+    node->struct_decl.type_param_count = type_param_count;
+    (void)type_params;
     return node;
 }
 
@@ -388,7 +397,8 @@ AstNode *ast_struct_literal(Arena *arena, SourceLoc loc, const char *name,
 }
 
 AstNode *ast_enum_decl(Arena *arena, SourceLoc loc, const char *name,
-                       char **variant_names, int *variant_counts, int variant_count) {
+                       char **variant_names, int *variant_counts, int variant_count,
+                       char **type_params, int type_param_count) {
     AstNode *node = alloc_node(arena, NODE_ENUM_DECL, loc);
     node->enum_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
     strcpy(node->enum_decl.name, name);
@@ -405,6 +415,9 @@ AstNode *ast_enum_decl(Arena *arena, SourceLoc loc, const char *name,
         node->enum_decl.variant_counts = NULL;
     }
     node->enum_decl.variant_count = variant_count;
+    node->enum_decl.type_params = NULL;
+    node->enum_decl.type_param_count = type_param_count;
+    (void)type_params;
     return node;
 }
 

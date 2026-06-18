@@ -1,0 +1,37 @@
+// Generics test — type-erased generics
+// Generic type params are parsed but type-erased at runtime
+
+// Generic struct
+struct Box<T> {
+    value: T
+}
+
+let b = Box { value: 42 }
+print(b.value)
+
+// Generic enum
+enum Option<T> {
+    Some(T),
+    None
+}
+
+let x = Option::Some(10)
+let y = Option::None
+
+// Match on generic enum
+match x {
+    Option::Some(10) => print("got 10"),
+    Option::None => print("got none")
+}
+
+// Generic function
+fn identity<T>(x: T) -> T {
+    return x
+}
+
+let z = identity(99)
+print(z)
+let w = identity("str")
+print(w)
+
+print("done")

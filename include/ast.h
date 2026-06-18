@@ -148,6 +148,8 @@ struct AstNode {
             Type *fn_type;
             char **param_names;
             int param_count;
+            char **type_params;
+            int type_param_count;
             AstNode *body;
             bool is_pub;
             bool is_async;
@@ -284,6 +286,8 @@ struct AstNode {
             char *name;
             char **field_names;
             int field_count;
+            char **type_params;
+            int type_param_count;
         } struct_decl;
 
         /* Struct literal */
@@ -298,8 +302,10 @@ struct AstNode {
         struct {
             char *name;
             char **variant_names;
-            int *variant_counts;  /* number of associated values per variant */
+            int *variant_counts;
             int variant_count;
+            char **type_params;
+            int type_param_count;
         } enum_decl;
 
         /* Enum literal */
@@ -339,6 +345,7 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
                       AstNode *initializer, bool is_mutable);
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
+                     char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async);
 AstNode *ast_block(Arena *arena, SourceLoc loc);
 void ast_block_add_stmt(AstNode *block, AstNode *stmt);
@@ -377,12 +384,14 @@ AstNode *ast_break(Arena *arena, SourceLoc loc);
 AstNode *ast_continue(Arena *arena, SourceLoc loc);
 
 AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
-                         char **field_names, int field_count);
+                         char **field_names, int field_count,
+                         char **type_params, int type_param_count);
 AstNode *ast_struct_literal(Arena *arena, SourceLoc loc, const char *name,
                             char **field_names, AstNode **field_values, int field_count);
 
 AstNode *ast_enum_decl(Arena *arena, SourceLoc loc, const char *name,
-                       char **variant_names, int *variant_counts, int variant_count);
+                       char **variant_names, int *variant_counts, int variant_count,
+                       char **type_params, int type_param_count);
 AstNode *ast_enum_literal(Arena *arena, SourceLoc loc, const char *enum_name,
                           const char *variant_name, int tag,
                           AstNode **values, int value_count);
