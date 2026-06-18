@@ -1,0 +1,19 @@
+// Test logical operators
+print(true && false)
+print(true || false)
+
+// Test nested if/else
+if 1 < 2 {
+    print("less")
+} else if 1 > 2 {
+    print("greater")
+} else {
+    print("equal")
+}
+
+// Test constant in while loop
+let x = 0
+while x < 3 {
+    print(x * x)
+    x = x + 1
+}

@@ -1,0 +1,4 @@
+build/
+vn
+*.o
+.env

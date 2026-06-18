@@ -1,0 +1,31 @@
+// Multi-return test
+fn divide(a: int, b: int) -> int, int {
+    return a / b, a % b
+}
+
+let quot, rem = divide(10, 3)
+print(quot)
+print(rem)
+
+// Discard
+let q, _ = divide(20, 7)
+print(q)
+
+// Single return still works
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+let sum = add(5, 7)
+print(sum)
+
+// Void function
+fn greet() {
+    print("hello")
+}
+
+greet()
+
+// Arrow shorthand
+fn double(x: int) -> int => x * 2
+print(double(6))

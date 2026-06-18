@@ -1,0 +1,11 @@
+// String interpolation test
+let name = "Varian"
+let version = 1
+let pi = 3.14
+
+// Interpolated strings
+print("Hello, {name}")
+print("v{version}.0")
+print("{name} v{version}")
+print("pi = {pi}")
+print("{name} v{version}.0 - pi = {pi}")

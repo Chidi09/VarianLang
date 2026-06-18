@@ -1,0 +1,7 @@
+// Discard test with _
+fn divide(a: int, b: int) -> int, int {
+    return a / b, a % b
+}
+
+let quot, _ = divide(10, 3)
+print(quot)

@@ -1,0 +1,56 @@
+// Varian Phase 1 - Core Test
+// Features: variables, arithmetic, control flow, functions
+
+// Variable declarations with types
+let name: string = "Varian"
+let version: int = 1
+let pi: float = 3.14159
+let debug: bool = true
+
+// Type inference
+let inferred = 42
+let greeting = "Hello, World!"
+
+// Arithmetic
+let sum = 10 + 20
+let diff = 100 - 30
+let product = 6 * 7
+let quotient = 100 / 4
+let remainder = 17 % 5
+
+// Comparison
+let is_equal = sum == 30
+let is_greater = product > 40
+
+// Logical
+let both = true && false
+let either = true || false
+
+// If/Else
+if sum > 0 {
+    let positive = true
+} else {
+    let negative = true
+}
+
+// While loop
+let count = 0
+while count < 3 {
+    print(count)
+    count = count + 1
+}
+
+// Functions
+fn greet(name: string) -> string {
+    return "Hello, " + name
+}
+
+fn add(a: int, b: int) -> int {
+    return a + b
+}
+
+// Arrow function shorthand
+fn double(x: int) -> int => x * 2
+
+// Test print
+print("--- Done ---")

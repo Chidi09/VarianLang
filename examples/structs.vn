@@ -1,0 +1,31 @@
+// Struct test
+struct Point {
+    x: int,
+    y: int
+}
+
+let p = Point { x: 10, y: 20 }
+print(p.x)
+print(p.y)
+
+// Nested struct
+struct Line {
+    start: Point,
+    end: Point
+}
+
+let line = Line { start: Point { x: 0, y: 0 }, end: p }
+print(line.start.x)
+print(line.end.y)
+
+// Struct in a function
+fn make_point(x: int, y: int) -> Point {
+    return Point { x: x, y: y }
+}
+
+let q = make_point(5, 7)
+print(q.x)
+print(q.y)
+
+// Print struct directly
+print(q)

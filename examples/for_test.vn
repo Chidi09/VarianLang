@@ -1,0 +1,9 @@
+// Test for loop with range (inside a function)
+fn test_for() {
+    for i in 0..5 {
+        print(i)
+    }
+}
+
+test_for()
+print("done")

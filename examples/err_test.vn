@@ -1,0 +1,6 @@
+// Tests error line numbers
+fn divide(a, b) {
+    return a / b  // line 3: div by zero
+}
+let result = divide(10, 0)  // line 5: calls divide
+print(result)

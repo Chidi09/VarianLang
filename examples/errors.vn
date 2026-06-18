@@ -1,0 +1,36 @@
+// Error handling test
+
+// ? operator
+fn safe_div(a, b) {
+    if b == 0 {
+        return null
+    }
+    return a / b
+}
+
+fn try_div(a, b) {
+    let result = safe_div(a, b)?
+    print(result)
+}
+
+try_div(10, 2)
+try_div(10, 0)
+print("after null prop")
+
+// Try/catch
+try {
+    print(1)
+} catch {
+    print(2)
+}
+
+// Try/catch with throw
+try {
+    print(3)
+    throw("error!")
+    print(4)
+} catch {
+    print(5)
+}
+
+print(6)

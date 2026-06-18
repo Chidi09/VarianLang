@@ -1,0 +1,30 @@
+// Method test
+struct Point {
+    x: int,
+    y: int
+}
+
+impl Point {
+    fn area(self) -> int {
+        return self.x * self.y
+    }
+
+    fn double(self) -> Point {
+        return Point { x: self.x * 2, y: self.y * 2 }
+    }
+}
+
+let p = Point { x: 10, y: 20 }
+
+// Direct function call
+let a = area(p)
+print(a)
+
+// Method call via dot syntax
+let a2 = p.area()
+print(a2)
+
+// Method returning struct
+let d = p.double()
+print(d.x)
+print(d.y)

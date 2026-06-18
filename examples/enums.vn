@@ -1,0 +1,19 @@
+// Enum test
+enum Option {
+    Some(int),
+    None
+}
+
+let a = Option::Some(42)
+let b = Option::None
+
+// Match with enums
+match a {
+    Option::Some(42) => print("the answer"),
+    Option::Some(99) => print("nope"),
+    Option::None => print("none")
+}
+
+match b {
+    Option::None => print("is none")
+}
