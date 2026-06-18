@@ -1403,10 +1403,29 @@ static AstNode *parse_primary(Parser *parser) {
         while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
             if (arm_count >= 256) break;
             AstNode *pattern = parse_expr(parser);
+
+            /* Detect enum destructuring pattern: checks if pattern is an enum literal
+             * where payload positions are identifiers (variable bindings) */
+            char *bind_names[8];
+            int bind_count = 0;
+            if (pattern->kind == NODE_ENUM_LITERAL && pattern->enum_literal.value_count > 0) {
+                bool all_identifiers = true;
+                for (int i = 0; i < pattern->enum_literal.value_count; i++) {
+                    if (pattern->enum_literal.values[i]->kind == NODE_IDENTIFIER) {
+                        bind_names[bind_count++] = pattern->enum_literal.values[i]->identifier.name;
+                    } else {
+                        all_identifiers = false;
+                        break;
+                    }
+                }
+                if (!all_identifiers)
+                    bind_count = 0;
+            }
+
             consume(parser, TOKEN_FAT_ARROW, "Expected '=>' after match pattern");
             AstNode *body = parse_expr(parser);
             if (match(parser, TOKEN_COMMA)) { /* optional comma */ }
-            arms[arm_count++] = ast_match_arm(parser->arena, loc, pattern, body);
+            arms[arm_count++] = ast_match_arm(parser->arena, loc, pattern, body, bind_names, bind_count);
         }
         consume(parser, TOKEN_RBRACE, "Expected '}' after match arms");
         match_node->match_stmt.arms = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * arm_count);

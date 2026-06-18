@@ -1,4 +1,4 @@
-// Enum test
+// Enum destructuring test
 enum Option {
     Some(int),
     None
@@ -7,13 +7,19 @@ enum Option {
 let a = Option::Some(42)
 let b = Option::None
 
-// Match with enums
+// Literal comparison (existing)
 match a {
-    Option::Some(42) => print("the answer"),
-    Option::Some(99) => print("nope"),
-    Option::None => print("none")
+    Option::Some(42) => print(1),
+    Option::None => print(2)
+}
+
+// Destructuring with binding
+match a {
+    Option::Some(val) => print(val),
+    Option::None => print(99)
 }
 
 match b {
-    Option::None => print("is none")
+    Option::Some(val) => print(val),
+    Option::None => print(3)
 }

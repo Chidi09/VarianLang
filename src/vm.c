@@ -192,10 +192,21 @@ Value val_enum(ObjEnum *e) {
 }
 
 /* ─── Object Allocation ─── */
+static void gc_collect(VM *vm);
+
 static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
+    /* Trigger GC when heap grows past threshold */
+    if (vm->objects && vm->next_gc_size > 0) {
+        size_t current = (size_t)vm->objects;  /* rough heuristic */
+        if (current > vm->next_gc_size) {
+            gc_collect(vm);
+            vm->next_gc_size = (size_t)vm->objects + 8192;
+        }
+    }
     Obj *obj = (Obj *)calloc(1, size);
     if (!obj) return NULL;
     obj->type = type;
+    obj->is_marked = false;
     obj->next = vm->objects;
     vm->objects = obj;
     return obj;
@@ -301,6 +312,150 @@ ObjFunction *new_function(void) {
     f->constant_capacity = 0;
     f->stack_size = 0;
     return f;
+}
+
+/* ─── GC: Gray Stack ─── */
+static void gc_push_gray(VM *vm, Obj *obj) {
+    if (vm->gray_count >= vm->gray_capacity) {
+        int old = vm->gray_capacity;
+        vm->gray_capacity = old < 64 ? 64 : old * 2;
+        vm->gray_stack = (Obj **)realloc(vm->gray_stack, sizeof(Obj *) * vm->gray_capacity);
+    }
+    vm->gray_stack[vm->gray_count++] = obj;
+}
+
+static void gc_mark_value(VM *vm, Value value) {
+    Obj *obj = NULL;
+    switch (value.type) {
+        case VAL_STRING:   obj = (Obj *)value.as.string; break;
+        case VAL_ARRAY:    obj = (Obj *)value.as.array; break;
+        case VAL_TUPLE:    obj = (Obj *)value.as.tuple; break;
+        case VAL_FUNCTION: obj = (Obj *)value.as.function; break;
+        case VAL_STRUCT:   obj = (Obj *)value.as.structure; break;
+        case VAL_ENUM:     obj = (Obj *)value.as.enum_val; break;
+        default: return;
+    }
+    if (obj && !obj->is_marked) {
+        obj->is_marked = true;
+        gc_push_gray(vm, obj);
+    }
+}
+
+static void gc_trace(VM *vm) {
+    while (vm->gray_count > 0) {
+        Obj *obj = vm->gray_stack[--vm->gray_count];
+        switch (obj->type) {
+            case VAL_STRUCT: {
+                ObjStruct *s = (ObjStruct *)obj;
+                for (int i = 0; i < s->field_count; i++)
+                    gc_mark_value(vm, s->fields[i]);
+                break;
+            }
+            case VAL_ARRAY: {
+                ObjArray *a = (ObjArray *)obj;
+                for (int i = 0; i < a->count; i++)
+                    gc_mark_value(vm, a->elements[i]);
+                break;
+            }
+            case VAL_TUPLE: {
+                ObjTuple *t = (ObjTuple *)obj;
+                for (int i = 0; i < t->count; i++)
+                    gc_mark_value(vm, t->elements[i]);
+                break;
+            }
+            case VAL_ENUM: {
+                ObjEnum *e = (ObjEnum *)obj;
+                for (int i = 0; i < e->count; i++)
+                    gc_mark_value(vm, e->values[i]);
+                break;
+            }
+            case VAL_FUNCTION: {
+                ObjFunction *f = (ObjFunction *)obj;
+                for (int i = 0; i < f->constant_count; i++)
+                    gc_mark_value(vm, f->constants[i]);
+                break;
+            }
+            default: break;  /* VAL_STRING has no references */
+        }
+    }
+}
+
+static void gc_sweep(VM *vm) {
+    Obj **prev = &vm->objects;
+    Obj *obj = vm->objects;
+    while (obj) {
+        if (!obj->is_marked) {
+            Obj *next = obj->next;
+            *prev = next;
+            switch (obj->type) {
+                case VAL_STRING: free(((ObjString *)obj)->chars); break;
+                case VAL_ARRAY:  free(((ObjArray *)obj)->elements); break;
+                case VAL_TUPLE:  free(((ObjTuple *)obj)->elements); break;
+                case VAL_ENUM:   free(((ObjEnum *)obj)->values); break;
+                case VAL_STRUCT: {
+                    ObjStruct *s = (ObjStruct *)obj;
+                    for (int i = 0; i < s->field_count; i++)
+                        free(s->field_names[i]);
+                    free(s->field_names);
+                    free(s->fields);
+                    free(s->type_name);
+                    break;
+                }
+                case VAL_FUNCTION: {
+                    ObjFunction *f = (ObjFunction *)obj;
+                    for (int i = 0; i < f->constant_count; i++) {
+                        if (f->constants[i].type == VAL_STRING && f->constants[i].as.string) {
+                            free(f->constants[i].as.string->chars);
+                            free(f->constants[i].as.string);
+                        }
+                    }
+                    free(f->code);
+                    free(f->rle_lines);
+                    free(f->rle_counts);
+                    free(f->constants);
+                    break;
+                }
+                default: break;
+            }
+            free(obj);
+            obj = next;
+        } else {
+            obj->is_marked = false;  /* reset for next cycle */
+            prev = &obj->next;
+            obj = obj->next;
+        }
+    }
+}
+
+static void gc_mark_roots(VM *vm) {
+    /* Mark globals */
+    for (int i = 0; i < vm->global_count; i++)
+        gc_mark_value(vm, vm->globals[i]);
+
+    /* Mark main_fn */
+    if (vm->main_fn) {
+        Obj *obj = (Obj *)vm->main_fn;
+        if (!obj->is_marked) {
+            obj->is_marked = true;
+            gc_push_gray(vm, obj);
+        }
+    }
+
+    /* Mark stack values */
+    for (int i = 0; i < vm->stack_top; i++)
+        gc_mark_value(vm, vm->stack[i]);
+
+    /* Mark dispatch table function values */
+    for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
+        if (vm->dispatch_occupied[i])
+            gc_mark_value(vm, vm->dispatch_functions[i]);
+    }
+}
+
+static void gc_collect(VM *vm) {
+    gc_mark_roots(vm);
+    gc_trace(vm);
+    gc_sweep(vm);
 }
 
 /* ─── Value Operations ─── */
@@ -1046,17 +1201,57 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     compile_expression(compiler, node->match_stmt.value);
                 }
 
-                /* Compile pattern and compare */
-                compile_expression(compiler, arm->match_arm.pattern);
-                emit_byte(compiler, BC_EQUAL);
+                if (arm->match_arm.bind_count > 0) {
+                    /* Destructuring pattern: compare tag, unpack, bind */
+                    int tag = arm->match_arm.pattern->enum_literal.tag;
+                    emit_byte(compiler, BC_TAG_EQ);
+                    emit_byte(compiler, (uint8_t)tag);
 
-                int next_arm = emit_jump(compiler, BC_JUMP_IF_FALSE);
-                emit_byte(compiler, BC_POP); /* pop bool result (true path) */
+                    int next_arm = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                    emit_byte(compiler, BC_POP); /* pop bool */
 
-                compile_expression(compiler, arm->match_arm.body);
-                end_jumps[end_count++] = emit_jump(compiler, BC_JUMP);
+                    /* Reload match value and unpack */
+                    if (temp_idx >= 0) {
+                        emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)temp_idx);
+                    } else {
+                        compile_expression(compiler, node->match_stmt.value);
+                    }
+                    emit_byte(compiler, BC_UNPACK_ENUM);
 
-                patch_jump(compiler, next_arm);
+                    /* Bind extracted values */
+                    int saved_arm = compiler->local_count;
+                    for (int j = arm->match_arm.bind_count - 1; j >= 0; j--) {
+                        const char *bname = arm->match_arm.bind_names[j];
+                        if (compiler->scope_depth > 0) {
+                            int idx = compiler_add_local(compiler, bname);
+                            emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)idx);
+                            emit_byte(compiler, BC_POP);
+                        } else {
+                            /* Top level: define as global */
+                            emit_byte(compiler, BC_DEFINE_GLOBAL);
+                            ObjString *s = copy_string(bname, (int)strlen(bname));
+                            int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                            emit_byte(compiler, (uint8_t)idx);
+                        }
+                    }
+
+                    compile_expression(compiler, arm->match_arm.body);
+                    compiler->local_count = saved_arm;
+                    end_jumps[end_count++] = emit_jump(compiler, BC_JUMP);
+                    patch_jump(compiler, next_arm);
+                } else {
+                    /* Literal pattern: compile expression and compare */
+                    compile_expression(compiler, arm->match_arm.pattern);
+                    emit_byte(compiler, BC_EQUAL);
+
+                    int next_arm = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                    emit_byte(compiler, BC_POP); /* pop bool result (true path) */
+
+                    compile_expression(compiler, arm->match_arm.body);
+                    end_jumps[end_count++] = emit_jump(compiler, BC_JUMP);
+
+                    patch_jump(compiler, next_arm);
+                }
             }
 
             /* Pop false condition from last arm */
@@ -1189,7 +1384,11 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->try_count = 0;
     vm->is_throwing = false;
     vm->throw_value = val_nil();
-    vm->dispatch_count = 0;
+    memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
+    vm->gray_stack = NULL;
+    vm->gray_capacity = 0;
+    vm->gray_count = 0;
+    vm->next_gc_size = 8192;
     memset(vm->globals, 0, sizeof(vm->globals));
 }
 
@@ -1269,22 +1468,49 @@ static int native_throw(VM *vm) {
     return 0;
 }
 
-/* Dispatch table helpers */
+/* FNV-1a hash for dispatch lookups */
+static uint32_t fnv1a_hash(const char *key) {
+    uint32_t hash = 2166136261u;
+    while (*key) {
+        hash ^= (uint8_t)(*key);
+        hash *= 16777619u;
+        key++;
+    }
+    return hash;
+}
+
+/* Dispatch table helpers — FNV-1a open-addressing hash table */
 static void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
-    if (vm->dispatch_count >= 512) return;
-    strncpy(vm->dispatch_type_names[vm->dispatch_count], type_name, 63);
-    vm->dispatch_type_names[vm->dispatch_count][63] = '\0';
-    strncpy(vm->dispatch_method_names[vm->dispatch_count], method_name, 63);
-    vm->dispatch_method_names[vm->dispatch_count][63] = '\0';
-    vm->dispatch_functions[vm->dispatch_count] = func;
-    vm->dispatch_count++;
+    char key[128];
+    snprintf(key, sizeof(key), "%s:%s", type_name, method_name);
+    uint32_t hash = fnv1a_hash(key);
+
+    for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
+        int idx = (hash + i) % DISPATCH_TABLE_SIZE;
+        if (!vm->dispatch_occupied[idx]) {
+            strncpy(vm->dispatch_type_names[idx], type_name, 63);
+            vm->dispatch_type_names[idx][63] = '\0';
+            strncpy(vm->dispatch_method_names[idx], method_name, 63);
+            vm->dispatch_method_names[idx][63] = '\0';
+            vm->dispatch_functions[idx] = func;
+            vm->dispatch_occupied[idx] = true;
+            return;
+        }
+    }
 }
 
 static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
-    for (int i = 0; i < vm->dispatch_count; i++) {
-        if (strcmp(vm->dispatch_type_names[i], type_name) == 0 &&
-            strcmp(vm->dispatch_method_names[i], method_name) == 0) {
-            return &vm->dispatch_functions[i];
+    char key[128];
+    snprintf(key, sizeof(key), "%s:%s", type_name, method_name);
+    uint32_t hash = fnv1a_hash(key);
+
+    for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
+        int idx = (hash + i) % DISPATCH_TABLE_SIZE;
+        if (!vm->dispatch_occupied[idx])
+            return NULL;
+        if (strcmp(vm->dispatch_type_names[idx], type_name) == 0 &&
+            strcmp(vm->dispatch_method_names[idx], method_name) == 0) {
+            return &vm->dispatch_functions[idx];
         }
     }
     return NULL;
@@ -1687,6 +1913,29 @@ bool vm_run(VM *vm) {
                 for (int i = value_count - 1; i >= 0; i--)
                     e->values[i] = POP();
                 PUSH(val_enum(e));
+                break;
+            }
+
+            case BC_TAG_EQ: {
+                uint8_t tag = READ_BYTE();
+                Value v = POP();
+                if (v.type == VAL_ENUM) {
+                    PUSH(val_bool(v.as.enum_val->tag == (int)tag));
+                } else {
+                    PUSH(val_bool(false));
+                }
+                break;
+            }
+
+            case BC_UNPACK_ENUM: {
+                Value v = POP();
+                if (v.type == VAL_ENUM) {
+                    ObjEnum *e = v.as.enum_val;
+                    for (int i = 0; i < e->count; i++)
+                        PUSH(e->values[i]);
+                } else {
+                    PUSH(val_nil());
+                }
                 break;
             }
 

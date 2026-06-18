@@ -63,6 +63,8 @@ typedef enum {
     BC_STRUCT,
     BC_ENUM,
     BC_PROPAGATE,
+    BC_UNPACK_ENUM,
+    BC_TAG_EQ,
     BC_THROW,
     BC_TRY,
     BC_POP_TRY,
@@ -122,6 +124,7 @@ typedef struct {
 struct Obj {
     Obj *next;  /* linked list for GC */
     ValueType type;
+    bool is_marked;
 };
 
 struct ObjString {
@@ -290,10 +293,17 @@ typedef struct {
     Value throw_value;
     bool is_throwing;
     /* Method dispatch table: (type_name, method_name) → function Value */
-    char dispatch_type_names[512][64];
-    char dispatch_method_names[512][64];
-    Value dispatch_functions[512];
-    int dispatch_count;
+    /* Method dispatch — FNV-1a hash table, open addressing */
+    #define DISPATCH_TABLE_SIZE 512
+    char dispatch_type_names[DISPATCH_TABLE_SIZE][64];
+    char dispatch_method_names[DISPATCH_TABLE_SIZE][64];
+    Value dispatch_functions[DISPATCH_TABLE_SIZE];
+    bool dispatch_occupied[DISPATCH_TABLE_SIZE];
+    /* Gray stack for GC */
+    Obj **gray_stack;
+    int gray_capacity;
+    int gray_count;
+    size_t next_gc_size;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);

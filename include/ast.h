@@ -352,8 +352,10 @@ struct AstNode {
 
         /* Match arm */
         struct {
-            AstNode *pattern;  /* expression pattern for now */
+            AstNode *pattern;       /* expression pattern for literal comparison */
             AstNode *body;
+            char **bind_names;      /* variable names to bind from enum payload */
+            int bind_count;
         } match_arm;
     };
 };
@@ -420,7 +422,8 @@ AstNode *ast_enum_literal(Arena *arena, SourceLoc loc, const char *enum_name,
 
 AstNode *ast_match(Arena *arena, SourceLoc loc, AstNode *value);
 void ast_match_add_arm(AstNode *match, AstNode *pattern, AstNode *body);
-AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *body);
+AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *body,
+                       char **bind_names, int bind_count);
 
 AstNode *ast_trait_decl(Arena *arena, SourceLoc loc, const char *name,
                          char **method_names, int method_count);

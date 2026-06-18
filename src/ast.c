@@ -449,10 +449,21 @@ AstNode *ast_enum_literal(Arena *arena, SourceLoc loc, const char *enum_name,
     return node;
 }
 
-AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *body) {
+AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *body,
+                       char **bind_names, int bind_count) {
     AstNode *node = alloc_node(arena, NODE_MATCH_ARM, loc);
     node->match_arm.pattern = pattern;
     node->match_arm.body = body;
+    if (bind_count > 0 && bind_names) {
+        node->match_arm.bind_names = (char **)arena_alloc(arena, sizeof(char *) * bind_count);
+        for (int i = 0; i < bind_count; i++) {
+            node->match_arm.bind_names[i] = (char *)arena_alloc(arena, strlen(bind_names[i]) + 1);
+            strcpy(node->match_arm.bind_names[i], bind_names[i]);
+        }
+    } else {
+        node->match_arm.bind_names = NULL;
+    }
+    node->match_arm.bind_count = bind_count;
     return node;
 }
 
