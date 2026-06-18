@@ -195,13 +195,8 @@ Value val_enum(ObjEnum *e) {
 static void gc_collect(VM *vm);
 
 static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
-    /* Trigger GC when heap grows past threshold */
-    if (vm->objects && vm->next_gc_size > 0) {
-        size_t current = (size_t)vm->objects;  /* rough heuristic */
-        if (current > vm->next_gc_size) {
-            gc_collect(vm);
-            vm->next_gc_size = (size_t)vm->objects + 8192;
-        }
+    if (vm->bytes_allocated >= vm->next_gc_size && vm->next_gc_size > 0) {
+        gc_collect(vm);
     }
     Obj *obj = (Obj *)calloc(1, size);
     if (!obj) return NULL;
@@ -209,6 +204,7 @@ static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
     obj->is_marked = false;
     obj->next = vm->objects;
     vm->objects = obj;
+    vm->bytes_allocated += size;
     return obj;
 }
 
@@ -380,18 +376,35 @@ static void gc_trace(VM *vm) {
     }
 }
 
-static void gc_sweep(VM *vm) {
+static size_t gc_sweep(VM *vm) {
+    size_t freed = 0;
+    /* Remove unmarked strings from intern table */
+    for (int i = 0; i < vm->intern_capacity; i++) {
+        if (vm->intern_table[i] && !((Obj *)vm->intern_table[i])->is_marked) {
+            vm->intern_table[i] = NULL;
+            vm->intern_count--;
+        }
+    }
     Obj **prev = &vm->objects;
     Obj *obj = vm->objects;
     while (obj) {
         if (!obj->is_marked) {
             Obj *next = obj->next;
             *prev = next;
+            size_t obj_size = sizeof(Obj);
             switch (obj->type) {
-                case VAL_STRING: free(((ObjString *)obj)->chars); break;
-                case VAL_ARRAY:  free(((ObjArray *)obj)->elements); break;
-                case VAL_TUPLE:  free(((ObjTuple *)obj)->elements); break;
-                case VAL_ENUM:   free(((ObjEnum *)obj)->values); break;
+                case VAL_STRING: {
+                    ObjString *s = (ObjString *)obj;
+                    free(s->chars);
+                    obj_size = sizeof(ObjString);
+                    break;
+                }
+                case VAL_ARRAY:  free(((ObjArray *)obj)->elements);
+                    obj_size = sizeof(ObjArray); break;
+                case VAL_TUPLE:  free(((ObjTuple *)obj)->elements);
+                    obj_size = sizeof(ObjTuple); break;
+                case VAL_ENUM:   free(((ObjEnum *)obj)->values);
+                    obj_size = sizeof(ObjEnum); break;
                 case VAL_STRUCT: {
                     ObjStruct *s = (ObjStruct *)obj;
                     for (int i = 0; i < s->field_count; i++)
@@ -399,6 +412,7 @@ static void gc_sweep(VM *vm) {
                     free(s->field_names);
                     free(s->fields);
                     free(s->type_name);
+                    obj_size = sizeof(ObjStruct);
                     break;
                 }
                 case VAL_FUNCTION: {
@@ -413,18 +427,21 @@ static void gc_sweep(VM *vm) {
                     free(f->rle_lines);
                     free(f->rle_counts);
                     free(f->constants);
+                    obj_size = sizeof(ObjFunction);
                     break;
                 }
                 default: break;
             }
             free(obj);
+            freed += obj_size;
             obj = next;
         } else {
-            obj->is_marked = false;  /* reset for next cycle */
+            obj->is_marked = false;
             prev = &obj->next;
             obj = obj->next;
         }
     }
+    return freed;
 }
 
 static void gc_mark_roots(VM *vm) {
@@ -455,7 +472,9 @@ static void gc_mark_roots(VM *vm) {
 static void gc_collect(VM *vm) {
     gc_mark_roots(vm);
     gc_trace(vm);
-    gc_sweep(vm);
+    size_t freed = gc_sweep(vm);
+    vm->bytes_allocated -= (freed < vm->bytes_allocated) ? freed : vm->bytes_allocated;
+    vm->next_gc_size = (vm->bytes_allocated < 1024) ? 1024 * 1024 : vm->bytes_allocated * 2;
 }
 
 /* ─── Value Operations ─── */
@@ -557,6 +576,7 @@ void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *prog
     compiler->local_count = 0;
     compiler->loop_count = 0;
     compiler->current_line = 0;
+    compiler->in_function = false;
     compiler->had_error = false;
     compiler->error_message[0] = '\0';
 }
@@ -629,6 +649,14 @@ static void compiler_record_break(Compiler *compiler, int jump_offset) {
 
 static void emit_byte(Compiler *compiler, uint8_t byte) {
     chunk_write(compiler->chunk, byte, compiler->current_line);
+}
+
+/* Pop all locals declared at a given scope depth */
+static void emit_pop_scope(Compiler *compiler, int depth) {
+    for (int i = compiler->local_count - 1; i >= 0; i--) {
+        if (compiler->local_depths[i] == depth)
+            emit_byte(compiler, BC_POP);
+    }
 }
 
 static void emit_bytes(Compiler *compiler, uint8_t b1, uint8_t b2) {
@@ -802,19 +830,16 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
         }
 
         case NODE_INTERPOLATED_STRING: {
-            if (node->interpolated_string.part_count == 0) {
+            int count = node->interpolated_string.part_count;
+            if (count == 0) {
                 emit_byte(compiler, BC_NIL);
                 break;
             }
-            /* Compile first part and convert to string */
-            compile_expression(compiler, node->interpolated_string.parts[0]);
-            emit_byte(compiler, BC_INT_TO_STRING);
-            for (int i = 1; i < node->interpolated_string.part_count; i++) {
-                /* Compile next part, convert to string, then concat */
+            for (int i = 0; i < count; i++) {
                 compile_expression(compiler, node->interpolated_string.parts[i]);
                 emit_byte(compiler, BC_INT_TO_STRING);
-                emit_byte(compiler, BC_STRING_CONCAT);
             }
+            emit_bytes(compiler, BC_BUILD_STRING, (uint8_t)count);
             break;
         }
 
@@ -852,8 +877,8 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             else
                 emit_byte(compiler, BC_NIL);
 
-            if (compiler->scope_depth > 0) {
-                /* Local variable(s) */
+            if (compiler->in_function) {
+                /* Local variable(s) inside function */
                 for (int i = node->let_decl.name_count - 1; i >= 0; i--) {
                     const char *name = node->let_decl.names[i];
                     if (strcmp(name, "_") == 0) {
@@ -866,7 +891,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     }
                 }
             } else {
-                /* Global variable(s) */
+                /* Global variable(s) at top level */
                 for (int i = node->let_decl.name_count - 1; i >= 0; i--) {
                     const char *name = node->let_decl.names[i];
                     if (strcmp(name, "_") == 0) {
@@ -892,6 +917,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             fn_compiler.error_message[0] = '\0';
             fn_compiler.local_count = 0;
             fn_compiler.loop_count = 0;
+            fn_compiler.in_function = true;
 
             /* Register parameters as locals */
             for (int i = 0; i < node->fn_decl.param_count; i++) {
@@ -956,8 +982,12 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
         case NODE_BLOCK: {
             int saved_local_count = compiler->local_count;
+            compiler->scope_depth++;
             for (int i = 0; i < node->block.stmt_count; i++)
                 compile_node(compiler, node->block.stmts[i]);
+            /* Pop locals declared inside this block (at the current inner depth) */
+            emit_pop_scope(compiler, compiler->scope_depth);
+            compiler->scope_depth--;
             compiler->local_count = saved_local_count;
             break;
         }
@@ -1161,6 +1191,9 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             break;
 
         case NODE_BREAK: {
+            if (compiler->loop_count > 0) {
+                emit_pop_scope(compiler, compiler->scope_depth - 1);
+            }
             int jump_offset = emit_jump(compiler, BC_JUMP);
             compiler_record_break(compiler, jump_offset);
             break;
@@ -1168,6 +1201,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
         case NODE_CONTINUE: {
             if (compiler->loop_count > 0) {
+                emit_pop_scope(compiler, compiler->scope_depth - 1);
                 emit_loop(compiler, compiler->loops[compiler->loop_count - 1].loop_start);
             }
             break;
@@ -1222,12 +1256,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     int saved_arm = compiler->local_count;
                     for (int j = arm->match_arm.bind_count - 1; j >= 0; j--) {
                         const char *bname = arm->match_arm.bind_names[j];
-                        if (compiler->scope_depth > 0) {
+                        if (compiler->in_function) {
                             int idx = compiler_add_local(compiler, bname);
                             emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)idx);
                             emit_byte(compiler, BC_POP);
                         } else {
-                            /* Top level: define as global */
                             emit_byte(compiler, BC_DEFINE_GLOBAL);
                             ObjString *s = copy_string(bname, (int)strlen(bname));
                             int idx = chunk_add_constant(compiler->chunk, val_string(s));
@@ -1388,7 +1421,11 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->gray_stack = NULL;
     vm->gray_capacity = 0;
     vm->gray_count = 0;
-    vm->next_gc_size = 8192;
+    vm->bytes_allocated = 0;
+    vm->next_gc_size = 1024 * 1024;
+    vm->intern_table = NULL;
+    vm->intern_capacity = 0;
+    vm->intern_count = 0;
     memset(vm->globals, 0, sizeof(vm->globals));
 }
 
@@ -1468,22 +1505,18 @@ static int native_throw(VM *vm) {
     return 0;
 }
 
-/* FNV-1a hash for dispatch lookups */
-static uint32_t fnv1a_hash(const char *key) {
+/* Sequential FNV-1a hash: hashes two strings without allocation */
+static uint32_t fnv1a_hash_two(const char *a, const char *b) {
     uint32_t hash = 2166136261u;
-    while (*key) {
-        hash ^= (uint8_t)(*key);
-        hash *= 16777619u;
-        key++;
-    }
+    while (*a) { hash ^= (uint8_t)(*a); hash *= 16777619u; a++; }
+    hash ^= (uint8_t)':'; hash *= 16777619u;
+    while (*b) { hash ^= (uint8_t)(*b); hash *= 16777619u; b++; }
     return hash;
 }
 
 /* Dispatch table helpers — FNV-1a open-addressing hash table */
 static void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
-    char key[128];
-    snprintf(key, sizeof(key), "%s:%s", type_name, method_name);
-    uint32_t hash = fnv1a_hash(key);
+    uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
         int idx = (hash + i) % DISPATCH_TABLE_SIZE;
@@ -1500,9 +1533,7 @@ static void vm_register_dispatch(VM *vm, const char *type_name, const char *meth
 }
 
 static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
-    char key[128];
-    snprintf(key, sizeof(key), "%s:%s", type_name, method_name);
-    uint32_t hash = fnv1a_hash(key);
+    uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
         int idx = (hash + i) % DISPATCH_TABLE_SIZE;
@@ -2020,6 +2051,31 @@ bool vm_run(VM *vm) {
                 Value v = POP();
                 value_print(v);
                 printf("\n");
+                break;
+            }
+
+            case BC_BUILD_STRING: {
+                uint8_t count = READ_BYTE();
+                int total_len = 0;
+                for (int i = 0; i < count; i++) {
+                    Value v = vm->stack[vm->stack_top - count + i];
+                    if (v.type == VAL_STRING)
+                        total_len += v.as.string->length;
+                }
+                char *chars = (char *)malloc(total_len + 1);
+                int pos = 0;
+                for (int i = 0; i < count; i++) {
+                    Value v = vm->stack[vm->stack_top - count + i];
+                    if (v.type == VAL_STRING) {
+                        memcpy(chars + pos, v.as.string->chars, v.as.string->length);
+                        pos += v.as.string->length;
+                    }
+                }
+                vm->stack_top -= count;
+                chars[total_len] = '\0';
+                ObjString *result = allocate_string(vm, chars, total_len);
+                free(chars);
+                PUSH(val_string(result));
                 break;
             }
 

@@ -432,7 +432,20 @@ static Token string_literal(Lexer *lexer, char quote, bool is_byte) {
             buf = (char *)realloc(buf, buf_size);
         }
     }
-    buf[buf_pos] = '\0';
+    /* For byte slices, store (length << 1) | 1 prefix so parser knows the exact length */
+    if (is_byte) {
+        /* Reallocate buf with room for length prefix */
+        char *packed = (char *)malloc(buf_pos + 5);
+        packed[0] = (char)(buf_pos & 0xFF);
+        packed[1] = (char)((buf_pos >> 8) & 0xFF);
+        packed[2] = (char)((buf_pos >> 16) & 0xFF);
+        packed[3] = (char)((buf_pos >> 24) & 0xFF);
+        memcpy(packed + 4, buf, buf_pos);
+        free(buf);
+        buf = packed;
+    } else {
+        buf[buf_pos] = '\0';
+    }
 
     Token token = make_token(lexer, is_byte ? TOKEN_BYTE_SLICE : TOKEN_STRING);
     token.value = buf;

@@ -1327,7 +1327,17 @@ static AstNode *parse_primary(Parser *parser) {
     }
 
     if (match(parser, TOKEN_BYTE_SLICE)) {
-        return ast_string_literal(parser->arena, loc, parser->previous.value);
+        /* Extract length from packed prefix */
+        char *val = parser->previous.value;
+        if (val) {
+            int len = (unsigned char)val[0] | ((unsigned char)val[1] << 8) |
+                      ((unsigned char)val[2] << 16) | ((unsigned char)val[3] << 24);
+            char *content = (char *)arena_alloc(parser->arena, len + 1);
+            memcpy(content, val + 4, len);
+            content[len] = '\0';
+            return ast_string_literal(parser->arena, loc, content);
+        }
+        return ast_string_literal(parser->arena, loc, "");
     }
 
     if (match(parser, TOKEN_INTERPOLATED_STRING)) {

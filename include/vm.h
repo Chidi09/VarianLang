@@ -72,6 +72,7 @@ typedef enum {
     /* Builtins */
     BC_PRINT,
     BC_STRING_CONCAT,
+    BC_BUILD_STRING,
     BC_INT_TO_STRING,
 
     /* Long constant (16-bit index) */
@@ -246,9 +247,11 @@ typedef struct {
     int local_count;
     char local_names[256][64];
     int local_depths[256];
+    int local_scope_ends[256];  /* slot indices where each scope depth ends */
     LoopInfo loops[MAX_LOOP_NESTING];
     int loop_count;
     int current_line;
+    bool in_function;
     bool had_error;
     char error_message[512];
 } Compiler;
@@ -303,7 +306,13 @@ typedef struct {
     Obj **gray_stack;
     int gray_capacity;
     int gray_count;
+    size_t bytes_allocated;
     size_t next_gc_size;
+    /* String intern table */
+    ObjString **intern_table;
+    int intern_capacity;
+    int intern_count;
+    size_t next_gc_threshold;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);
