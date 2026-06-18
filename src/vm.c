@@ -774,6 +774,21 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_count = fn_chunk.rle_count;
 
             emit_constant(compiler, val_function(func));
+            if (node->fn_decl.is_method && node->fn_decl.impl_type) {
+                emit_byte(compiler, BC_REGISTER_METHOD);
+                {
+                    ObjString *ts = copy_string(node->fn_decl.impl_type,
+                                                (int)strlen(node->fn_decl.impl_type));
+                    int ti = chunk_add_constant(compiler->chunk, val_string(ts));
+                    emit_byte(compiler, (uint8_t)ti);
+                }
+                {
+                    ObjString *ms = copy_string(node->fn_decl.name,
+                                                (int)strlen(node->fn_decl.name));
+                    int mi = chunk_add_constant(compiler->chunk, val_string(ms));
+                    emit_byte(compiler, (uint8_t)mi);
+                }
+            }
             emit_byte(compiler, BC_DEFINE_GLOBAL);
             {
                 ObjString *s = copy_string(node->fn_decl.name,
@@ -1068,6 +1083,12 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             for (int i = 0; i < node->struct_literal.field_count; i++)
                 compile_expression(compiler, node->struct_literal.field_values[i]);
             emit_bytes(compiler, BC_STRUCT, (uint8_t)node->struct_literal.field_count);
+            {
+                ObjString *ts = copy_string(node->struct_literal.name,
+                                            (int)strlen(node->struct_literal.name));
+                int ti = chunk_add_constant(compiler->chunk, val_string(ts));
+                emit_byte(compiler, (uint8_t)ti);
+            }
             for (int i = 0; i < node->struct_literal.field_count; i++) {
                 ObjString *s = copy_string(node->struct_literal.field_names[i],
                                            (int)strlen(node->struct_literal.field_names[i]));
@@ -1081,6 +1102,10 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             /* Enum declaration — no bytecode emitted */
             break;
 
+        case NODE_TRAIT_DECL:
+            /* Trait declaration — no bytecode emitted */
+            break;
+
         case NODE_ENUM_LITERAL: {
             for (int i = 0; i < node->enum_literal.value_count; i++)
                 compile_expression(compiler, node->enum_literal.values[i]);
@@ -1092,6 +1117,21 @@ static void compile_node(Compiler *compiler, AstNode *node) {
         case NODE_PROPAGATE: {
             compile_expression(compiler, node->propagate.expr);
             emit_byte(compiler, BC_PROPAGATE);
+            break;
+        }
+
+        case NODE_DISPATCH_CALL: {
+            compile_expression(compiler, node->dispatch_call.object);
+            for (int i = 0; i < node->dispatch_call.arg_count; i++)
+                compile_expression(compiler, node->dispatch_call.args[i]);
+            emit_byte(compiler, BC_DISPATCH);
+            {
+                ObjString *s = copy_string(node->dispatch_call.method_name,
+                                           (int)strlen(node->dispatch_call.method_name));
+                int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                emit_byte(compiler, (uint8_t)idx);
+            }
+            emit_byte(compiler, (uint8_t)node->dispatch_call.arg_count);
             break;
         }
 
@@ -1149,6 +1189,7 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->try_count = 0;
     vm->is_throwing = false;
     vm->throw_value = val_nil();
+    vm->dispatch_count = 0;
     memset(vm->globals, 0, sizeof(vm->globals));
 }
 
@@ -1226,6 +1267,27 @@ static int native_throw(VM *vm) {
     vm->throw_value = POP();
     vm->is_throwing = true;
     return 0;
+}
+
+/* Dispatch table helpers */
+static void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
+    if (vm->dispatch_count >= 512) return;
+    strncpy(vm->dispatch_type_names[vm->dispatch_count], type_name, 63);
+    vm->dispatch_type_names[vm->dispatch_count][63] = '\0';
+    strncpy(vm->dispatch_method_names[vm->dispatch_count], method_name, 63);
+    vm->dispatch_method_names[vm->dispatch_count][63] = '\0';
+    vm->dispatch_functions[vm->dispatch_count] = func;
+    vm->dispatch_count++;
+}
+
+static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
+    for (int i = 0; i < vm->dispatch_count; i++) {
+        if (strcmp(vm->dispatch_type_names[i], type_name) == 0 &&
+            strcmp(vm->dispatch_method_names[i], method_name) == 0) {
+            return &vm->dispatch_functions[i];
+        }
+    }
+    return NULL;
 }
 
 bool vm_run(VM *vm) {
@@ -1545,9 +1607,13 @@ bool vm_run(VM *vm) {
 
             case BC_STRUCT: {
                 uint8_t field_count = READ_BYTE();
+                ObjString *type_name_str = READ_CONSTANT().as.string;
                 ObjStruct *s = new_struct(field_count);
                 s->obj.next = vm->objects;
                 vm->objects = (Obj *)s;
+                s->type_name = (char *)malloc(type_name_str->length + 1);
+                memcpy(s->type_name, type_name_str->chars, type_name_str->length);
+                s->type_name[type_name_str->length] = '\0';
                 for (int i = field_count - 1; i >= 0; i--)
                     s->fields[i] = POP();
                 for (int i = 0; i < field_count; i++) {
@@ -1557,6 +1623,57 @@ bool vm_run(VM *vm) {
                     s->field_names[i][name->length] = '\0';
                 }
                 PUSH(val_struct(s));
+                break;
+            }
+
+            case BC_REGISTER_METHOD: {
+                ObjString *type_name = READ_CONSTANT().as.string;
+                ObjString *method_name = READ_CONSTANT().as.string;
+                Value func = PEEK(0);
+                vm_register_dispatch(vm, type_name->chars, method_name->chars, func);
+                break;
+            }
+
+            case BC_DISPATCH: {
+                ObjString *method_name = READ_CONSTANT().as.string;
+                uint8_t arg_count = READ_BYTE();
+                Value obj = PEEK(arg_count);
+                if (obj.type != VAL_STRUCT) {
+                    runtime_error(vm, "Cannot dispatch method on non-struct");
+                    return false;
+                }
+                const char *type_name = obj.as.structure->type_name;
+                Value *func_val = vm_find_dispatch(vm, type_name, method_name->chars);
+                if (!func_val) {
+                    runtime_error(vm, "No method '%s' for type '%s'", method_name->chars, type_name);
+                    return false;
+                }
+                Value callee = *func_val;
+                /* Push the callee so BC_RETURN's cleanup works correctly */
+                PUSH(callee);
+                if (callee.type == VAL_NATIVE_FN) {
+                    int (*fn)(VM *) = (int (*)(VM *))callee.as.native_fn;
+                    fn(vm);
+                } else if (callee.type == VAL_FUNCTION) {
+                    ObjFunction *fn = callee.as.function;
+                    uint8_t total_args = arg_count + 1;
+                    if (fn->arity != total_args) {
+                        runtime_error(vm, "Method '%s' expects %d arguments", method_name->chars, fn->arity);
+                        return false;
+                    }
+                    if (vm->frame_count >= FRAMES_MAX) {
+                        runtime_error(vm, "Stack overflow");
+                        return false;
+                    }
+                    CallFrame *new_frame = &vm->frames[vm->frame_count++];
+                    new_frame->function = fn;
+                    new_frame->ip = fn->code;
+                    /* self + extra_args are before callee, so adjust by -1 */
+                    new_frame->slots = &vm->stack[vm->stack_top - total_args - 1];
+                } else {
+                    runtime_error(vm, "Method is not callable");
+                    return false;
+                }
                 break;
             }
 

@@ -1,0 +1,34 @@
+// Structural typing test
+// A type implicitly satisfies a trait if it has matching methods
+
+trait Shape {
+    fn area(self) -> int
+}
+
+struct Rect { w: int, h: int }
+
+impl Rect {
+    fn area(self) -> int {
+        return self.w * self.h
+    }
+}
+
+struct Circle { r: int }
+
+impl Circle {
+    fn area(self) -> int {
+        return self.r * self.r * 3
+    }
+}
+
+// Polymorphic function via dispatch
+fn print_area(s: Shape) {
+    print(s.area())
+}
+
+let r = Rect { w: 10, h: 20 }
+let c = Circle { r: 5 }
+
+// Both dispatch to the right method based on type
+print_area(r)
+print_area(c)

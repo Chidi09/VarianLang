@@ -25,6 +25,8 @@ static Type *parse_type(Parser *parser);
 static AstNode *parse_struct_literal(Parser *parser, const char *type_name, SourceLoc loc);
 static AstNode *parse_enum_literal(Parser *parser, const char *enum_name, SourceLoc loc);
 
+static AstNode *parse_trait_decl(Parser *parser);
+
 /* ─── Token string extraction (not null-terminated, use length) ─── */
 static char *token_str(Parser *parser, Token *token) {
     char *s = (char *)arena_alloc(parser->arena, token->length + 1);
@@ -463,7 +465,7 @@ static AstNode *parse_fn_decl(Parser *parser) {
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
                         param_names, param_count,
                         type_params, type_param_count,
-                        body, false, false);
+                        body, false, false, false, NULL);
     for (int i = 0; i < param_count; i++)
         free(param_names[i]);
     for (int i = 0; i < type_param_count; i++)
@@ -692,6 +694,59 @@ static AstNode *parse_enum_literal(Parser *parser, const char *enum_name, Source
     return result;
 }
 
+static AstNode *parse_trait_decl(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+
+    /* trait Name { fn method(self, ...) -> Type; ... } */
+    if (parser->current.type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "Expected trait name after 'trait'");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *name = token_str(parser, &parser->previous);
+
+    consume(parser, TOKEN_LBRACE, "Expected '{' after trait name");
+
+    char *method_names[64];
+    int method_count = 0;
+
+    while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+        if (method_count >= 64) break;
+
+        if (!match(parser, TOKEN_FN)) {
+            parser_error(parser, "Expected 'fn' in trait");
+            break;
+        }
+
+        if (parser->current.type != TOKEN_IDENTIFIER) break;
+        advance(parser);
+        method_names[method_count] = token_strdup(&parser->previous);
+        method_count++;
+
+        /* Skip rest of signature: (params) -> type */
+        if (match(parser, TOKEN_LPAREN)) {
+            int depth = 1;
+            while (depth > 0 && !check(parser, TOKEN_EOF)) {
+                if (check(parser, TOKEN_LPAREN)) depth++;
+                if (check(parser, TOKEN_RPAREN)) depth--;
+                if (depth > 0) advance(parser);
+            }
+            if (depth == 0) advance(parser);
+        }
+        if (match(parser, TOKEN_ARROW))
+            parse_type(parser);
+
+        match(parser, TOKEN_SEMICOLON);
+        match(parser, TOKEN_COMMA);
+    }
+    consume(parser, TOKEN_RBRACE, "Expected '}' after trait methods");
+
+    AstNode *result = ast_trait_decl(parser->arena, loc, name, method_names, method_count);
+    for (int i = 0; i < method_count; i++)
+        free(method_names[i]);
+    return result;
+}
+
 static AstNode *parse_struct_literal(Parser *parser, const char *type_name, SourceLoc loc) {
     /* TypeName { field1: expr, field2: expr } */
     StructDef *sd = parser_find_struct(parser, type_name);
@@ -742,7 +797,7 @@ static AstNode *parse_impl_block(Parser *parser) {
         return ast_null_literal(parser->arena, loc);
     }
     advance(parser);
-    /* type_name is consumed but not used for now (no type checking) */
+    char *type_name = token_str(parser, &parser->previous);
 
     consume(parser, TOKEN_LBRACE, "Expected '{' after impl type name");
 
@@ -828,7 +883,7 @@ static AstNode *parse_impl_block(Parser *parser) {
 
         AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
                             param_names, param_count, NULL, 0,
-                            body, false, false);
+                            body, false, false, true, type_name);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
 
@@ -919,6 +974,10 @@ static AstNode *parse_stmt(Parser *parser) {
 
     if (match(parser, TOKEN_IMPL)) {
         return parse_impl_block(parser);
+    }
+
+    if (match(parser, TOKEN_TRAIT)) {
+        return parse_trait_decl(parser);
     }
 
     if (match(parser, TOKEN_TRY)) {
@@ -1214,10 +1273,8 @@ static AstNode *parse_call(Parser *parser) {
             /* Check for method call: .method(args) */
             if (check(parser, TOKEN_LPAREN) && parser_is_method(parser, member)) {
                 advance(parser);
-                /* Desugar to: method(obj, args) */
                 AstNode *args[256];
                 int arg_count = 0;
-                args[arg_count++] = expr;  /* self */
                 if (!check(parser, TOKEN_RPAREN)) {
                     do {
                         if (arg_count >= 256) break;
@@ -1225,8 +1282,8 @@ static AstNode *parse_call(Parser *parser) {
                     } while (match(parser, TOKEN_COMMA));
                 }
                 consume(parser, TOKEN_RPAREN, "Expected ')' after arguments");
-                AstNode *callee = ast_identifier(parser->arena, current_loc(parser), member);
-                expr = ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+                expr = ast_dispatch_call(parser->arena, current_loc(parser),
+                                          expr, member, args, arg_count);
             } else {
                 /* Field access */
                 expr = ast_member(parser->arena, current_loc(parser), expr, member);
@@ -1450,7 +1507,7 @@ static AstNode *parse_primary(Parser *parser) {
 
         AstNode *fn = ast_fn_decl(parser->arena, loc, "__lambda__", fn_type,
                                   param_names, param_count, NULL, 0,
-                                  block, false, false);
+                                  block, false, false, false, NULL);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
         return fn;

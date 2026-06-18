@@ -99,9 +99,13 @@ typedef enum {
     NODE_MATCH,
     NODE_MATCH_ARM,
 
+    /* Traits */
+    NODE_TRAIT_DECL,
+
     /* Error handling */
     NODE_PROPAGATE,
     NODE_TRY,
+    NODE_DISPATCH_CALL,
 } NodeKind;
 
 /* Forward declaration */
@@ -153,6 +157,8 @@ struct AstNode {
             AstNode *body;
             bool is_pub;
             bool is_async;
+            bool is_method;
+            char *impl_type;
         } fn_decl;
 
         /* Block */
@@ -317,10 +323,25 @@ struct AstNode {
             int value_count;
         } enum_literal;
 
+        /* Trait declaration */
+        struct {
+            char *name;
+            char **method_names;
+            int method_count;
+        } trait_decl;
+
         /* Propagate (expr?) */
         struct {
             AstNode *expr;
         } propagate;
+
+        /* Dispatch call — runtime method dispatch */
+        struct {
+            AstNode *object;
+            char *method_name;
+            AstNode **args;
+            int arg_count;
+        } dispatch_call;
 
         /* Try/Catch */
         struct {
@@ -346,7 +367,8 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
                      char **type_params, int type_param_count,
-                     AstNode *body, bool is_pub, bool is_async);
+                     AstNode *body, bool is_pub, bool is_async,
+                     bool is_method, const char *impl_type);
 AstNode *ast_block(Arena *arena, SourceLoc loc);
 void ast_block_add_stmt(AstNode *block, AstNode *stmt);
 AstNode *ast_expr_stmt(Arena *arena, SourceLoc loc, AstNode *expr);
@@ -400,7 +422,11 @@ AstNode *ast_match(Arena *arena, SourceLoc loc, AstNode *value);
 void ast_match_add_arm(AstNode *match, AstNode *pattern, AstNode *body);
 AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *body);
 
+AstNode *ast_trait_decl(Arena *arena, SourceLoc loc, const char *name,
+                         char **method_names, int method_count);
 AstNode *ast_propagate(Arena *arena, SourceLoc loc, AstNode *expr);
+AstNode *ast_dispatch_call(Arena *arena, SourceLoc loc, AstNode *object,
+                            const char *method_name, AstNode **args, int arg_count);
 AstNode *ast_try(Arena *arena, SourceLoc loc, AstNode *try_body,
                  AstNode *catch_body, const char *catch_var);
 

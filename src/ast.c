@@ -100,7 +100,8 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
                      char **type_params, int type_param_count,
-                     AstNode *body, bool is_pub, bool is_async) {
+                     AstNode *body, bool is_pub, bool is_async,
+                     bool is_method, const char *impl_type) {
     AstNode *node = alloc_node(arena, NODE_FN_DECL, loc);
     node->fn_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
     strcpy(node->fn_decl.name, name);
@@ -122,6 +123,13 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     node->fn_decl.body = body;
     node->fn_decl.is_pub = is_pub;
     node->fn_decl.is_async = is_async;
+    node->fn_decl.is_method = is_method;
+    if (impl_type) {
+        node->fn_decl.impl_type = (char *)arena_alloc(arena, strlen(impl_type) + 1);
+        strcpy(node->fn_decl.impl_type, impl_type);
+    } else {
+        node->fn_decl.impl_type = NULL;
+    }
     return node;
 }
 
@@ -448,6 +456,41 @@ AstNode *ast_match_arm(Arena *arena, SourceLoc loc, AstNode *pattern, AstNode *b
     return node;
 }
 
+AstNode *ast_trait_decl(Arena *arena, SourceLoc loc, const char *name,
+                         char **method_names, int method_count) {
+    AstNode *node = alloc_node(arena, NODE_TRAIT_DECL, loc);
+    node->trait_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
+    strcpy(node->trait_decl.name, name);
+    if (method_count > 0) {
+        node->trait_decl.method_names = (char **)arena_alloc(arena, sizeof(char *) * method_count);
+        for (int i = 0; i < method_count; i++) {
+            node->trait_decl.method_names[i] = (char *)arena_alloc(arena, strlen(method_names[i]) + 1);
+            strcpy(node->trait_decl.method_names[i], method_names[i]);
+        }
+    } else {
+        node->trait_decl.method_names = NULL;
+    }
+    node->trait_decl.method_count = method_count;
+    return node;
+}
+
+AstNode *ast_dispatch_call(Arena *arena, SourceLoc loc, AstNode *object,
+                            const char *method_name, AstNode **args, int arg_count) {
+    AstNode *node = alloc_node(arena, NODE_DISPATCH_CALL, loc);
+    node->dispatch_call.object = object;
+    node->dispatch_call.method_name = (char *)arena_alloc(arena, strlen(method_name) + 1);
+    strcpy(node->dispatch_call.method_name, method_name);
+    node->dispatch_call.arg_count = arg_count;
+    if (arg_count > 0) {
+        node->dispatch_call.args = (AstNode **)arena_alloc(arena, sizeof(AstNode *) * arg_count);
+        for (int i = 0; i < arg_count; i++)
+            node->dispatch_call.args[i] = args[i];
+    } else {
+        node->dispatch_call.args = NULL;
+    }
+    return node;
+}
+
 AstNode *ast_propagate(Arena *arena, SourceLoc loc, AstNode *expr) {
     AstNode *node = alloc_node(arena, NODE_PROPAGATE, loc);
     node->propagate.expr = expr;
@@ -739,6 +782,22 @@ void ast_print(AstNode *node, int indent) {
             printf("(=>\n");
             ast_print(node->match_arm.pattern, indent + 1);
             ast_print(node->match_arm.body, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_TRAIT_DECL:
+            printf("(trait %s", node->trait_decl.name);
+            for (int i = 0; i < node->trait_decl.method_count; i++)
+                printf(" %s", node->trait_decl.method_names[i]);
+            printf(")\n");
+            break;
+
+        case NODE_DISPATCH_CALL:
+            printf("(dispatch %s\n", node->dispatch_call.method_name);
+            ast_print(node->dispatch_call.object, indent + 1);
+            for (int i = 0; i < node->dispatch_call.arg_count; i++)
+                ast_print(node->dispatch_call.args[i], indent + 1);
             print_indent(indent);
             printf(")\n");
             break;

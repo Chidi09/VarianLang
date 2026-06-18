@@ -58,6 +58,8 @@ typedef enum {
     BC_TUPLE,
     BC_INDEX,
     BC_MEMBER,
+    BC_DISPATCH,
+    BC_REGISTER_METHOD,
     BC_STRUCT,
     BC_ENUM,
     BC_PROPAGATE,
@@ -204,6 +206,7 @@ struct ObjStruct {
     char **field_names;
     Value *fields;
     int field_count;
+    char *type_name;  /* for method dispatch */
 };
 
 ObjStruct *new_struct(int field_count);
@@ -286,6 +289,11 @@ typedef struct {
     int try_count;
     Value throw_value;
     bool is_throwing;
+    /* Method dispatch table: (type_name, method_name) → function Value */
+    char dispatch_type_names[512][64];
+    char dispatch_method_names[512][64];
+    Value dispatch_functions[512];
+    int dispatch_count;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);
