@@ -168,8 +168,13 @@ impl ZenithApp {
     fn enable_docs(self, endpoint) {
         self.docs_enabled = true
         self.docs_endpoint = endpoint
-        self.get("/openapi.json", _openapi_handler, "OpenAPI 3.0 specification")
-        self.get(endpoint, _swagger_handler, "Swagger UI documentation")
+        self.get("/openapi.json", |req| {
+            let spec = build_openapi_spec(self, "http://localhost:" + req.path)
+            return Response { status: 200, body: spec, content_type: "application/json" }
+        }, "OpenAPI 3.0 specification")
+        self.get(endpoint, |req| {
+            return _swagger_handler(req)
+        }, "Swagger UI documentation")
     }
 
     // Synchronous request handling — usable directly in tests without a
@@ -177,12 +182,8 @@ impl ZenithApp {
     // duration of the call so middleware's `next` resolves to this app even
     // if handle() is called directly, nested, or interleaved across apps.
     fn handle(self, req) {
-        let prev_active = _active_app
-        _active_app = self
-
         let m = radix_lookup(self.root, req.method + req.path)
         if m == null {
-            _active_app = prev_active
             return Response { status: 404, body: "Not Found", content_type: "text/plain" }
         }
         let params = http.create_struct(m.param_names, m.param_values)
@@ -190,22 +191,15 @@ impl ZenithApp {
             ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"],
             [req.method, req.path, req.body, req.json, params, 0, m.handler]
         )
-        let result = _run_middleware(self, req2)
-        _active_app = prev_active
-        return result
+        return _run_middleware(self, req2)
     }
 
     fn listen(self, port) {
-        _active_app = self
         print("Zenith running on http://localhost:", port)
-        http.serve(port, _global_dispatch)
+        http.serve(port, |req| {
+            return self.handle(req)
+        })
     }
-}
-
-let _active_app = null
-
-fn _global_dispatch(req) {
-    return _active_app.handle(req)
 }
 
 fn _run_middleware(app, req) {
@@ -216,15 +210,13 @@ fn _run_middleware(app, req) {
             ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"],
             [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler]
         )
-        return mw(next_req, _global_next)
+        return mw(next_req, |r| {
+            return _run_middleware(app, r)
+        })
     } else {
         let handler = req._route_handler
         return handler(req)
     }
-}
-
-fn _global_next(req) {
-    return _run_middleware(_active_app, req)
 }
 
 // ─── OpenAPI ───
@@ -304,11 +296,6 @@ fn build_openapi_spec(app, base_url) {
         ["3.0.0", info, http.create_struct(path_keys, path_vals), servers]
     )
     return json_encode(spec)
-}
-
-fn _openapi_handler(req) {
-    let spec = build_openapi_spec(_active_app, "http://localhost:" + req.path)
-    return Response { status: 200, body: spec, content_type: "application/json" }
 }
 
 fn _swagger_handler(req) {

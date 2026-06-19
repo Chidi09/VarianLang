@@ -255,6 +255,13 @@ Value val_struct(ObjStruct *s) {
     return v;
 }
 
+Value val_closure(ObjClosure *c) {
+    Value v;
+    v.type = VAL_CLOSURE;
+    v.as.closure = c;
+    return v;
+}
+
 Value val_enum(ObjEnum *e) {
     Value v;
     v.type = VAL_ENUM;
@@ -387,6 +394,19 @@ ObjStruct *new_struct(int field_count) {
     return s;
 }
 
+ObjClosure *new_closure(ObjFunction *f, int captured_count) {
+    ObjClosure *c = (ObjClosure *)calloc(1, sizeof(ObjClosure));
+    c->obj.type = VAL_CLOSURE;
+    c->function = f;
+    c->captured_count = captured_count;
+    if (captured_count > 0) {
+        c->captured = (Value *)calloc(captured_count, sizeof(Value));
+    } else {
+        c->captured = NULL;
+    }
+    return c;
+}
+
 ObjEnum *new_enum(int value_count) {
     ObjEnum *e = (ObjEnum *)calloc(1, sizeof(ObjEnum));
     e->obj.type = VAL_ENUM;
@@ -436,6 +456,7 @@ static void gc_mark_value(VM *vm, Value value) {
         case VAL_ARRAY:    obj = (Obj *)value.as.array; break;
         case VAL_TUPLE:    obj = (Obj *)value.as.tuple; break;
         case VAL_FUNCTION: obj = (Obj *)value.as.function; break;
+        case VAL_CLOSURE:  obj = (Obj *)value.as.closure; break;
         case VAL_STRUCT:   obj = (Obj *)value.as.structure; break;
         case VAL_ENUM:     obj = (Obj *)value.as.enum_val; break;
         case VAL_MODULE:   obj = (Obj *)value.as.module; break;
@@ -482,6 +503,17 @@ static void gc_trace(VM *vm) {
                 ObjFunction *f = (ObjFunction *)obj;
                 for (int i = 0; i < f->constant_count; i++)
                     gc_mark_value(vm, f->constants[i]);
+                break;
+            }
+            case VAL_CLOSURE: {
+                ObjClosure *c = (ObjClosure *)obj;
+                if (c->function) {
+                    // Mark the function so it doesn't get collected (even though it's typically untracked)
+                    gc_mark_value(vm, val_function(c->function));
+                }
+                for (int i = 0; i < c->captured_count; i++) {
+                    gc_mark_value(vm, c->captured[i]);
+                }
                 break;
             }
             case VAL_ACTOR: {
@@ -565,6 +597,12 @@ static size_t gc_sweep(VM *vm) {
                     free(f->rle_counts);
                     free(f->constants);
                     obj_size = sizeof(ObjFunction);
+                    break;
+                }
+                case VAL_CLOSURE: {
+                    ObjClosure *c = (ObjClosure *)obj;
+                    free(c->captured);
+                    obj_size = sizeof(ObjClosure);
                     break;
                 }
                 default: break;
@@ -665,6 +703,7 @@ void value_print(Value value) {
             break;
         }
         case VAL_FUNCTION: printf("<fn %p>", (void *)value.as.function); break;
+        case VAL_CLOSURE: printf("<closure %p>", (void *)value.as.closure); break;
         case VAL_NATIVE_FN: printf("<native fn>"); break;
         case VAL_STRUCT: {
             ObjStruct *s = value.as.structure;
@@ -735,6 +774,7 @@ bool value_equal(Value a, Value b) {
             }
             return true;
         }
+        case VAL_CLOSURE: return a.as.closure == b.as.closure;
         default: return false;
     }
 }
@@ -742,6 +782,7 @@ bool value_equal(Value a, Value b) {
 /* ─── Compiler ─── */
 
 void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *program) {
+    compiler->enclosing = NULL;
     compiler->arena = arena;
     compiler->chunk = chunk;
     compiler->program = program;
@@ -754,6 +795,7 @@ void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *prog
     compiler->error_message[0] = '\0';
     compiler->ffi_decl_count = 0;
     compiler->test_count = 0;
+    compiler->upvalue_count = 0;
 }
 
 static void compiler_error(Compiler *compiler, const char *fmt, ...) {
@@ -781,6 +823,38 @@ static int compiler_find_local(Compiler *compiler, const char *name) {
     for (int i = compiler->local_count - 1; i >= 0; i--) {
         if (strcmp(compiler->local_names[i], name) == 0)
             return i;
+    }
+    return -1;
+}
+
+static int compiler_add_upvalue(Compiler *compiler, uint8_t index, bool is_local) {
+    for (int i = 0; i < compiler->upvalue_count; i++) {
+        if (compiler->upvalue_index[i] == index &&
+            compiler->upvalue_is_local[i] == is_local) {
+            return i;
+        }
+    }
+    if (compiler->upvalue_count >= 64) {
+        compiler_error(compiler, "Too many captured variables in one closure");
+        return 0;
+    }
+    int idx = compiler->upvalue_count++;
+    compiler->upvalue_is_local[idx] = is_local;
+    compiler->upvalue_index[idx] = index;
+    return idx;
+}
+
+static int compiler_resolve_upvalue(Compiler *compiler, const char *name) {
+    if (compiler->enclosing == NULL) {
+        return -1;
+    }
+    int local_idx = compiler_find_local(compiler->enclosing, name);
+    if (local_idx >= 0) {
+        return compiler_add_upvalue(compiler, (uint8_t)local_idx, true);
+    }
+    int up_idx = compiler_resolve_upvalue(compiler->enclosing, name);
+    if (up_idx >= 0) {
+        return compiler_add_upvalue(compiler, (uint8_t)up_idx, false);
     }
     return -1;
 }
@@ -922,10 +996,15 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
             if (local_idx >= 0) {
                 emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)local_idx);
             } else {
-                emit_byte(compiler, BC_GET_GLOBAL);
-                ObjString *s = copy_string(node->identifier.name, (int)strlen(node->identifier.name));
-                int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                emit_byte(compiler, (uint8_t)idx);
+                int up_idx = compiler_resolve_upvalue(compiler, node->identifier.name);
+                if (up_idx >= 0) {
+                    emit_bytes(compiler, BC_GET_UPVALUE, (uint8_t)up_idx);
+                } else {
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    ObjString *s = copy_string(node->identifier.name, (int)strlen(node->identifier.name));
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, (uint8_t)idx);
+                }
             }
             break;
         }
@@ -1137,6 +1216,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Chunk fn_chunk;
             chunk_init(&fn_chunk);
             Compiler fn_compiler;
+            fn_compiler.enclosing = compiler;
             fn_compiler.arena = compiler->arena;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
@@ -1149,6 +1229,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             fn_compiler.test_count = 0;
             fn_compiler.current_line = compiler->current_line;
             fn_compiler.program = compiler->program;
+            fn_compiler.upvalue_count = 0;
 
             /* Register parameters as locals */
             for (int i = 0; i < node->fn_decl.param_count; i++) {
@@ -1217,6 +1298,16 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             }
 
             emit_constant(compiler, val_function(func));
+            if (fn_compiler.upvalue_count > 0) {
+                for (int i = 0; i < fn_compiler.upvalue_count; i++) {
+                    if (fn_compiler.upvalue_is_local[i]) {
+                        emit_bytes(compiler, BC_GET_LOCAL, fn_compiler.upvalue_index[i]);
+                    } else {
+                        emit_bytes(compiler, BC_GET_UPVALUE, fn_compiler.upvalue_index[i]);
+                    }
+                }
+                emit_bytes(compiler, BC_CLOSURE, (uint8_t)fn_compiler.upvalue_count);
+            }
             if (node->fn_decl.is_method && node->fn_decl.impl_type) {
                 emit_byte(compiler, BC_REGISTER_METHOD);
                 {
@@ -1250,6 +1341,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Chunk fn_chunk;
             chunk_init(&fn_chunk);
             Compiler fn_compiler;
+            fn_compiler.enclosing = NULL;
             fn_compiler.arena = compiler->arena;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
@@ -1260,6 +1352,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             fn_compiler.in_function = true;
             fn_compiler.ffi_decl_count = 0;
             fn_compiler.test_count = 0;
+            fn_compiler.upvalue_count = 0;
 
             if (node->test_decl.body) {
                 for (int i = 0; i < node->test_decl.body->block.stmt_count; i++)
@@ -1494,11 +1587,16 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 if (local_idx >= 0) {
                     emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)local_idx);
                 } else {
-                    emit_byte(compiler, BC_SET_GLOBAL);
-                    ObjString *s = copy_string(node->assign.target->identifier.name,
-                                               (int)strlen(node->assign.target->identifier.name));
-                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                    emit_byte(compiler, (uint8_t)idx);
+                    int up_idx = compiler_resolve_upvalue(compiler, node->assign.target->identifier.name);
+                    if (up_idx >= 0) {
+                        emit_bytes(compiler, BC_SET_UPVALUE, (uint8_t)up_idx);
+                    } else {
+                        emit_byte(compiler, BC_SET_GLOBAL);
+                        ObjString *s = copy_string(node->assign.target->identifier.name,
+                                                   (int)strlen(node->assign.target->identifier.name));
+                        int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                        emit_byte(compiler, (uint8_t)idx);
+                    }
                 }
             } else if (node->assign.target->kind == NODE_MEMBER) {
                 compile_expression(compiler, node->assign.target->member.object);
@@ -1836,6 +1934,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Chunk tmp_chunk;
             chunk_init(&tmp_chunk);
             Compiler tmp_comp;
+            tmp_comp.enclosing = NULL;
             tmp_comp.arena = compiler->arena;
             tmp_comp.chunk = &tmp_chunk;
             tmp_comp.scope_depth = 0;
@@ -1845,6 +1944,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             tmp_comp.loop_count = 0;
             tmp_comp.in_function = true;
             tmp_comp.ffi_decl_count = 0;
+            tmp_comp.upvalue_count = 0;
 
             compile_node(&tmp_comp, node->comptime.body);
 
@@ -2181,6 +2281,7 @@ static bool actor_scheduler_process(VM *vm, Task *task) {
         tmp_task->stack[tmp_task->stack_top++] = msg_args->elements[i];
 
     tmp_task->frames[0].function = method_fn;
+    tmp_task->frames[0].closure = NULL;
     tmp_task->frames[0].ip = method_fn->code;
     tmp_task->frames[0].slots = tmp_task->stack;
     tmp_task->frames[0].return_base = 0;
@@ -2326,6 +2427,7 @@ bool vm_run(VM *vm, bool run_tests) {
     Task *init_task = task_new(vm);
     if (!init_task) return false;
     init_task->frames[0].function = vm->main_fn;
+    init_task->frames[0].closure = NULL;
     init_task->frames[0].ip = vm->main_fn->code;
     init_task->frames[0].slots = NULL;
     init_task->frames[0].return_base = 0;
@@ -2445,6 +2547,7 @@ bool vm_run(VM *vm, bool run_tests) {
             Task *t = task_new(vm);
             if (!t) continue;
             t->frames[0].function = tr->func;
+            t->frames[0].closure = NULL;
             t->frames[0].ip = tr->func->code;
             t->frames[0].slots = t->stack;
             t->frames[0].return_base = 0;
@@ -2595,6 +2698,7 @@ bool task_run(VM *vm, Task *task) {
                     return false;
                 }
                 tmp_task->frames[0].function = fn;
+                tmp_task->frames[0].closure = NULL;
                 tmp_task->frames[0].ip = fn->code;
                 tmp_task->frames[0].slots = tmp_task->stack;
                 tmp_task->frames[0].return_base = 0;
@@ -2849,6 +2953,29 @@ bool task_run(VM *vm, Task *task) {
                 }
                 break;
             }
+            case BC_CLOSURE: {
+                uint8_t upvalue_count = READ_BYTE();
+                ObjClosure *closure = new_closure(NULL, upvalue_count);
+                closure->obj.next = vm->objects;
+                vm->objects = (Obj*)closure;
+                for (int i = upvalue_count - 1; i >= 0; i--) {
+                    closure->captured[i] = POP();
+                }
+                Value fn_val = POP();
+                closure->function = fn_val.as.function;
+                PUSH(val_closure(closure));
+                break;
+            }
+            case BC_GET_UPVALUE: {
+                uint8_t idx = READ_BYTE();
+                PUSH(t->frames[t->frame_count - 1].closure->captured[idx]);
+                break;
+            }
+            case BC_SET_UPVALUE: {
+                uint8_t idx = READ_BYTE();
+                t->frames[t->frame_count - 1].closure->captured[idx] = PEEK(0);
+                break;
+            }
             case BC_GET_GLOBAL: {
                 ObjString *name = READ_CONSTANT().as.string;
                 Value value = get_global(vm, name);
@@ -2959,10 +3086,30 @@ bool task_run(VM *vm, Task *task) {
                     }
                     CallFrame *new_frame = &t->frames[t->frame_count++];
                     new_frame->function = fn;
+                    new_frame->closure = NULL;
                     new_frame->ip = fn->code;
                     new_frame->slots = &t->stack[t->stack_top - arg_count];
                     /* Stack: [..., callee, arg0, ..., argN-1]. Returning
                      * must pop the callee too, one slot before the args. */
+                    new_frame->return_base = t->stack_top - arg_count - 1;
+
+                } else if (callee.type == VAL_CLOSURE) {
+                    ObjClosure *closure = callee.as.closure;
+                    ObjFunction *fn = closure->function;
+
+                    if (fn->arity != arg_count) {
+                        runtime_error(vm, "Expected %d arguments but got %d", fn->arity, arg_count);
+                        return false;
+                    }
+                    if (t->frame_count >= TASK_FRAMES_MAX) {
+                        runtime_error(vm, "Stack overflow");
+                        return false;
+                    }
+                    CallFrame *new_frame = &t->frames[t->frame_count++];
+                    new_frame->function = fn;
+                    new_frame->closure = closure;
+                    new_frame->ip = fn->code;
+                    new_frame->slots = &t->stack[t->stack_top - arg_count];
                     new_frame->return_base = t->stack_top - arg_count - 1;
 
                 } else {
@@ -3382,11 +3529,30 @@ bool task_run(VM *vm, Task *task) {
                     }
                     CallFrame *new_frame = &t->frames[t->frame_count++];
                     new_frame->function = fn;
+                    new_frame->closure = NULL;
                     new_frame->ip = fn->code;
                     new_frame->slots = &t->stack[t->stack_top - total_args - 1];
                     /* Stack: [obj, arg0, ..., argN-1, callee] — callee is
                      * pushed *after* obj+args here (unlike BC_CALL), so the
                      * reset point is exactly slots' index, not one before. */
+                    new_frame->return_base = t->stack_top - total_args - 1;
+                } else if (callee.type == VAL_CLOSURE) {
+                    ObjClosure *closure = callee.as.closure;
+                    ObjFunction *fn = closure->function;
+                    uint8_t total_args = arg_count + 1;
+                    if (fn->arity != total_args) {
+                        runtime_error(vm, "Method '%s' expects %d arguments", method_name->chars, fn->arity);
+                        return false;
+                    }
+                    if (t->frame_count >= TASK_FRAMES_MAX) {
+                        runtime_error(vm, "Stack overflow");
+                        return false;
+                    }
+                    CallFrame *new_frame = &t->frames[t->frame_count++];
+                    new_frame->function = fn;
+                    new_frame->closure = closure;
+                    new_frame->ip = fn->code;
+                    new_frame->slots = &t->stack[t->stack_top - total_args - 1];
                     new_frame->return_base = t->stack_top - total_args - 1;
                 } else {
                     runtime_error(vm, "Method is not callable");
@@ -3849,6 +4015,11 @@ void vm_free(VM *vm) {
                 free(f->rle_lines);
                 free(f->rle_counts);
                 free(f->constants);
+                break;
+            }
+            case VAL_CLOSURE: {
+                ObjClosure *c = (ObjClosure *)obj;
+                free(c->captured);
                 break;
             }
             default: break;

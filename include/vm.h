@@ -53,6 +53,9 @@ typedef enum {
     BC_RETURN,
     BC_RETURN_N,
     BC_MAKE_FUNCTION,
+    BC_GET_UPVALUE,
+    BC_SET_UPVALUE,
+    BC_CLOSURE,
 
     /* Data structures */
     BC_ARRAY,
@@ -115,6 +118,7 @@ typedef enum {
     VAL_ARRAY,
     VAL_TUPLE,
     VAL_FUNCTION,
+    VAL_CLOSURE,
     VAL_NATIVE_FN,
     VAL_STRUCT,
     VAL_ENUM,
@@ -129,6 +133,7 @@ typedef struct ObjString ObjString;
 typedef struct ObjArray ObjArray;
 typedef struct ObjTuple ObjTuple;
 typedef struct ObjFunction ObjFunction;
+typedef struct ObjClosure ObjClosure;
 typedef struct ObjStruct ObjStruct;
 typedef struct ObjEnum ObjEnum;
 typedef struct ObjModule ObjModule;
@@ -146,6 +151,7 @@ typedef struct {
         ObjArray *array;
         ObjTuple *tuple;
         ObjFunction *function;
+        ObjClosure *closure;
         void *native_fn;
         ObjStruct *structure;
         ObjEnum *enum_val;
@@ -200,6 +206,13 @@ struct ObjFunction {
     int rle_count;
 };
 
+struct ObjClosure {
+    Obj obj;
+    ObjFunction *function;
+    Value *captured;       /* copied by value at creation time, not live cells */
+    int captured_count;
+};
+
 /* ─── Chunk (bytecode sequence) ─── */
 typedef struct {
     uint8_t *code;
@@ -231,6 +244,7 @@ Value val_string(ObjString *s);
 Value val_array(ObjArray *a);
 Value val_tuple(ObjTuple *t);
 Value val_function(ObjFunction *f);
+Value val_closure(ObjClosure *c);
 Value val_native_fn(void *fn);
 Value val_struct(ObjStruct *s);
 Value val_module(ObjModule *m);
@@ -243,6 +257,7 @@ ObjString *take_string(char *chars, int length);
 ObjArray *new_array(void);
 ObjTuple *new_tuple(int count);
 ObjFunction *new_function(void);
+ObjClosure *new_closure(ObjFunction *f, int captured_count);
 
 /* ─── Module ─── */
 struct ObjModule {
@@ -335,7 +350,9 @@ typedef struct {
     int scope_depth;     /* scope depth when loop started (for break/continue) */
 } LoopInfo;
 
-typedef struct {
+typedef struct Compiler Compiler;
+struct Compiler {
+    Compiler *enclosing;   /* NULL for top-level/test functions */
     Arena *arena;
     Chunk *chunk;
     AstNode *program;
@@ -356,7 +373,12 @@ typedef struct {
     /* Test declarations (populated during compilation, consumed by VM) */
     TestRecord tests[MAX_TESTS];
     int test_count;
-} Compiler;
+    /* Upvalue tracking */
+    char upvalue_names[64][64];
+    bool upvalue_is_local[64]; /* true: captures enclosing's *local* slot. false: captures enclosing's *upvalue* slot (transitive capture) */
+    uint8_t upvalue_index[64];
+    int upvalue_count;
+};
 
 void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *program);
 bool compiler_compile(Compiler *compiler);
@@ -371,6 +393,7 @@ typedef struct {
 
 typedef struct {
     ObjFunction *function;
+    ObjClosure *closure;
     uint8_t *ip;          /* instruction pointer */
     Value *slots;           /* base of this frame's stack slots */
     int return_base;        /* stack_top to restore to on return (before

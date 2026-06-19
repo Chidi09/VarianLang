@@ -1,0 +1,16 @@
+struct Box { val: int }
+impl Box {
+    fn make_adder(self) {
+        return |x| {
+            return self.val + x
+        }
+    }
+}
+
+test "closures capture self by value" {
+    let b = Box { val: 10 }
+    let adder = b.make_adder()
+    let result = adder(5)
+    print(result)
+    assert result == 15
+}
