@@ -1,30 +1,34 @@
 // 1. Offset Pagination Test
 let q1 = select("users")
     .fields(["id", "name"])
-    .where("status", "=", "active")
+    .where("status", "=")
     .paginate(2, 10)
     .build()
 
 print("Offset Pagination (SQLite):")
 print("SQL:", q1.sql)
-print("Params:", q1.params)
+print("Param count:", q1.param_count)
+let b1 = bind(q1, ["active"])
+print("Params:", b1.params)
 
 // 2. Cursor/Seek Pagination (Postgres Dialect) Test
 let q2 = select("posts")
     .use_dialect("postgres")
-    .where("category", "=", "tech")
-    .cursor_paginate("id", 100, 5)
+    .where("category", "=")
+    .cursor_paginate("id", true, 5)
     .build()
 
 print("Cursor Pagination (Postgres):")
 print("SQL:", q2.sql)
-print("Params:", q2.params)
+let b2 = bind(q2, ["tech", 100])
+print("Params:", b2.params)
 
 // 3. Key-based Access Test
 let q3 = select("users")
-    .find_by_key("email", "admin@example.com")
+    .find_by_key("email")
     .build()
 
 print("Key-based Access:")
 print("SQL:", q3.sql)
-print("Params:", q3.params)
+let b3 = bind(q3, ["admin@example.com"])
+print("Params:", b3.params)

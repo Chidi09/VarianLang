@@ -1,0 +1,67 @@
+// Test the instantiated ZenithApp + radix router + JSON-encoded OpenAPI,
+// synchronously via app.handle() — no socket needed.
+
+struct User { id: string, name: string }
+
+let users = [
+    User { id: "1", name: "Alice" },
+    User { id: "2", name: "Bob" },
+]
+
+fn fake_req(method, path) {
+    return http.create_struct(
+        ["method", "path", "body", "json"],
+        [method, path, "", null]
+    )
+}
+
+// Two fully independent apps — proves routes/middleware no longer live in
+// shared module globals.
+let app1 = new_app()
+let app2 = new_app()
+
+app1.add_middleware(|req, next| {
+    print("app1 middleware saw:", req.method, req.path)
+    return next(req)
+})
+
+app1.get("/", |req| {
+    return Response { status: 200, body: "Welcome to Zenith!", content_type: "text/plain" }
+}, "Root endpoint")
+
+app1.get("/api/users/:id", |req| {
+    for i in 0..users.len() {
+        if users[i].id == req.params.id {
+            return Response { status: 200, body: json_encode(users[i]), content_type: "application/json" }
+        }
+    }
+    return Response { status: 404, body: "User not found", content_type: "application/json" }
+}, "Get user by ID")
+
+app1.get("/hello/:name", |req| {
+    return Response { status: 200, body: "Hello, " + req.params.name + "!", content_type: "text/plain" }
+}, "Personalized greeting")
+
+app2.get("/ping", |req| {
+    return Response { status: 200, body: "pong", content_type: "text/plain" }
+}, "Health check")
+
+// Radix router: param matching, 404 on miss
+print(app1.handle(fake_req("GET", "/api/users/2")).body)
+print(app1.handle(fake_req("GET", "/api/users/99")).body)
+print(app1.handle(fake_req("GET", "/hello/Zenith")).body)
+print(app1.handle(fake_req("POST", "/api/users/2")).status)
+
+// app2 is unaffected by app1's routes — separate instance
+print(app2.handle(fake_req("GET", "/ping")).body)
+print(app2.handle(fake_req("GET", "/api/users/2")).status)
+
+// Middleware chain runs for app1's routes
+let mw_result = app1.handle(fake_req("GET", "/"))
+print(mw_result.body)
+
+// OpenAPI doc built from real structs/arrays via json_encode
+app1.enable_docs("/docs")
+let openapi_resp = app1.handle(fake_req("GET", "/openapi.json"))
+print(openapi_resp.content_type)
+print(openapi_resp.body)

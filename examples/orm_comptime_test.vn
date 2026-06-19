@@ -1,10 +1,35 @@
-let query = select("users")
-    .fields(["id", "name", "email"])
-    .where("id", "=", "?")
-    .where("status", "=", "?")
-    .limit(10)
-    .offset(0)
-    .build()
+// Test compile-time SQL generation + runtime parameter binding
 
-print("Runtime generated SQL:")
-print(query)
+// The query's *shape* never depends on a runtime value, so this whole
+// builder chain can be evaluated once at program load via `comptime`.
+let compiled = comptime {
+    select("users")
+        .fields(["id", "name", "email"])
+        .where("id", "=")
+        .where("status", "=")
+        .limit(10)
+        .offset(0)
+        .build()
+}
+
+print("Comptime-generated SQL:")
+print(compiled.sql)
+print("Param count:", compiled.param_count)
+
+let conn = sqlite.connect(":memory:")
+sqlite.query(conn, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, status TEXT)")
+sqlite.query(conn, "INSERT INTO users VALUES (1, 'Alice', 'alice@example.com', 'active')")
+sqlite.query(conn, "INSERT INTO users VALUES (2, 'Bob', 'bob@example.com', 'inactive')")
+
+let bound = bind(compiled, [1, "active"])
+let rows = run_sqlite(bound, conn)
+print("Rows matched:", rows.len())
+for i in 0..rows.len() {
+    print(rows[i].name, rows[i].email)
+}
+
+// Binding the wrong number of params is rejected before it ever reaches SQL
+let mismatched = bind(compiled, [1])
+print("should not print")
+
+sqlite.close(conn)

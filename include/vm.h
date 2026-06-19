@@ -372,6 +372,11 @@ typedef struct {
     ObjFunction *function;
     uint8_t *ip;          /* instruction pointer */
     Value *slots;           /* base of this frame's stack slots */
+    int return_base;        /* stack_top to restore to on return (before
+                              * pushing the result) — explicit because
+                              * different call sites (BC_CALL vs method
+                              * dispatch) push the callee at different
+                              * positions relative to slots */
 } CallFrame;
 
 /* ─── Task (execution context) ─── */

@@ -1,33 +1,233 @@
+// zenith.vn - Zenith web framework
+//
+// - ZenithApp is a real instantiable struct: route tables, middleware, and
+//   docs settings live per-instance instead of in shared module globals, so
+//   you can build several independent apps in the same program.
+// - Routing is a segment trie (radix-style router): each request walks one
+//   node per path segment (O(depth)) instead of scanning every registered
+//   route (O(routes)). The HTTP method is folded in as the trie's first
+//   segment, so one tree handles all methods.
+// - The OpenAPI document is built as real structs/arrays and serialized
+//   once via json_encode, instead of hand-concatenated JSON strings.
+//
+// Caveat: this language's lambdas don't capture enclosing locals (no closure
+// upvalues over parameters), so the part of the framework that actually
+// answers HTTP requests (listen/middleware "next") has to go through one
+// active-app slot rather than a closure bound to `self`. Every other part of
+// an app — building routes, mounting middleware, introspecting docs — works
+// on fully independent ZenithApp instances.
+
 struct Response { status: int, body: string, content_type: string }
-
 struct Route { method: string, path: string, handler, summary: string }
+struct OpenApiInfo { title: string, version: string }
+struct PathGroup { path_key: string, methods: array, ops: array }
 
-struct ApiInfo { title: string, version: string }
-
-let _routes = []
-let _middlewares = []
-let _docs_enabled = false
-let _docs_endpoint = "/docs"
-
-fn get(path, handler, summary) {
-    _routes = _routes.push(Route { method: "GET", path: path, handler: handler, summary: summary })
+struct RadixNode {
+    static_keys: array,
+    static_children: array,
+    param_name: string,
+    param_child,
+    handler,
+    summary: string
 }
 
-fn post(path, handler, summary) {
-    _routes = _routes.push(Route { method: "POST", path: path, handler: handler, summary: summary })
+fn new_radix_node() {
+    return RadixNode {
+        static_keys: [],
+        static_children: [],
+        param_name: "",
+        param_child: null,
+        handler: null,
+        summary: ""
+    }
 }
 
-fn put(path, handler, summary) {
-    _routes = _routes.push(Route { method: "PUT", path: path, handler: handler, summary: summary })
+fn _split_path(path) {
+    let raw = path.split("/")
+    let segs = []
+    for i in 0..raw.len() {
+        if raw[i] != "" {
+            segs = segs.push(raw[i])
+        }
+    }
+    return segs
 }
 
-fn delete(path, handler, summary) {
-    _routes = _routes.push(Route { method: "DELETE", path: path, handler: handler, summary: summary })
+fn radix_insert(root, route_key, handler, summary) {
+    let segs = _split_path(route_key)
+    let node = root
+    for i in 0..segs.len() {
+        let seg = segs[i]
+        if seg.starts_with(":") {
+            if node.param_child == null {
+                node.param_child = new_radix_node()
+            }
+            node.param_child.param_name = seg.substring(1, seg.len())
+            node = node.param_child
+        } else {
+            let found = null
+            for j in 0..node.static_keys.len() {
+                if node.static_keys[j] == seg {
+                    found = node.static_children[j]
+                    break
+                }
+            }
+            if found == null {
+                found = new_radix_node()
+                node.static_keys = node.static_keys.push(seg)
+                node.static_children = node.static_children.push(found)
+            }
+            node = found
+        }
+    }
+    node.handler = handler
+    node.summary = summary
 }
 
-fn add_middleware(handler) {
-    _middlewares = _middlewares.push(handler)
+fn radix_lookup(root, route_key) {
+    let segs = _split_path(route_key)
+    let node = root
+    let param_names = []
+    let param_values = []
+    for i in 0..segs.len() {
+        let seg = segs[i]
+        let next = null
+        for j in 0..node.static_keys.len() {
+            if node.static_keys[j] == seg {
+                next = node.static_children[j]
+                break
+            }
+        }
+        if next == null && node.param_child != null {
+            next = node.param_child
+            param_names = param_names.push(next.param_name)
+            param_values = param_values.push(seg)
+        }
+        if next == null {
+            return null
+        }
+        node = next
+    }
+    if node.handler == null {
+        return null
+    }
+    return http.create_struct(
+        ["handler", "summary", "param_names", "param_values"],
+        [node.handler, node.summary, param_names, param_values]
+    )
 }
+
+// ─── App ───
+
+struct ZenithApp {
+    root: RadixNode,
+    middlewares: array,
+    route_list: array,
+    docs_enabled: bool,
+    docs_endpoint: string
+}
+
+fn new_app() {
+    return ZenithApp {
+        root: new_radix_node(),
+        middlewares: [],
+        route_list: [],
+        docs_enabled: false,
+        docs_endpoint: "/docs"
+    }
+}
+
+impl ZenithApp {
+    fn _add_route(self, method, path, handler, summary) {
+        radix_insert(self.root, method + path, handler, summary)
+        self.route_list = self.route_list.push(
+            Route { method: method, path: path, handler: handler, summary: summary }
+        )
+    }
+
+    fn get(self, path, handler, summary) {
+        self._add_route("GET", path, handler, summary)
+    }
+
+    fn post(self, path, handler, summary) {
+        self._add_route("POST", path, handler, summary)
+    }
+
+    fn put(self, path, handler, summary) {
+        self._add_route("PUT", path, handler, summary)
+    }
+
+    fn delete(self, path, handler, summary) {
+        self._add_route("DELETE", path, handler, summary)
+    }
+
+    fn add_middleware(self, handler) {
+        self.middlewares = self.middlewares.push(handler)
+    }
+
+    fn enable_docs(self, endpoint) {
+        self.docs_enabled = true
+        self.docs_endpoint = endpoint
+        self.get("/openapi.json", _openapi_handler, "OpenAPI 3.0 specification")
+        self.get(endpoint, _swagger_handler, "Swagger UI documentation")
+    }
+
+    // Synchronous request handling — usable directly in tests without a
+    // running socket: app.handle(fake_req). Scopes _active_app for the
+    // duration of the call so middleware's `next` resolves to this app even
+    // if handle() is called directly, nested, or interleaved across apps.
+    fn handle(self, req) {
+        let prev_active = _active_app
+        _active_app = self
+
+        let m = radix_lookup(self.root, req.method + req.path)
+        if m == null {
+            _active_app = prev_active
+            return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+        }
+        let params = http.create_struct(m.param_names, m.param_values)
+        let req2 = http.create_struct(
+            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"],
+            [req.method, req.path, req.body, req.json, params, 0, m.handler]
+        )
+        let result = _run_middleware(self, req2)
+        _active_app = prev_active
+        return result
+    }
+
+    fn listen(self, port) {
+        _active_app = self
+        print("Zenith running on http://localhost:", port)
+        http.serve(port, _global_dispatch)
+    }
+}
+
+let _active_app = null
+
+fn _global_dispatch(req) {
+    return _active_app.handle(req)
+}
+
+fn _run_middleware(app, req) {
+    let idx = req._middleware_idx
+    if idx < app.middlewares.len() {
+        let mw = app.middlewares[idx]
+        let next_req = http.create_struct(
+            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"],
+            [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler]
+        )
+        return mw(next_req, _global_next)
+    } else {
+        let handler = req._route_handler
+        return handler(req)
+    }
+}
+
+fn _global_next(req) {
+    return _run_middleware(_active_app, req)
+}
+
+// ─── OpenAPI ───
 
 fn _convert_path(path_str) {
     let result = ""
@@ -61,115 +261,71 @@ fn _convert_path(path_str) {
     return result
 }
 
-fn build_openapi_spec(base_url) {
-    let info = ApiInfo { title: "Zenith API", version: "1.0.0" }
-    let paths_json = ""
-    for i in 0.._routes.len() {
-        let route = _routes[i]
-        let path_key = json_encode(_convert_path(route.path))
+fn build_openapi_spec(app, base_url) {
+    let groups = []
+    for i in 0..app.route_list.len() {
+        let route = app.route_list[i]
+        let pkey = _convert_path(route.path)
         let method_name = route.method.lower()
-        let method_entry = "{" + json_encode("summary") + ":" + json_encode(route.summary)
-        method_entry = method_entry + "," + json_encode("responses") + ":{"
-        method_entry = method_entry + json_encode("200") + ":{"
-        method_entry = method_entry + json_encode("description") + ":" + json_encode("OK")
-        method_entry = method_entry + "}}"
-        method_entry = method_entry + "}"
-        let path_entry = path_key + ":{" + json_encode(method_name) + ":" + method_entry + "}"
-        if i > 0 { paths_json = paths_json + "," }
-        paths_json = paths_json + path_entry
-    }
-    let spec = "{" + json_encode("openapi") + ":" + json_encode("3.0.0") + ","
-    spec = spec + json_encode("info") + ":" + json_encode(info) + ","
-    spec = spec + json_encode("paths") + ":{" + paths_json + "},"
-    spec = spec + json_encode("servers") + ":[{" + json_encode("url") + ":" + json_encode(base_url) + "}]"
-    spec = spec + "}"
-    return spec
-}
+        let op = http.create_struct(
+            ["summary", "responses"],
+            [route.summary, http.create_struct(
+                ["200"], [http.create_struct(["description"], ["OK"])]
+            )]
+        )
 
-fn enable_docs(endpoint) {
-    _docs_enabled = true
-    _docs_endpoint = endpoint
-
-    get("/openapi.json", |req| {
-        let spec = build_openapi_spec("http://localhost:" + req.path)
-        return Response { status: 200, body: spec, content_type: "application/json" }
-    }, "OpenAPI 3.0 specification")
-
-    get(endpoint, |req| {
-        let html = "<!DOCTYPE html>"
-        html = html + "<html lang=\"en\">"
-        html = html + "<head><meta charset=\"UTF-8\">"
-        html = html + "<title>Zenith API Docs</title>"
-        html = html + "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css\">"
-        html = html + "</head><body>"
-        html = html + "<div id=\"swagger-ui\"></div>"
-        html = html + "<script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js\"></script>"
-        html = html + "<script>"
-        html = html + "SwaggerUIBundle({"
-        html = html + "url: '/openapi.json',"
-        html = html + "dom_id: '#swagger-ui',"
-        html = html + "})"
-        html = html + "</script>"
-        html = html + "</body></html>"
-        return Response { status: 200, body: html, content_type: "text/html" }
-    }, "Swagger UI documentation")
-}
-
-fn _match_route(pattern, path) {
-    if pattern == path {
-        return http.create_struct([], [])
-    }
-    let p_segs = pattern.split("/")
-    let r_segs = path.split("/")
-    if p_segs.len() != r_segs.len() {
-        return null
-    }
-    let keys = []
-    let values = []
-    for i in 0..p_segs.len() {
-        let ps = p_segs[i]
-        let rs = r_segs[i]
-        if ps.starts_with(":") {
-            keys = keys.push(ps.substring(1, ps.len()))
-            values = values.push(rs)
-        } else if ps != rs {
-            return null
-        }
-    }
-    return http.create_struct(keys, values)
-}
-
-fn _next_handler(req) {
-    let idx = req._middleware_idx
-    if idx < _middlewares.len() {
-        let mw = _middlewares[idx]
-        let keys = ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"]
-        let values = [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler]
-        let next_req = http.create_struct(keys, values)
-        return mw(next_req, _next_handler)
-    } else {
-        let handler = req._route_handler
-        return handler(req)
-    }
-}
-
-fn _main_handler(req) {
-    for i in 0.._routes.len() {
-        let route = _routes[i]
-        if route.method == req.method {
-            let params = _match_route(route.path, req.path)
-            if params != null {
-                let keys = ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler"]
-                let values = [req.method, req.path, req.body, req.json, params, 0, route.handler]
-                let req_with_state = http.create_struct(keys, values)
-                return _next_handler(req_with_state)
+        let group = null
+        for j in 0..groups.len() {
+            if groups[j].path_key == pkey {
+                group = groups[j]
+                break
             }
         }
+        if group == null {
+            group = PathGroup { path_key: pkey, methods: [], ops: [] }
+            groups = groups.push(group)
+        }
+        group.methods = group.methods.push(method_name)
+        group.ops = group.ops.push(op)
     }
-    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+
+    let path_keys = []
+    let path_vals = []
+    for i in 0..groups.len() {
+        let g = groups[i]
+        path_keys = path_keys.push(g.path_key)
+        path_vals = path_vals.push(http.create_struct(g.methods, g.ops))
+    }
+
+    let info = OpenApiInfo { title: "Zenith API", version: "1.0.0" }
+    let servers = [http.create_struct(["url"], [base_url])]
+    let spec = http.create_struct(
+        ["openapi", "info", "paths", "servers"],
+        ["3.0.0", info, http.create_struct(path_keys, path_vals), servers]
+    )
+    return json_encode(spec)
 }
 
-fn listen(port) {
-    print("Zenith running on http://localhost:", port)
-    http.serve(port, _main_handler)
+fn _openapi_handler(req) {
+    let spec = build_openapi_spec(_active_app, "http://localhost:" + req.path)
+    return Response { status: 200, body: spec, content_type: "application/json" }
+}
+
+fn _swagger_handler(req) {
+    let html = "<!DOCTYPE html>"
+    html = html + "<html lang=\"en\">"
+    html = html + "<head><meta charset=\"UTF-8\">"
+    html = html + "<title>Zenith API Docs</title>"
+    html = html + "<link rel=\"stylesheet\" href=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css\">"
+    html = html + "</head><body>"
+    html = html + "<div id=\"swagger-ui\"></div>"
+    html = html + "<script src=\"https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js\"></script>"
+    html = html + "<script>"
+    html = html + "SwaggerUIBundle({"
+    html = html + "url: '/openapi.json',"
+    html = html + "dom_id: '#swagger-ui',"
+    html = html + "})"
+    html = html + "</script>"
+    html = html + "</body></html>"
+    return Response { status: 200, body: html, content_type: "text/html" }
 }

@@ -1,12 +1,74 @@
-// db.vn - Compile-time/Runtime Query Builder and ORM with best practices
+// db.vn - Compile-time SQL generation + runtime parameter binding
+//
+// Query *shape* (table, fields, where field/op pairs, limit/offset, dialect)
+// is static at almost every call site, so compile_select()/QueryBuilder.build()
+// depend on nothing but that shape and are safe to evaluate inside a
+// `comptime { ... }` block. The actual bind *values* are runtime-only and are
+// supplied afterwards via bind(), which checks the value count against the
+// shape before any SQL ever reaches the driver.
 
+struct CompiledQuery { sql: string, param_count: int, dialect: string }
+struct BoundQuery { sql: string, params: array }
+
+// Pure function of query shape -> SQL text. No parameter values involved,
+// so this can be called from inside `comptime { ... }` to bake the SQL
+// string into the program at compile time.
+fn compile_select(table, fields, wheres, limit_val, offset_val, dialect) {
+    let sql = "SELECT "
+    for i in 0..fields.len() {
+        if i > 0 { sql = sql + ", " }
+        sql = sql + fields[i]
+    }
+    sql = sql + " FROM " + table
+
+    if wheres.len() > 0 {
+        sql = sql + " WHERE "
+        for i in 0..wheres.len() {
+            if i > 0 { sql = sql + " AND " }
+            let clause = wheres[i]
+            let placeholder = "?"
+            if dialect == "postgres" {
+                let idx = i + 1
+                placeholder = "$" + idx
+            }
+            sql = sql + clause[0] + " " + clause[1] + " " + placeholder
+        }
+    }
+
+    if limit_val >= 0 { sql = sql + " LIMIT " + limit_val }
+    if offset_val >= 0 { sql = sql + " OFFSET " + offset_val }
+
+    return CompiledQuery { sql: sql, param_count: wheres.len(), dialect: dialect }
+}
+
+// Runtime wrapper: attaches concrete parameter values to a CompiledQuery,
+// enforcing that the value count matches the shape's where-clause count
+// before anything is sent to the driver.
+fn bind(compiled, params) {
+    if params.len() != compiled.param_count {
+        throw("db.bind: expected " + compiled.param_count + " parameter(s), got " + params.len())
+    }
+    return BoundQuery { sql: compiled.sql, params: params }
+}
+
+fn run_sqlite(bound, conn) {
+    return sqlite.query(conn, bound.sql, bound.params)
+}
+
+fn run_postgres(bound, conn) {
+    return postgres.query(conn, bound.sql, bound.params)
+}
+
+// Fluent builder over compile_select — same comptime-safety guarantee:
+// every method only touches shape (table/fields/where field+op/limit/offset),
+// never a bound value, so a full builder chain ending in .build() can be
+// wrapped in `comptime { ... }` just like a bare compile_select() call.
 struct QueryBuilder {
     table: string,
     select_fields: array,
     where_clauses: array,
     limit_val: int,
     offset_val: int,
-    params: array,
     dialect: string
 }
 
@@ -17,7 +79,6 @@ fn select(table) {
         where_clauses: [],
         limit_val: -1,
         offset_val: -1,
-        params: [],
         dialect: "sqlite"
     }
 }
@@ -33,8 +94,7 @@ impl QueryBuilder {
         return self
     }
 
-    fn where(self, field, op, val) {
-        self.params = self.params.push(val)
+    fn where(self, field, op) {
         self.where_clauses = self.where_clauses.push([field, op])
         return self
     }
@@ -58,49 +118,22 @@ impl QueryBuilder {
         return self
     }
 
-    fn cursor_paginate(self, field, last_seen, l) {
-        if last_seen != null {
-            self = self.where(field, ">", last_seen)
+    fn cursor_paginate(self, field, has_cursor, l) {
+        if has_cursor {
+            self = self.where(field, ">")
         }
         self = self.limit(l)
         return self
     }
 
-    fn find_by_key(self, field, val) {
-        self = self.where(field, "=", val)
+    fn find_by_key(self, field) {
+        self = self.where(field, "=")
         self = self.limit(1)
         return self
     }
 
     fn build(self) {
-        let sql = "SELECT "
-        for i in 0..self.select_fields.len() {
-            if i > 0 { sql = sql + ", " }
-            sql = sql + self.select_fields[i]
-        }
-        sql = sql + " FROM " + self.table
-
-        if self.where_clauses.len() > 0 {
-            sql = sql + " WHERE "
-            for i in 0..self.where_clauses.len() {
-                if i > 0 { sql = sql + " AND " }
-                let clause = self.where_clauses[i]
-                let placeholder = "?"
-                if self.dialect == "postgres" {
-                    let idx = i + 1
-                    placeholder = "$" + idx
-                }
-                sql = sql + clause[0] + " " + clause[1] + " " + placeholder
-            }
-        }
-
-        if self.limit_val >= 0 {
-            sql = sql + " LIMIT " + self.limit_val
-        }
-        if self.offset_val >= 0 {
-            sql = sql + " OFFSET " + self.offset_val
-        }
-
-        return http.create_struct(["sql", "params"], [sql, self.params])
+        return compile_select(self.table, self.select_fields, self.where_clauses,
+                               self.limit_val, self.offset_val, self.dialect)
     }
 }

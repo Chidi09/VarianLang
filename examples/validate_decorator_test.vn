@@ -1,0 +1,13 @@
+// Test native @validate struct/field decorators end-to-end
+
+struct User {
+    @is_email email: string,
+    @min_len(3) name: string,
+    id: string
+}
+
+let ok_user = User { id: "1", name: "Alice", email: "alice@example.com" }
+print("Created valid user:", ok_user.name, ok_user.email)
+
+let bad_email = User { id: "2", name: "Bob", email: "not-an-email" }
+print("This should not print")

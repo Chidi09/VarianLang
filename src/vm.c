@@ -13,54 +13,20 @@
 static void compile_node(Compiler *compiler, AstNode *node);
 static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
 
-/* ─── Validation Registry ─── */
-static void register_struct_validations(VM *vm, AstNode *node) {
-    if (!node || node->kind != NODE_STRUCT_DECL) return;
-
-    ValidationRegistry *reg = &vm->validation_registry;
-    if (reg->count >= MAX_STRUCT_VALIDATIONS) return;
-
-    StructValidationInfo *info = &reg->validations[reg->count++];
-    strncpy(info->type_name, node->struct_decl.name, 63);
-    info->type_name[63] = '\0';
-    info->field_count = node->struct_decl.field_count;
-
-    /* Struct-level validations */
-    info->struct_validation_count = node->struct_decl.decorator_count;
-    if (info->struct_validation_count > 0) {
-        info->struct_validations = (ValidationRule *)calloc(info->struct_validation_count, sizeof(ValidationRule));
-        for (int i = 0; i < info->struct_validation_count; i++) {
-            info->struct_validations[i].rule_name = strdup(node->struct_decl.decorator_keys[i]);
-            /* For now, store the AST node as rule_args - we'll evaluate at runtime */
-            info->struct_validations[i].rule_args = NULL;
-            info->struct_validations[i].rule_arg_count = 0;
+/* ─── Validation Registry ───
+ * Population happens at runtime via BC_REGISTER_VALIDATIONS (emitted by
+ * compile_node for NODE_STRUCT_DECL); see the opcode handler in vm_run. */
+static bool decorator_literal_to_value(AstNode *node, Value *out) {
+    switch (node->kind) {
+        case NODE_INT_LITERAL:    *out = val_int(node->literal.int_value); return true;
+        case NODE_FLOAT_LITERAL:  *out = val_float(node->literal.float_value); return true;
+        case NODE_BOOL_LITERAL:   *out = val_bool(node->literal.bool_value); return true;
+        case NODE_STRING_LITERAL: {
+            const char *s = node->literal.string_value ? node->literal.string_value : "";
+            *out = val_string(copy_string(s, (int)strlen(s)));
+            return true;
         }
-    } else {
-        info->struct_validations = NULL;
-    }
-
-    /* Field-level validations */
-    info->field_validations = (ValidationRule **)calloc(info->field_count, sizeof(ValidationRule *));
-    info->field_validation_counts = (int *)calloc(info->field_count, sizeof(int));
-    info->field_names = (char **)calloc(info->field_count, sizeof(char *));
-
-    for (int i = 0; i < info->field_count; i++) {
-        info->field_names[i] = strdup(node->struct_decl.field_names[i]);
-        int fcount = 0;
-        if (node->struct_decl.field_decorator_counts) {
-            fcount = node->struct_decl.field_decorator_counts[i];
-        }
-        info->field_validation_counts[i] = fcount;
-        if (fcount > 0 && node->struct_decl.field_decorator_keys && node->struct_decl.field_decorator_keys[i]) {
-            info->field_validations[i] = (ValidationRule *)calloc(fcount, sizeof(ValidationRule));
-            for (int j = 0; j < fcount; j++) {
-                info->field_validations[i][j].rule_name = strdup(node->struct_decl.field_decorator_keys[i][j]);
-                info->field_validations[i][j].rule_args = NULL;
-                info->field_validations[i][j].rule_arg_count = 0;
-            }
-        } else {
-            info->field_validations[i] = NULL;
-        }
+        default: return false;
     }
 }
 
@@ -89,12 +55,13 @@ static bool call_validate_function(VM *vm, const char *rule_name, Value value, V
 }
 
 static bool run_struct_validations(VM *vm, ObjStruct *s) {
-    /* Run struct-level validations */
+    /* Run struct-level validations, passing the whole struct as the value */
     for (int i = 0; i < s->struct_validation_count; i++) {
         ValidationRule *rule = &s->struct_validations[i];
-        /* For struct-level validation, we'd need to pass the whole struct */
-        /* For now, skip struct-level validations as they need more context */
-        (void)rule;
+        if (!call_validate_function(vm, rule->rule_name, val_struct(s), rule->rule_args, rule->rule_arg_count)) {
+            runtime_error(vm, "Struct-level validation failed for '%s': %s", s->type_name, rule->rule_name);
+            return false;
+        }
     }
 
     /* Run field-level validations */
@@ -1691,14 +1658,20 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 /* Struct-level validation count */
                 emit_byte(compiler, (uint8_t)node->struct_decl.decorator_count);
 
-                /* Struct-level validation rules */
+                /* Struct-level validation rules: key idx, then the decorator's
+                 * literal argument (e.g. @min_len(3) -> 3; bare @is_email -> true) */
                 for (int i = 0; i < node->struct_decl.decorator_count; i++) {
                     ObjString *key = copy_string(node->struct_decl.decorator_keys[i],
                                                  (int)strlen(node->struct_decl.decorator_keys[i]));
                     int ki = chunk_add_constant(compiler->chunk, val_string(key));
                     emit_byte(compiler, (uint8_t)ki);
-                    /* For now, we don't serialize the value - just the rule name */
-                    /* In a full implementation, we'd serialize the args too */
+
+                    Value arg_val = val_bool(true);
+                    if (!decorator_literal_to_value(node->struct_decl.decorator_values[i], &arg_val)) {
+                        compiler_error(compiler, "Decorator arguments must be literal values");
+                    }
+                    int ai = chunk_add_constant(compiler->chunk, arg_val);
+                    emit_byte(compiler, (uint8_t)ai);
                 }
 
                 /* Field count */
@@ -1724,6 +1697,13 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                                                           (int)strlen(node->struct_decl.field_decorator_keys[i][j]));
                             int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
                             emit_byte(compiler, (uint8_t)fki);
+
+                            Value arg_val = val_bool(true);
+                            if (!decorator_literal_to_value(node->struct_decl.field_decorator_values[i][j], &arg_val)) {
+                                compiler_error(compiler, "Decorator arguments must be literal values");
+                            }
+                            int afi = chunk_add_constant(compiler->chunk, arg_val);
+                            emit_byte(compiler, (uint8_t)afi);
                         }
                     }
                 }
@@ -2198,6 +2178,7 @@ static bool actor_scheduler_process(VM *vm, Task *task) {
     tmp_task->frames[0].function = method_fn;
     tmp_task->frames[0].ip = method_fn->code;
     tmp_task->frames[0].slots = tmp_task->stack;
+    tmp_task->frames[0].return_base = 0;
     tmp_task->frame_count = 1;
 
     Task *prev = vm->current_task;
@@ -2324,73 +2305,6 @@ static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method
 
 /* ─── Forward declarations ─── */
 
-/* ─── Resolve comptime blocks at VM startup ─── */
-static bool vm_resolve_comptime(VM *vm) {
-    Chunk *chunk = vm->compiler->chunk;
-    for (int i = 0; i < chunk->count; ) {
-        if (chunk->code[i] == BC_COMPTIME_EXEC) {
-            int result_idx = chunk->code[i + 1];
-            int fn_idx = chunk->code[i + 2];
-
-            if (fn_idx >= chunk->constant_count ||
-                chunk->constants[fn_idx].type != VAL_FUNCTION) {
-                fprintf(stderr, "comptime: invalid fn constant\n");
-                return false;
-            }
-            ObjFunction *fn = chunk->constants[fn_idx].as.function;
-
-            /* Create a temporary task */
-            Task *tmp_task = task_new(vm);
-            if (!tmp_task) return false;
-            tmp_task->frames[0].function = fn;
-            tmp_task->frames[0].ip = fn->code;
-            tmp_task->frames[0].slots = tmp_task->stack;
-            tmp_task->frame_count = 1;
-
-            vm->current_task = tmp_task;
-            bool ok = task_run(vm, tmp_task);
-            vm->current_task = NULL;
-
-            if (!ok) return false;
-
-            /* Read result from top of task's stack */
-            if (tmp_task->stack_top > 0)
-                chunk->constants[result_idx] = tmp_task->stack[tmp_task->stack_top - 1];
-
-            tmp_task->dead = true;
-            i += 3;
-        } else {
-            /* Skip to next instruction — for BC_CONSTANT, skip 2; for others skip 1 */
-            /* Simple heuristic: most opcodes are 1 byte. Only skip extra for known multi-byte. */
-            uint8_t op = chunk->code[i];
-            i++;
-            if (op == BC_JUMP || op == BC_JUMP_IF_FALSE || op == BC_LOOP ||
-                op == BC_COMPTIME_EXEC || op == BC_FFI_CALL || op == BC_DISPATCH ||
-                op == BC_ENUM || op == BC_TRY || op == BC_CONSTANT_LONG ||
-                op == BC_REGISTER_METHOD || op == BC_UNPACK_ENUM)
-                i += 2;
-            else if (op == BC_STRUCT) {
-                int fc = chunk->code[i];
-                i += 2 + fc;
-            }
-            else if (op == BC_CONSTANT || op == BC_GET_GLOBAL || op == BC_SET_GLOBAL ||
-                     op == BC_DEFINE_GLOBAL || op == BC_GET_LOCAL || op == BC_SET_LOCAL ||
-                     op == BC_CALL || op == BC_ARRAY || op == BC_TUPLE ||
-                     op == BC_RETURN_N || op == BC_BUILD_STRING ||
-                     op == BC_MEMBER || op == BC_SET_MEMBER || op == BC_TAG_EQ)
-                i += 1;
-            else if (op == BC_ACTOR_INIT) {
-                /* variable length: op + type_name_idx + field_count + field_name_idxs */
-                int fc = chunk->code[i + 1];
-                i += 2 + fc;
-                continue;
-            }
-            /* else: single-byte opcode */
-        }
-    }
-    return true;
-}
-
 bool vm_run(VM *vm, bool run_tests) {
     vm->test_fail_count = 0;
     /* Create main script function (not tracked in objects list) */
@@ -2409,6 +2323,7 @@ bool vm_run(VM *vm, bool run_tests) {
     init_task->frames[0].function = vm->main_fn;
     init_task->frames[0].ip = vm->main_fn->code;
     init_task->frames[0].slots = NULL;
+    init_task->frames[0].return_base = 0;
     init_task->frame_count = 1;
     vm->current_task = init_task;
 
@@ -2463,11 +2378,6 @@ bool vm_run(VM *vm, bool run_tests) {
 
     /* Resolve FFI declarations */
     if (!vm_resolve_ffi(vm)) {
-        return false;
-    }
-
-    /* Resolve comptime blocks */
-    if (!vm_resolve_comptime(vm)) {
         return false;
     }
 
@@ -2532,6 +2442,7 @@ bool vm_run(VM *vm, bool run_tests) {
             t->frames[0].function = tr->func;
             t->frames[0].ip = tr->func->code;
             t->frames[0].slots = t->stack;
+            t->frames[0].return_base = 0;
             t->frame_count = 1;
 
             vm->had_error = false;
@@ -2658,10 +2569,45 @@ bool task_run(VM *vm, Task *task) {
                 break;
             }
             case BC_COMPTIME_EXEC: {
-                /* Pushes pre-computed value from constant table */
+                /* Evaluated inline, in lexical position, so any function or
+                 * global defined earlier in the program is already visible —
+                 * unlike a startup pre-pass, which would run before any of
+                 * the script's own top-level definitions existed. */
                 uint8_t result_idx = READ_BYTE();
-                (void)READ_BYTE(); /* skip fn_idx */
-                PUSH(vm->compiler->chunk->constants[result_idx]);
+                uint8_t fn_idx = READ_BYTE();
+                ObjFunction *cur_fn = t->frames[t->frame_count - 1].function;
+
+                if (fn_idx >= cur_fn->constant_count ||
+                    cur_fn->constants[fn_idx].type != VAL_FUNCTION) {
+                    runtime_error(vm, "comptime: invalid fn constant");
+                    return false;
+                }
+                ObjFunction *fn = cur_fn->constants[fn_idx].as.function;
+
+                Task *tmp_task = task_new(vm);
+                if (!tmp_task) {
+                    runtime_error(vm, "comptime: failed to allocate task");
+                    return false;
+                }
+                tmp_task->frames[0].function = fn;
+                tmp_task->frames[0].ip = fn->code;
+                tmp_task->frames[0].slots = tmp_task->stack;
+                tmp_task->frame_count = 1;
+
+                Task *prev = vm->current_task;
+                vm->current_task = tmp_task;
+                bool ok = task_run(vm, tmp_task);
+                vm->current_task = prev;
+
+                if (!ok) return false;
+
+                Value result = val_nil();
+                if (tmp_task->stack_top > 0)
+                    result = tmp_task->stack[tmp_task->stack_top - 1];
+                tmp_task->dead = true;
+
+                cur_fn->constants[result_idx] = result;
+                PUSH(result);
                 break;
             }
             case BC_AWAIT: {
@@ -3037,7 +2983,15 @@ bool task_run(VM *vm, Task *task) {
                     t->cache_on_return = false;
                 }
                 CallFrame *frame = &t->frames[t->frame_count - 1];
-                int arity = frame->function->arity;
+                /* Reset to the call site's recorded base, discarding args
+                 * AND any locals/temporaries pushed during the function
+                 * body (e.g. for-loop counters) that an early `return` from
+                 * inside a nested block never got to pop. Using the base
+                 * recorded at call time (rather than re-deriving it from
+                 * `slots`) is required because different call sites push
+                 * the callee at different positions relative to slots
+                 * (BC_CALL: before args: BC_DISPATCH: after args). */
+                int base = frame->return_base;
                 t->frame_count--;
                 if (t->frame_count == 0) {
                     /* Task completed — save return value, mark dead */
@@ -3046,34 +3000,41 @@ bool task_run(VM *vm, Task *task) {
                     PUSH(result);
                     goto end_vm;
                 }
-                /* Pop args, callee, then push result for caller */
-                if (t->stack_top < (arity + 1)) {
+                if (base < 0) {
                     runtime_error(vm, "Stack underflow on return");
                     return false;
                 }
-                t->stack_top -= (arity + 1);  /* args + callee */
+                t->stack_top = base;
                 PUSH(result);
                 break;
             }
 
             case BC_RETURN_N: {
                 uint8_t rcount = READ_BYTE();
-                Value *return_vals = &t->stack[t->stack_top - rcount];
+                Value tmp_vals[16];
+                int copy_count = rcount < 16 ? rcount : 16;
+                for (int i = 0; i < copy_count; i++)
+                    tmp_vals[i] = t->stack[t->stack_top - rcount + i];
+
                 CallFrame *frame = &t->frames[t->frame_count - 1];
-                int arity = frame->function->arity;
+                /* See BC_RETURN for why this uses the recorded base. */
+                int base = frame->return_base;
                 t->frame_count--;
                 if (t->frame_count == 0) {
                     /* Task completed — save first return value */
-                    t->result = (rcount > 0) ? return_vals[0] : val_nil();
+                    t->result = (copy_count > 0) ? tmp_vals[0] : val_nil();
                     t->dead = true;
-                    for (int i = 0; i < rcount; i++)
-                        PUSH(return_vals[i]);
+                    for (int i = 0; i < copy_count; i++)
+                        PUSH(tmp_vals[i]);
                     goto end_vm;
                 }
-                /* Pop args + callee, then push all return values for caller */
-                t->stack_top -= (arity + 1);
-                for (int i = 0; i < rcount; i++)
-                    PUSH(return_vals[i]);
+                if (base < 0) {
+                    runtime_error(vm, "Stack underflow on return");
+                    return false;
+                }
+                t->stack_top = base;
+                for (int i = 0; i < copy_count; i++)
+                    PUSH(tmp_vals[i]);
                 break;
             }
 
@@ -3133,21 +3094,32 @@ bool task_run(VM *vm, Task *task) {
                     s->field_names[i][name->length] = '\0';
                 }
 
-                /* Look up and attach validation rules */
+                /* Look up and attach validation rules, matching by field name —
+                 * a struct literal's field order need not match the decl order. */
+                bool has_validations = false;
                 ValidationRegistry *reg = &vm->validation_registry;
-                for (int i = 0; i < reg->count; i++) {
-                    if (strcmp(reg->validations[i].type_name, s->type_name) == 0) {
-                        StructValidationInfo *info = &reg->validations[i];
+                for (int r = 0; r < reg->count; r++) {
+                    if (strcmp(reg->validations[r].type_name, s->type_name) == 0) {
+                        StructValidationInfo *info = &reg->validations[r];
                         s->struct_validations = info->struct_validations;
                         s->struct_validation_count = info->struct_validation_count;
-                        s->field_validations = info->field_validations;
-                        s->field_validation_counts = info->field_validation_counts;
+                        if (info->struct_validation_count > 0) has_validations = true;
+                        for (int i = 0; i < field_count; i++) {
+                            for (int j = 0; j < info->field_count; j++) {
+                                if (strcmp(s->field_names[i], info->field_names[j]) == 0) {
+                                    s->field_validations[i] = info->field_validations[j];
+                                    s->field_validation_counts[i] = info->field_validation_counts[j];
+                                    if (info->field_validation_counts[j] > 0) has_validations = true;
+                                    break;
+                                }
+                            }
+                        }
                         break;
                     }
                 }
 
                 /* Run validations */
-                if (s->struct_validation_count > 0 || (s->field_validation_counts && s->field_validation_counts[0] > 0)) {
+                if (has_validations) {
                     if (!run_struct_validations(vm, s)) {
                         return false;
                     }
@@ -3180,8 +3152,9 @@ bool task_run(VM *vm, Task *task) {
                         struct_validations[i].rule_name = (char *)malloc(key->length + 1);
                         memcpy(struct_validations[i].rule_name, key->chars, key->length);
                         struct_validations[i].rule_name[key->length] = '\0';
-                        struct_validations[i].rule_args = NULL;
-                        struct_validations[i].rule_arg_count = 0;
+                        struct_validations[i].rule_args = (Value *)malloc(sizeof(Value));
+                        struct_validations[i].rule_args[0] = READ_CONSTANT();
+                        struct_validations[i].rule_arg_count = 1;
                     }
                 }
 
@@ -3205,8 +3178,9 @@ bool task_run(VM *vm, Task *task) {
                             field_validations[i][j].rule_name = (char *)malloc(fkey->length + 1);
                             memcpy(field_validations[i][j].rule_name, fkey->chars, fkey->length);
                             field_validations[i][j].rule_name[fkey->length] = '\0';
-                            field_validations[i][j].rule_args = NULL;
-                            field_validations[i][j].rule_arg_count = 0;
+                            field_validations[i][j].rule_args = (Value *)malloc(sizeof(Value));
+                            field_validations[i][j].rule_args[0] = READ_CONSTANT();
+                            field_validations[i][j].rule_arg_count = 1;
                         }
                     }
                 }
@@ -3227,6 +3201,7 @@ bool task_run(VM *vm, Task *task) {
                     /* Cleanup on overflow */
                     for (int i = 0; i < struct_validation_count; i++) {
                         free(struct_validations[i].rule_name);
+                        free(struct_validations[i].rule_args);
                     }
                     free(struct_validations);
                     for (int i = 0; i < field_count; i++) {
@@ -3234,6 +3209,7 @@ bool task_run(VM *vm, Task *task) {
                         if (field_validations[i]) {
                             for (int j = 0; j < field_validation_counts[i]; j++) {
                                 free(field_validations[i][j].rule_name);
+                                free(field_validations[i][j].rule_args);
                             }
                             free(field_validations[i]);
                         }
