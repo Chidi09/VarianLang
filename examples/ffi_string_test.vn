@@ -1,0 +1,14 @@
+// Test: C function returning a char*, converted to managed string
+
+@ffi("/tmp/libffi_helper.so", "greet")
+fn greet(name: ptr) -> ptr
+
+// Call C, get back a raw pointer
+let raw = greet("World")
+print(raw)  // prints as int (address)
+
+// Convert to managed string
+let managed = ffi_to_string(raw)
+print(managed)
+
+print("done")

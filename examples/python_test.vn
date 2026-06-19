@@ -1,0 +1,13 @@
+// Test python.run bridge
+let result = python.run("json", "dumps", [[1, 2, 3]])
+print(result)
+
+let nums = python.run("json", "loads", ["[1, 2, 3]"])
+print(nums)
+print(nums.len())
+print(nums[0])
+
+let s = python.run("math", "sqrt", [9])
+print(s)
+
+print("done")

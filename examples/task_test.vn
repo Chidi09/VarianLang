@@ -1,0 +1,17 @@
+// Test task.spawn, yield, and await
+fn worker(n) {
+    print(n)
+    task.yield()
+    print(n + 10)
+}
+
+// Spawn two workers
+let t1 = task.spawn(worker, [1])
+let t2 = task.spawn(worker, [2])
+
+print("spawned")
+print(task.id(t1))
+print(task.id(t2))
+
+// Run full suite to ensure nothing broke
+print("done")

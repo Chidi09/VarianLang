@@ -1,0 +1,31 @@
+// SQLite Test
+let db = sqlite.connect("test.db")
+sqlite.query(db, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
+sqlite.query(db, "DELETE FROM users")
+sqlite.query(db, "INSERT INTO users (name) VALUES (?)", ["Alice"])
+sqlite.query(db, "INSERT INTO users (name) VALUES (?)", ["Bob"])
+
+let rows = sqlite.query(db, "SELECT * FROM users ORDER BY id ASC")
+print("SQLite rows:")
+for i in 0..rows.len() {
+    print(rows[i].id, rows[i].name)
+}
+sqlite.close(db)
+
+// Redis Test
+let red = redis.connect("127.0.0.1", 6379)
+redis.cmd(red, "SET", ["mykey", "hello redis"])
+let val = redis.cmd(red, "GET", ["mykey"])
+print("Redis GET mykey:")
+print(val)
+
+redis.cmd(red, "RPUSH", ["mylist", "item1"])
+redis.cmd(red, "RPUSH", ["mylist", "item2"])
+let items = redis.cmd(red, "LRANGE", ["mylist", 0, -1])
+print("Redis LRANGE mylist:")
+for i in 0..items.len() {
+    print(items[i])
+}
+
+redis.cmd(red, "DEL", ["mykey", "mylist"])
+redis.close(red)

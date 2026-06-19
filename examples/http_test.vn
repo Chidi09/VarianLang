@@ -1,0 +1,6 @@
+// Test http module
+let body = http.get("https://example.com")
+print(body.len())
+let first = body.substring(0, 50)
+print(first)
+print("done")

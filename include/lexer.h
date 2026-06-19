@@ -47,6 +47,7 @@ typedef enum {
     TOKEN_AMPERSAND_AMPERSAND,       /* && */
     TOKEN_QUESTION_QUESTION,          /* ?? */
     TOKEN_DOUBLE_COLON,              /* :: */
+    TOKEN_LEFT_ARROW,                /* <- */
 
     /* Literals */
     TOKEN_IDENTIFIER,
@@ -64,13 +65,15 @@ typedef enum {
     TOKEN_WHILE, TOKEN_FOR,
     TOKEN_IN, TOKEN_LOOP,
     TOKEN_MATCH, TOKEN_CASE,
-    TOKEN_STRUCT, TOKEN_ENUM,
+    TOKEN_STRUCT, TOKEN_ENUM, TOKEN_ACTOR,
     TOKEN_IMPL, TOKEN_TRAIT,
     TOKEN_TYPE, TOKEN_USE,
     TOKEN_PUB, TOKEN_MUT,
     TOKEN_ASYNC, TOKEN_AWAIT,
     TOKEN_BREAK, TOKEN_CONTINUE,
+    TOKEN_COMPTIME,
     TOKEN_TRY, TOKEN_CATCH,
+    TOKEN_ASSERT, TOKEN_TEST,
     TOKEN_TRUE, TOKEN_FALSE,
     TOKEN_NULL,
 
@@ -83,6 +86,7 @@ typedef enum {
     TOKEN_TYPE_VOID,
 
     /* Special */
+    TOKEN_COMMENT,
     TOKEN_EOF,
     TOKEN_ERROR
 } TokenType;

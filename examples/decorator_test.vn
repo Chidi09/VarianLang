@@ -1,0 +1,14 @@
+// Test @cache decorator
+@cache
+fn expensive(n) {
+    print("  computing")
+    return n * 2
+}
+
+print("first call:")
+let r1 = expensive(5)
+print(r1)
+
+print("second call (should use cache):")
+let r2 = expensive(5)
+print(r2)

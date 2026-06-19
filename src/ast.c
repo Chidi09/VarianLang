@@ -101,7 +101,9 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
                      char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async,
-                     bool is_method, const char *impl_type) {
+                     bool is_method, const char *impl_type,
+                     char **decorator_keys, AstNode **decorator_values,
+                     int decorator_count) {
     AstNode *node = alloc_node(arena, NODE_FN_DECL, loc);
     node->fn_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
     strcpy(node->fn_decl.name, name);
@@ -130,6 +132,9 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     } else {
         node->fn_decl.impl_type = NULL;
     }
+    node->fn_decl.decorator_keys = decorator_keys;
+    node->fn_decl.decorator_values = decorator_values;
+    node->fn_decl.decorator_count = decorator_count;
     return node;
 }
 
@@ -363,7 +368,9 @@ void ast_match_add_arm(AstNode *match, AstNode *pattern, AstNode *body) {
 
 AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
                          char **field_names, int field_count,
-                         char **type_params, int type_param_count) {
+                         char **type_params, int type_param_count,
+                         char **decorator_keys, AstNode **decorator_values, int decorator_count,
+                         char ***field_decorator_keys, AstNode ***field_decorator_values, int *field_decorator_counts) {
     AstNode *node = alloc_node(arena, NODE_STRUCT_DECL, loc);
     node->struct_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
     strcpy(node->struct_decl.name, name);
@@ -380,6 +387,67 @@ AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
     node->struct_decl.type_params = NULL;
     node->struct_decl.type_param_count = type_param_count;
     (void)type_params;
+
+    /* Struct-level decorators */
+    if (decorator_count > 0) {
+        node->struct_decl.decorator_keys = (char **)arena_alloc(arena, sizeof(char *) * decorator_count);
+        node->struct_decl.decorator_values = (AstNode **)arena_alloc(arena, sizeof(AstNode *) * decorator_count);
+        for (int i = 0; i < decorator_count; i++) {
+            node->struct_decl.decorator_keys[i] = (char *)arena_alloc(arena, strlen(decorator_keys[i]) + 1);
+            strcpy(node->struct_decl.decorator_keys[i], decorator_keys[i]);
+            node->struct_decl.decorator_values[i] = decorator_values[i];
+        }
+    } else {
+        node->struct_decl.decorator_keys = NULL;
+        node->struct_decl.decorator_values = NULL;
+    }
+    node->struct_decl.decorator_count = decorator_count;
+
+    /* Field-level decorators */
+    if (field_count > 0 && field_decorator_keys) {
+        node->struct_decl.field_decorator_keys = (char ***)arena_alloc(arena, sizeof(char **) * field_count);
+        node->struct_decl.field_decorator_values = (AstNode ***)arena_alloc(arena, sizeof(AstNode **) * field_count);
+        node->struct_decl.field_decorator_counts = (int *)arena_alloc(arena, sizeof(int) * field_count);
+        for (int i = 0; i < field_count; i++) {
+            int fcount = field_decorator_counts ? field_decorator_counts[i] : 0;
+            node->struct_decl.field_decorator_counts[i] = fcount;
+            if (fcount > 0 && field_decorator_keys[i]) {
+                node->struct_decl.field_decorator_keys[i] = (char **)arena_alloc(arena, sizeof(char *) * fcount);
+                node->struct_decl.field_decorator_values[i] = (AstNode **)arena_alloc(arena, sizeof(AstNode *) * fcount);
+                for (int j = 0; j < fcount; j++) {
+                    node->struct_decl.field_decorator_keys[i][j] = (char *)arena_alloc(arena, strlen(field_decorator_keys[i][j]) + 1);
+                    strcpy(node->struct_decl.field_decorator_keys[i][j], field_decorator_keys[i][j]);
+                    node->struct_decl.field_decorator_values[i][j] = field_decorator_values[i][j];
+                }
+            } else {
+                node->struct_decl.field_decorator_keys[i] = NULL;
+                node->struct_decl.field_decorator_values[i] = NULL;
+            }
+        }
+    } else {
+        node->struct_decl.field_decorator_keys = NULL;
+        node->struct_decl.field_decorator_values = NULL;
+        node->struct_decl.field_decorator_counts = NULL;
+    }
+
+    return node;
+}
+
+AstNode *ast_actor_decl(Arena *arena, SourceLoc loc, const char *name,
+                         char **field_names, int field_count) {
+    AstNode *node = alloc_node(arena, NODE_ACTOR_DECL, loc);
+    node->actor_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
+    strcpy(node->actor_decl.name, name);
+    if (field_count > 0) {
+        node->actor_decl.field_names = (char **)arena_alloc(arena, sizeof(char *) * field_count);
+        for (int i = 0; i < field_count; i++) {
+            node->actor_decl.field_names[i] = (char *)arena_alloc(arena, strlen(field_names[i]) + 1);
+            strcpy(node->actor_decl.field_names[i], field_names[i]);
+        }
+    } else {
+        node->actor_decl.field_names = NULL;
+    }
+    node->actor_decl.field_count = field_count;
     return node;
 }
 
@@ -508,6 +576,45 @@ AstNode *ast_propagate(Arena *arena, SourceLoc loc, AstNode *expr) {
     return node;
 }
 
+AstNode *ast_assert_stmt(Arena *arena, SourceLoc loc, AstNode *condition) {
+    AstNode *node = alloc_node(arena, NODE_ASSERT, loc);
+    node->assert_stmt.condition = condition;
+    return node;
+}
+
+AstNode *ast_test_decl(Arena *arena, SourceLoc loc, const char *description, AstNode *body) {
+    AstNode *node = alloc_node(arena, NODE_TEST, loc);
+    node->test_decl.description = (char *)arena_alloc(arena, strlen(description) + 1);
+    strcpy(node->test_decl.description, description);
+    node->test_decl.body = body;
+    return node;
+}
+
+AstNode *ast_comptime(Arena *arena, SourceLoc loc, AstNode *body) {
+    AstNode *node = alloc_node(arena, NODE_COMPTIME, loc);
+    node->comptime.body = body;
+    return node;
+}
+
+AstNode *ast_await(Arena *arena, SourceLoc loc, AstNode *expr) {
+    AstNode *node = alloc_node(arena, NODE_AWAIT, loc);
+    node->await.expr = expr;
+    return node;
+}
+
+AstNode *ast_chan_send(Arena *arena, SourceLoc loc, AstNode *channel, AstNode *value) {
+    AstNode *node = alloc_node(arena, NODE_CHAN_SEND, loc);
+    node->chan_send.channel = channel;
+    node->chan_send.value = value;
+    return node;
+}
+
+AstNode *ast_chan_receive(Arena *arena, SourceLoc loc, AstNode *channel) {
+    AstNode *node = alloc_node(arena, NODE_CHAN_RECEIVE, loc);
+    node->chan_receive.channel = channel;
+    return node;
+}
+
 AstNode *ast_try(Arena *arena, SourceLoc loc, AstNode *try_body,
                  AstNode *catch_body, const char *catch_var) {
     AstNode *node = alloc_node(arena, NODE_TRY, loc);
@@ -519,6 +626,25 @@ AstNode *ast_try(Arena *arena, SourceLoc loc, AstNode *try_body,
     } else {
         node->try_stmt.catch_var = NULL;
     }
+    return node;
+}
+
+AstNode *ast_ffi_decl(Arena *arena, SourceLoc loc, const char *name,
+                       const char *lib_name, const char *func_name,
+                       char **param_names, int param_count) {
+    AstNode *node = alloc_node(arena, NODE_FFI_DECL, loc);
+    node->ffi_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
+    strcpy(node->ffi_decl.name, name);
+    node->ffi_decl.lib_name = (char *)arena_alloc(arena, strlen(lib_name) + 1);
+    strcpy(node->ffi_decl.lib_name, lib_name);
+    node->ffi_decl.func_name = (char *)arena_alloc(arena, strlen(func_name) + 1);
+    strcpy(node->ffi_decl.func_name, func_name);
+    node->ffi_decl.param_names = (char **)arena_alloc(arena, param_count * sizeof(char *));
+    for (int i = 0; i < param_count; i++) {
+        node->ffi_decl.param_names[i] = (char *)arena_alloc(arena, strlen(param_names[i]) + 1);
+        strcpy(node->ffi_decl.param_names[i], param_names[i]);
+    }
+    node->ffi_decl.param_count = param_count;
     return node;
 }
 
@@ -755,6 +881,13 @@ void ast_print(AstNode *node, int indent) {
             printf(")\n");
             break;
 
+        case NODE_ACTOR_DECL:
+            printf("(actor %s", node->actor_decl.name);
+            for (int i = 0; i < node->actor_decl.field_count; i++)
+                printf(" %s", node->actor_decl.field_names[i]);
+            printf(")\n");
+            break;
+
         case NODE_STRUCT_LITERAL:
             printf("(struct-lit %s\n", node->struct_literal.name);
             for (int i = 0; i < node->struct_literal.field_count; i++) {
@@ -804,11 +937,62 @@ void ast_print(AstNode *node, int indent) {
             printf(")\n");
             break;
 
+        case NODE_FFI_DECL:
+            printf("(ffi %s '%s'::'%s'", node->ffi_decl.name,
+                   node->ffi_decl.lib_name, node->ffi_decl.func_name);
+            for (int i = 0; i < node->ffi_decl.param_count; i++)
+                printf(" %s", node->ffi_decl.param_names[i]);
+            printf(")\n");
+            break;
+
         case NODE_DISPATCH_CALL:
             printf("(dispatch %s\n", node->dispatch_call.method_name);
             ast_print(node->dispatch_call.object, indent + 1);
             for (int i = 0; i < node->dispatch_call.arg_count; i++)
                 ast_print(node->dispatch_call.args[i], indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_CHAN_SEND:
+            printf("(<-\n");
+            ast_print(node->chan_send.channel, indent + 1);
+            ast_print(node->chan_send.value, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+        case NODE_CHAN_RECEIVE:
+            printf("(<-\n");
+            ast_print(node->chan_receive.channel, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_AWAIT:
+            printf("(await\n");
+            ast_print(node->await.expr, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_COMPTIME:
+            printf("(comptime\n");
+            ast_print(node->comptime.body, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_ASSERT:
+            printf("(assert\n");
+            ast_print(node->assert_stmt.condition, indent + 1);
+            print_indent(indent);
+            printf(")\n");
+            break;
+
+        case NODE_TEST:
+            printf("(test \"%s\"\n", node->test_decl.description ? node->test_decl.description : "");
+            if (node->test_decl.body)
+                ast_print(node->test_decl.body, indent + 1);
             print_indent(indent);
             printf(")\n");
             break;

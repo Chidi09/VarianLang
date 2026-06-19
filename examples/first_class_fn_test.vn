@@ -1,0 +1,10 @@
+// Test first-class function access via BC_MEMBER on module
+let f = math.sqrt
+let r = f(16.0)
+print(r)
+
+let g = math.abs
+let a = g(-10)
+print(a)
+
+print("done")

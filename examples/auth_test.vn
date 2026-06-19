@@ -1,0 +1,16 @@
+// Test auth module: hashing and JWT
+let hash = auth.hash_sha256("hello")
+print("SHA256: " + hash)
+
+struct Payload {
+    user_id: int,
+    role: string
+}
+let payload = Payload { user_id: 42, role: "admin" }
+let token = auth.sign_jwt(payload, "mysecret")
+print("JWT: " + token)
+
+let decoded = auth.verify_jwt(token, "mysecret")
+print(decoded.role)
+print(decoded.user_id)
+print("auth module: all tests passed")

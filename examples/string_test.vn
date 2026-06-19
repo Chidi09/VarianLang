@@ -1,0 +1,19 @@
+// Test native string methods
+let s = "Hello, World!"
+
+print(s.len())
+
+let upper = s.upper()
+print(upper)
+
+let lower = upper.lower()
+print(lower)
+
+let sub = s.substring(0, 5)
+print(sub)
+
+let spaced = "  hello  "
+let trimmed = spaced.trim()
+print(trimmed)
+
+print("done")

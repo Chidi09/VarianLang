@@ -1,0 +1,18 @@
+// Test @retry decorator
+let attempt = 0
+
+@retry(3)
+fn flaky() {
+    print("attempt:")
+    print(attempt)
+    attempt = attempt + 1
+    if attempt < 3 {
+        throw("failed")
+    }
+    print("succeeded!")
+    return 42
+}
+
+let r = flaky()
+print("result:")
+print(r)

@@ -12,6 +12,16 @@ typedef struct {
     int field_count;
 } StructDef;
 
+/* Actor definition stored during parsing */
+typedef struct {
+    char *name;
+    char **field_names;
+    int field_count;
+    /* Method names */
+    char **method_names;
+    int method_count;
+} ActorDef;
+
 /* Enum definition stored during parsing */
 typedef struct {
     char *name;
@@ -32,6 +42,9 @@ typedef struct {
     /* Struct type registry (compile-time only) */
     StructDef structs[128];
     int struct_count;
+    /* Actor type registry */
+    ActorDef actors[128];
+    int actor_count;
     /* Enum type registry */
     EnumDef enums[128];
     int enum_count;

@@ -1,0 +1,10 @@
+let query = select("users")
+    .fields(["id", "name", "email"])
+    .where("id", "=", "?")
+    .where("status", "=", "?")
+    .limit(10)
+    .offset(0)
+    .build()
+
+print("Runtime generated SQL:")
+print(query)

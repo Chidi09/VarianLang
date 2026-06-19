@@ -26,6 +26,7 @@ static AstNode *parse_struct_literal(Parser *parser, const char *type_name, Sour
 static AstNode *parse_enum_literal(Parser *parser, const char *enum_name, SourceLoc loc);
 
 static AstNode *parse_trait_decl(Parser *parser);
+static AstNode *parse_actor_decl(Parser *parser);
 
 /* ─── Token string extraction (not null-terminated, use length) ─── */
 static char *token_str(Parser *parser, Token *token) {
@@ -281,7 +282,21 @@ static Type *parse_type(Parser *parser) {
 
     if (check(parser, TOKEN_IDENTIFIER)) {
         advance(parser);
-        Type *t = type_named(parser->arena, token_str(parser, &parser->previous));
+        const char *tname = token_str(parser, &parser->previous);
+
+        /* Check for FFI-specific type names */
+        if (strcmp(tname, "ptr") == 0)
+            return type_primitive(parser->arena, PRIMITIVE_PTR);
+        if (strcmp(tname, "c_int") == 0)
+            return type_primitive(parser->arena, PRIMITIVE_C_INT);
+        if (strcmp(tname, "c_double") == 0)
+            return type_primitive(parser->arena, PRIMITIVE_C_DOUBLE);
+        if (strcmp(tname, "c_float") == 0)
+            return type_primitive(parser->arena, PRIMITIVE_C_FLOAT);
+        if (strcmp(tname, "c_char") == 0)
+            return type_primitive(parser->arena, PRIMITIVE_C_CHAR);
+
+        Type *t = type_named(parser->arena, tname);
         /* Consume optional generic type arguments: Name<Type, Type> */
         if (match(parser, TOKEN_LESS)) {
             Type *args[16];
@@ -479,12 +494,158 @@ static AstNode *parse_fn_decl(Parser *parser) {
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
                         param_names, param_count,
                         type_params, type_param_count,
-                        body, false, false, false, NULL);
+                        body, false, false, false, NULL,
+                        NULL, NULL, 0);
     for (int i = 0; i < param_count; i++)
         free(param_names[i]);
     for (int i = 0; i < type_param_count; i++)
         free(type_params[i]);
     return fn_node;
+}
+
+static AstNode *parse_ffi_decl(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+
+    /* We already consumed '@'. Expect 'ffi' */
+    if (!match(parser, TOKEN_IDENTIFIER) ||
+        parser->previous.length != 3 ||
+        memcmp(parser->previous.start, "ffi", 3) != 0) {
+        parser_error(parser, "Expected '@ffi'");
+        return ast_null_literal(parser->arena, loc);
+    }
+
+    /* Parse ("lib_name", "func_name") */
+    consume(parser, TOKEN_LPAREN, "Expected '(' after @ffi");
+
+    if (parser->current.type != TOKEN_STRING) {
+        parser_error(parser, "Expected library name string in @ffi");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *lib_name;
+    if (parser->previous.value) {
+        int len = (int)strlen(parser->previous.value);
+        lib_name = (char *)malloc(len + 1);
+        memcpy(lib_name, parser->previous.value, len + 1);
+    } else {
+        parser_error(parser, "Invalid library name string");
+        return ast_null_literal(parser->arena, loc);
+    }
+
+    consume(parser, TOKEN_COMMA, "Expected ',' in @ffi");
+
+    if (parser->current.type != TOKEN_STRING) {
+        parser_error(parser, "Expected function name string in @ffi");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *func_name;
+    if (parser->previous.value) {
+        int len = (int)strlen(parser->previous.value);
+        func_name = (char *)malloc(len + 1);
+        memcpy(func_name, parser->previous.value, len + 1);
+    } else {
+        parser_error(parser, "Invalid function name string");
+        free(lib_name);
+        return ast_null_literal(parser->arena, loc);
+    }
+
+    consume(parser, TOKEN_RPAREN, "Expected ')' after @ffi arguments");
+
+    /* Now parse the fn declaration */
+    if (!match(parser, TOKEN_FN)) {
+        parser_error(parser, "Expected 'fn' after @ffi");
+        return ast_null_literal(parser->arena, loc);
+    }
+
+    /* fn name(params) -> ret_type */
+    if (parser->current.type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "Expected function name");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *name = token_str(parser, &parser->previous);
+
+    /* Parameters */
+    char *param_names[64];
+    Type *param_types[64];
+    int param_count = 0;
+
+    consume(parser, TOKEN_LPAREN, "Expected '(' after function name");
+
+    if (!check(parser, TOKEN_RPAREN)) {
+        do {
+            if (param_count >= 64) {
+                parser_error(parser, "Too many function parameters");
+                break;
+            }
+            if (parser->current.type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "Expected parameter name");
+                break;
+            }
+            advance(parser);
+            param_names[param_count] = token_strdup(&parser->previous);
+
+            Type *pt = NULL;
+            if (match(parser, TOKEN_COLON)) {
+                pt = parse_type(parser);
+            } else {
+                pt = type_primitive(parser->arena, PRIMITIVE_PTR); /* default to ptr */
+            }
+            param_types[param_count] = pt;
+            param_count++;
+        } while (match(parser, TOKEN_COMMA));
+    }
+
+    consume(parser, TOKEN_RPAREN, "Expected ')' after parameters");
+
+    /* Return type */
+    Type *return_type = NULL;
+    if (match(parser, TOKEN_ARROW)) {
+        return_type = parse_type(parser);
+    } else {
+        return_type = type_primitive(parser->arena, PRIMITIVE_VOID);
+    }
+
+    /* Function type — stored in node->type for the compiler */
+    Type *fn_type = type_function(parser->arena, param_types, param_count, return_type);
+
+    /* Create FFI declaration node */
+    AstNode *node = ast_ffi_decl(parser->arena, loc, name, lib_name, func_name,
+                                  param_names, param_count);
+    node->type = fn_type;
+
+    /* Register so that method dispatch can find this if needed */
+    if (parser_is_method(parser, name)) {
+        /* It's a method — handled by dispatch table */
+    }
+
+    for (int i = 0; i < param_count; i++)
+        free(param_names[i]);
+    free(lib_name);
+    free(func_name);
+    /* name is arena-allocated — not freed */
+
+    return node;
+}
+
+static AstNode *parse_comptime(Parser *parser) {
+    /* comptime { body } or comptime expr */
+    SourceLoc loc = current_loc(parser);
+
+    if (match(parser, TOKEN_LBRACE)) {
+        /* comptime { ... } */
+        AstNode *body = ast_block(parser->arena, loc);
+        while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF))
+            ast_block_add_stmt(body, parse_stmt(parser));
+        consume(parser, TOKEN_RBRACE, "Expected '}' after comptime block");
+        return ast_comptime(parser->arena, loc, body);
+    }
+
+    /* comptime expr */
+    AstNode *expr = parse_expr(parser);
+    match(parser, TOKEN_SEMICOLON);
+    return ast_comptime(parser->arena, loc, expr);
 }
 
 static AstNode *parse_if_stmt(Parser *parser) {
@@ -546,9 +707,39 @@ static AstNode *parse_loop_stmt(Parser *parser) {
 static AstNode *parse_struct_decl(Parser *parser) {
     SourceLoc loc = current_loc(parser);
 
+    /* Collect decorators before struct */
+    char *decorator_keys[32];
+    AstNode *decorator_values[32];
+    int decorator_count = 0;
+
+    while (check(parser, TOKEN_AT)) {
+        advance(parser); /* consume @ */
+        if (check(parser, TOKEN_IDENTIFIER)) {
+            advance(parser);
+            char *key = token_strdup(&parser->previous);
+            if (decorator_count >= 32) {
+                parser_error(parser, "Too many decorators on struct");
+                free(key);
+                break;
+            }
+            decorator_keys[decorator_count] = key;
+            if (match(parser, TOKEN_LPAREN)) {
+                decorator_values[decorator_count] = parse_expr(parser);
+                consume(parser, TOKEN_RPAREN, "Expected ')' after decorator argument");
+            } else {
+                decorator_values[decorator_count] = ast_bool_literal(parser->arena, current_loc(parser), true);
+            }
+            decorator_count++;
+        } else {
+            parser_error(parser, "Expected identifier after '@'");
+            break;
+        }
+    }
+
     /* struct Name { field1: Type, field2: Type } */
     if (parser->current.type != TOKEN_IDENTIFIER) {
         parser_error(parser, "Expected struct name after 'struct'");
+        for (int i = 0; i < decorator_count; i++) free(decorator_keys[i]);
         return ast_null_literal(parser->arena, loc);
     }
     advance(parser);
@@ -562,11 +753,43 @@ static AstNode *parse_struct_decl(Parser *parser) {
 
     char *field_names[64];
     int field_count = 0;
+    char *field_decorator_keys[64][32];
+    AstNode *field_decorator_values[64][32];
+    int field_decorator_counts[64] = {0};
+
     while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
         if (field_count >= 64) {
             parser_error(parser, "Too many struct fields");
             break;
         }
+
+        /* Collect field decorators */
+        int fdeco_count = 0;
+        while (check(parser, TOKEN_AT)) {
+            advance(parser); /* consume @ */
+            if (check(parser, TOKEN_IDENTIFIER)) {
+                advance(parser);
+                char *key = token_strdup(&parser->previous);
+                if (fdeco_count >= 32) {
+                    parser_error(parser, "Too many decorators on field");
+                    free(key);
+                    break;
+                }
+                field_decorator_keys[field_count][fdeco_count] = key;
+                if (match(parser, TOKEN_LPAREN)) {
+                    field_decorator_values[field_count][fdeco_count] = parse_expr(parser);
+                    consume(parser, TOKEN_RPAREN, "Expected ')' after decorator argument");
+                } else {
+                    field_decorator_values[field_count][fdeco_count] = ast_bool_literal(parser->arena, current_loc(parser), true);
+                }
+                fdeco_count++;
+            } else {
+                parser_error(parser, "Expected identifier after '@'");
+                break;
+            }
+        }
+        field_decorator_counts[field_count] = fdeco_count;
+
         if (parser->current.type != TOKEN_IDENTIFIER) {
             parser_error(parser, "Expected field name");
             break;
@@ -586,13 +809,225 @@ static AstNode *parse_struct_decl(Parser *parser) {
     /* Register struct type */
     parser_register_struct(parser, name, field_names, field_count);
 
+    /* Prepare field decorator arrays for ast_struct_decl */
+    char **fdk_ptrs[64] = {0};
+    AstNode **fdv_ptrs[64] = {0};
+    int *fdc_ptr = field_decorator_counts;
+    for (int i = 0; i < field_count; i++) {
+        if (field_decorator_counts[i] > 0) {
+            fdk_ptrs[i] = field_decorator_keys[i];
+            fdv_ptrs[i] = field_decorator_values[i];
+        }
+    }
+
     AstNode *result = ast_struct_decl(parser->arena, loc, name, field_names, field_count,
-                                      type_params, type_param_count);
+                                      type_params, type_param_count,
+                                      decorator_keys, decorator_values, decorator_count,
+                                      fdk_ptrs, fdv_ptrs, fdc_ptr);
+
     for (int i = 0; i < field_count; i++)
         free(field_names[i]);
     for (int i = 0; i < type_param_count; i++)
         free(type_params[i]);
+    for (int i = 0; i < decorator_count; i++)
+        free(decorator_keys[i]);
+    for (int i = 0; i < field_count; i++) {
+        for (int j = 0; j < field_decorator_counts[i]; j++) {
+            free(field_decorator_keys[i][j]);
+        }
+    }
+
     return result;
+}
+
+/* ─── Actor registry ─── */
+static void parser_register_actor(Parser *parser, const char *name,
+                                   char **field_names, int field_count,
+                                   char **method_names, int method_count) {
+    if (parser->actor_count >= 128) return;
+    ActorDef *ad = &parser->actors[parser->actor_count++];
+    ad->name = (char *)malloc(strlen(name) + 1);
+    strcpy(ad->name, name);
+    ad->field_names = (char **)malloc(sizeof(char *) * field_count);
+    for (int i = 0; i < field_count; i++) {
+        ad->field_names[i] = (char *)malloc(strlen(field_names[i]) + 1);
+        strcpy(ad->field_names[i], field_names[i]);
+    }
+    ad->field_count = field_count;
+    ad->method_names = (char **)malloc(sizeof(char *) * method_count);
+    for (int i = 0; i < method_count; i++) {
+        ad->method_names[i] = (char *)malloc(strlen(method_names[i]) + 1);
+        strcpy(ad->method_names[i], method_names[i]);
+    }
+    ad->method_count = method_count;
+}
+
+static AstNode *parse_actor_decl(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+
+    /* actor Name { field: Type = default, ..., fn method(self, ...) { ... } } */
+    if (parser->current.type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "Expected actor name after 'actor'");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *name = token_str(parser, &parser->previous);
+
+    consume(parser, TOKEN_LBRACE, "Expected '{' after actor name");
+
+    char *field_names[64];
+    int field_count = 0;
+    AstNode *method_stmts[64];
+    int method_count = 0;
+    char *method_names[64];
+
+    while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+        if (check(parser, TOKEN_FN)) {
+            /* Method declaration */
+            if (method_count >= 64) {
+                parser_error(parser, "Too many actor methods");
+                break;
+            }
+            advance(parser); /* consume 'fn' */
+
+            if (parser->current.type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "Expected method name");
+                break;
+            }
+            advance(parser);
+            char *method_name = token_str(parser, &parser->previous);
+            parser_register_method(parser, method_name);
+
+            /* Parameters */
+            consume(parser, TOKEN_LPAREN, "Expected '(' after method name");
+            char *param_names[64];
+            Type *param_types[64];
+            int param_count = 0;
+
+            if (!check(parser, TOKEN_RPAREN)) {
+                do {
+                    if (param_count >= 64) break;
+                    if (parser->current.type != TOKEN_IDENTIFIER) break;
+                    advance(parser);
+                    param_names[param_count] = token_strdup(&parser->previous);
+                    Type *pt = NULL;
+                    if (match(parser, TOKEN_COLON))
+                        pt = parse_type(parser);
+                    else
+                        pt = type_primitive(parser->arena, PRIMITIVE_INT);
+                    param_types[param_count] = pt;
+                    param_count++;
+                } while (match(parser, TOKEN_COMMA));
+            }
+            consume(parser, TOKEN_RPAREN, "Expected ')' after parameters");
+
+            /* Return type */
+            Type *return_type = NULL;
+            if (match(parser, TOKEN_ARROW))
+                return_type = parse_type(parser);
+            else
+                return_type = type_primitive(parser->arena, PRIMITIVE_VOID);
+
+            Type *fn_type = type_function(parser->arena, param_types, param_count, return_type);
+
+            /* Body */
+            AstNode *body = NULL;
+            if (match(parser, TOKEN_LBRACE)) {
+                body = ast_block(parser->arena, loc);
+                AstNode *body_stmts[1024];
+                int body_count = 0;
+                while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+                    if (body_count >= 1024) break;
+                    body_stmts[body_count++] = parse_stmt(parser);
+                }
+                consume(parser, TOKEN_RBRACE, "Expected '}' to end method body");
+                body->block.stmts = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * body_count);
+                body->block.stmt_count = body_count;
+                memcpy(body->block.stmts, body_stmts, sizeof(AstNode *) * body_count);
+            } else if (match(parser, TOKEN_FAT_ARROW)) {
+                body = ast_block(parser->arena, loc);
+                AstNode *expr = parse_expr(parser);
+                AstNode *ret = ast_return_one(parser->arena, loc, expr);
+                body->block.stmts = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *));
+                body->block.stmts[0] = ret;
+                body->block.stmt_count = 1;
+            }
+
+            AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
+                                param_names, param_count, NULL, 0,
+                                body, false, false, true, name,
+                                NULL, NULL, 0);
+            for (int i = 0; i < param_count; i++)
+                free(param_names[i]);
+
+            method_stmts[method_count] = fn_node;
+            method_names[method_count] = (char *)malloc(strlen(method_name) + 1);
+            strcpy(method_names[method_count], method_name);
+            method_count++;
+
+        } else {
+            /* Field declaration */
+            if (field_count >= 64) {
+                parser_error(parser, "Too many actor fields");
+                break;
+            }
+            if (parser->current.type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "Expected field name or 'fn'");
+                break;
+            }
+            advance(parser);
+            char *fname = token_strdup(&parser->previous);
+
+            /* Optional type annotation */
+            if (match(parser, TOKEN_COLON))
+                parse_type(parser);
+
+            /* Optional default value */
+            if (match(parser, TOKEN_EQUAL))
+                (void)parse_expr(parser);  /* consume but ignore for now */
+
+            field_names[field_count++] = fname;
+
+            if (!match(parser, TOKEN_COMMA))
+                break;
+        }
+    }
+
+    consume(parser, TOKEN_RBRACE, "Expected '}' after actor body");
+
+    /* Register the actor's struct layout for later field access */
+    parser_register_struct(parser, name, field_names, field_count);
+
+    /* Register actor for spawn lookup */
+    parser_register_actor(parser, name, field_names, field_count, method_names, method_count);
+
+    /* Wrap everything in a block: struct decl + methods + actor module spawn registration */
+    AstNode *block = ast_block(parser->arena, loc);
+    int total_stmts = 0;
+    AstNode *all_stmts[128];
+
+    /* Add actor init marker (emits BC_ACTOR_INIT at compile time) */
+    all_stmts[total_stmts++] = ast_actor_decl(parser->arena, loc, name, field_names, field_count);
+
+    /* Add method declarations */
+    for (int i = 0; i < method_count; i++)
+        all_stmts[total_stmts++] = method_stmts[i];
+
+    /* Register spawn method for the actor type's module */
+    /* At runtime, the spawn function is a builtin native function registered in init */
+    /* We add a NODE_FFI_DECL-like marker: we'll just rely on runtime registration */
+    /* Instead, we emit a struct_decl marker so the compiler registers the type */
+
+    block->block.stmts = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * total_stmts);
+    block->block.stmt_count = total_stmts;
+    memcpy(block->block.stmts, all_stmts, sizeof(AstNode *) * total_stmts);
+
+    for (int i = 0; i < field_count; i++)
+        free(field_names[i]);
+    for (int i = 0; i < method_count; i++)
+        free(method_names[i]);
+
+    return block;
 }
 
 static AstNode *parse_enum_decl(Parser *parser) {
@@ -897,7 +1332,8 @@ static AstNode *parse_impl_block(Parser *parser) {
 
         AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
                             param_names, param_count, NULL, 0,
-                            body, false, false, true, type_name);
+                            body, false, false, true, type_name,
+                            NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
 
@@ -930,14 +1366,72 @@ static AstNode *parse_return_stmt(Parser *parser) {
 }
 
 /* ─── Main Statement Parser ─── */
+static AstNode *parse_assert_stmt(Parser *parser);
+static AstNode *parse_test_decl(Parser *parser);
+
 static AstNode *parse_stmt(Parser *parser) {
     if (check(parser, TOKEN_LET) || check(parser, TOKEN_CONST)) {
         advance(parser);
         return parse_let_decl(parser);
     }
 
+    /* Collect decorators before fn */
+    char *decorator_keys[32];
+    AstNode *decorator_values[32];
+    int decorator_count = 0;
+
+    while (check(parser, TOKEN_AT)) {
+        advance(parser); /* consume @ */
+
+        if (check(parser, TOKEN_IDENTIFIER)) {
+            /* Check for @ffi — existing ffi decorator */
+            if (parser->current.length == 3 &&
+                memcmp(parser->current.start, "ffi", 3) == 0) {
+                return parse_ffi_decl(parser);
+            }
+
+            /* General decorator: @name or @name(args) */
+            advance(parser);
+            char *key = token_strdup(&parser->previous);
+            if (decorator_count >= 32) {
+                parser_error(parser, "Too many decorators");
+                free(key);
+                break;
+            }
+            decorator_keys[decorator_count] = key;
+
+            if (match(parser, TOKEN_LPAREN)) {
+                /* @name(expr) */
+                decorator_values[decorator_count] = parse_expr(parser);
+                consume(parser, TOKEN_RPAREN, "Expected ')' after decorator argument");
+            } else {
+                /* @name — value is just `true` */
+                decorator_values[decorator_count] = ast_bool_literal(parser->arena, current_loc(parser), true);
+            }
+            decorator_count++;
+        } else {
+            parser_error(parser, "Expected identifier after '@'");
+            break;
+        }
+    }
+
     if (match(parser, TOKEN_FN)) {
+        if (decorator_count > 0) {
+            /* Parse fn with decorators */
+            AstNode *fn = parse_fn_decl(parser);
+            fn->fn_decl.decorator_keys = decorator_keys;
+            fn->fn_decl.decorator_values = decorator_values;
+            fn->fn_decl.decorator_count = decorator_count;
+            return fn;
+        }
         return parse_fn_decl(parser);
+    }
+
+    /* No fn after decorators — error or ignore decorators for non-fn statements */
+    if (decorator_count > 0) {
+        parser_error(parser, "Decorators can only be applied to function declarations");
+        for (int i = 0; i < decorator_count; i++) free(decorator_keys[i]);
+        return ast_null_literal(parser->arena, current_loc(parser));
     }
 
     if (match(parser, TOKEN_IF)) {
@@ -986,12 +1480,20 @@ static AstNode *parse_stmt(Parser *parser) {
         return parse_enum_decl(parser);
     }
 
+    if (match(parser, TOKEN_ACTOR)) {
+        return parse_actor_decl(parser);
+    }
+
     if (match(parser, TOKEN_IMPL)) {
         return parse_impl_block(parser);
     }
 
     if (match(parser, TOKEN_TRAIT)) {
         return parse_trait_decl(parser);
+    }
+
+    if (match(parser, TOKEN_COMPTIME)) {
+        return parse_comptime(parser);
     }
 
     if (match(parser, TOKEN_TRY)) {
@@ -1012,10 +1514,61 @@ static AstNode *parse_stmt(Parser *parser) {
         return ast_try(parser->arena, loc, try_body, catch_body, catch_var);
     }
 
+    if (match(parser, TOKEN_ASSERT)) {
+        return parse_assert_stmt(parser);
+    }
+
+    if (match(parser, TOKEN_TEST)) {
+        return parse_test_decl(parser);
+    }
+
     /* Expression statement */
     AstNode *expr = parse_expr(parser);
     match(parser, TOKEN_SEMICOLON);
     return ast_expr_stmt(parser->arena, current_loc(parser), expr);
+}
+
+/* ─── Assert Statement ─── */
+static AstNode *parse_assert_stmt(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+    AstNode *condition = parse_expr(parser);
+    return ast_assert_stmt(parser->arena, loc, condition);
+}
+
+/* ─── Test Declaration ─── */
+static AstNode *parse_test_decl(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+
+    /* test "description" { body } */
+    if (parser->current.type != TOKEN_STRING) {
+        parser_error(parser, "Expected test description string");
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *description = token_strdup(&parser->previous);
+
+    AstNode *body = NULL;
+    if (match(parser, TOKEN_LBRACE)) {
+        SourceLoc block_loc = current_loc(parser);
+        body = ast_block(parser->arena, block_loc);
+#define MAX_TEST_BODY_STMTS 4096
+        AstNode *stmts[MAX_TEST_BODY_STMTS];
+        int stmt_count = 0;
+        while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+            if (stmt_count >= MAX_TEST_BODY_STMTS) break;
+            stmts[stmt_count++] = parse_stmt(parser);
+        }
+        consume(parser, TOKEN_RBRACE, "Expected '}' to end test body");
+        body->block.stmts = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * stmt_count);
+        body->block.stmt_count = stmt_count;
+        memcpy(body->block.stmts, stmts, sizeof(AstNode *) * stmt_count);
+    } else {
+        parser_error(parser, "Expected '{' after test description");
+        free(description);
+        return ast_null_literal(parser->arena, loc);
+    }
+
+    return ast_test_decl(parser->arena, loc, description, body);
 }
 
 /* ─── Expression Parsing (Pratt-style) ─── */
@@ -1063,6 +1616,11 @@ static AstNode *parse_assignment(Parser *parser) {
     if (match(parser, TOKEN_SLASH_EQUAL)) {
         AstNode *value = parse_assignment(parser);
         return ast_assign(parser->arena, current_loc(parser), expr, value, true, OP_DIV);
+    }
+    if (match(parser, TOKEN_LEFT_ARROW)) {
+        /* Channel send: ch <- value */
+        AstNode *value = parse_assignment(parser);
+        return ast_chan_send(parser->arena, current_loc(parser), expr, value);
     }
 
     return expr;
@@ -1225,6 +1783,15 @@ static AstNode *parse_unary(Parser *parser) {
     if (match(parser, TOKEN_TILDE)) {
         AstNode *operand = parse_unary(parser);
         return ast_unary(parser->arena, current_loc(parser), OP_BIT_NOT, operand);
+    }
+    if (match(parser, TOKEN_AWAIT)) {
+        AstNode *operand = parse_unary(parser);
+        return ast_await(parser->arena, current_loc(parser), operand);
+    }
+    if (match(parser, TOKEN_LEFT_ARROW)) {
+        /* Channel receive: <- ch */
+        AstNode *chan = parse_unary(parser);
+        return ast_chan_receive(parser->arena, current_loc(parser), chan);
     }
 
     return parse_call(parser);
@@ -1424,6 +1991,10 @@ static AstNode *parse_primary(Parser *parser) {
         return ast_string_literal(parser->arena, loc, parser->previous.value);
     }
 
+    if (match(parser, TOKEN_COMPTIME)) {
+        return parse_comptime(parser);
+    }
+
     if (match(parser, TOKEN_IDENTIFIER)) {
         return ast_identifier(parser->arena, loc, token_str(parser, &parser->previous));
     }
@@ -1505,11 +2076,10 @@ static AstNode *parse_primary(Parser *parser) {
     if (match(parser, TOKEN_LBRACKET)) {
         AstNode *elems[256];
         int count = 0;
-        if (!check(parser, TOKEN_RBRACKET)) {
-            do {
-                if (count >= 256) break;
-                elems[count++] = parse_expr(parser);
-            } while (match(parser, TOKEN_COMMA));
+        while (!check(parser, TOKEN_RBRACKET) && !check(parser, TOKEN_EOF)) {
+            if (count >= 256) break;
+            elems[count++] = parse_expr(parser);
+            if (!match(parser, TOKEN_COMMA)) break;
         }
         consume(parser, TOKEN_RBRACKET, "Expected ']' after array literal");
         AstNode *arr = ast_array_literal(parser->arena, loc);
@@ -1562,7 +2132,8 @@ static AstNode *parse_primary(Parser *parser) {
 
         AstNode *fn = ast_fn_decl(parser->arena, loc, "__lambda__", fn_type,
                                   param_names, param_count, NULL, 0,
-                                  block, false, false, false, NULL);
+                                  block, false, false, false, NULL,
+                                  NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
             free(param_names[i]);
         return fn;
@@ -1584,6 +2155,19 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
     parser->struct_count = 0;
     parser->enum_count = 0;
     parser->method_count = 0;
+
+    /* Pre-register built-in method names so parser emits BC_DISPATCH for them */
+    {
+        const char *builtin_methods[] = {
+            "len", "upper", "lower", "substring", "trim", "spawn",
+            "serve", "serve_with_routes", "push", "split", "starts_with", "replace",
+        };
+        int n = sizeof(builtin_methods) / sizeof(builtin_methods[0]);
+        for (int i = 0; i < n && i < 256; i++) {
+            parser->method_names[i] = (char *)builtin_methods[i];
+            parser->method_count++;
+        }
+    }
 
     /* Prime the first token */
     advance(parser);

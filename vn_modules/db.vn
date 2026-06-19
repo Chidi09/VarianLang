@@ -1,0 +1,106 @@
+// db.vn - Compile-time/Runtime Query Builder and ORM with best practices
+
+struct QueryBuilder {
+    table: string,
+    select_fields: array,
+    where_clauses: array,
+    limit_val: int,
+    offset_val: int,
+    params: array,
+    dialect: string
+}
+
+fn select(table) {
+    return QueryBuilder {
+        table: table,
+        select_fields: ["*"],
+        where_clauses: [],
+        limit_val: -1,
+        offset_val: -1,
+        params: [],
+        dialect: "sqlite"
+    }
+}
+
+impl QueryBuilder {
+    fn use_dialect(self, d) {
+        self.dialect = d
+        return self
+    }
+
+    fn fields(self, f_arr) {
+        self.select_fields = f_arr
+        return self
+    }
+
+    fn where(self, field, op, val) {
+        self.params = self.params.push(val)
+        self.where_clauses = self.where_clauses.push([field, op])
+        return self
+    }
+
+    fn limit(self, l) {
+        self.limit_val = l
+        return self
+    }
+
+    fn offset(self, o) {
+        self.offset_val = o
+        return self
+    }
+
+    fn paginate(self, page, per_page) {
+        if page < 1 {
+            page = 1
+        }
+        self = self.limit(per_page)
+        self = self.offset((page - 1) * per_page)
+        return self
+    }
+
+    fn cursor_paginate(self, field, last_seen, l) {
+        if last_seen != null {
+            self = self.where(field, ">", last_seen)
+        }
+        self = self.limit(l)
+        return self
+    }
+
+    fn find_by_key(self, field, val) {
+        self = self.where(field, "=", val)
+        self = self.limit(1)
+        return self
+    }
+
+    fn build(self) {
+        let sql = "SELECT "
+        for i in 0..self.select_fields.len() {
+            if i > 0 { sql = sql + ", " }
+            sql = sql + self.select_fields[i]
+        }
+        sql = sql + " FROM " + self.table
+
+        if self.where_clauses.len() > 0 {
+            sql = sql + " WHERE "
+            for i in 0..self.where_clauses.len() {
+                if i > 0 { sql = sql + " AND " }
+                let clause = self.where_clauses[i]
+                let placeholder = "?"
+                if self.dialect == "postgres" {
+                    let idx = i + 1
+                    placeholder = "$" + idx
+                }
+                sql = sql + clause[0] + " " + clause[1] + " " + placeholder
+            }
+        }
+
+        if self.limit_val >= 0 {
+            sql = sql + " LIMIT " + self.limit_val
+        }
+        if self.offset_val >= 0 {
+            sql = sql + " OFFSET " + self.offset_val
+        }
+
+        return http.create_struct(["sql", "params"], [sql, self.params])
+    }
+}

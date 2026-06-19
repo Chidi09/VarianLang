@@ -50,6 +50,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_AMPERSAND_AMPERSAND: return "TOKEN_AMPERSAND_AMPERSAND";
         case TOKEN_QUESTION_QUESTION: return "TOKEN_QUESTION_QUESTION";
         case TOKEN_DOUBLE_COLON: return "TOKEN_DOUBLE_COLON";
+        case TOKEN_LEFT_ARROW: return "TOKEN_LEFT_ARROW";
         case TOKEN_IDENTIFIER: return "TOKEN_IDENTIFIER";
         case TOKEN_STRING: return "TOKEN_STRING";
         case TOKEN_INTERPOLATED_STRING: return "TOKEN_INTERPOLATED_STRING";
@@ -71,6 +72,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_CASE: return "TOKEN_CASE";
         case TOKEN_STRUCT: return "TOKEN_STRUCT";
         case TOKEN_ENUM: return "TOKEN_ENUM";
+        case TOKEN_ACTOR: return "TOKEN_ACTOR";
         case TOKEN_IMPL: return "TOKEN_IMPL";
         case TOKEN_TRAIT: return "TOKEN_TRAIT";
         case TOKEN_TYPE: return "TOKEN_TYPE";
@@ -81,8 +83,11 @@ const char *token_type_name(TokenType type) {
         case TOKEN_AWAIT: return "TOKEN_AWAIT";
         case TOKEN_BREAK: return "TOKEN_BREAK";
         case TOKEN_CONTINUE: return "TOKEN_CONTINUE";
+        case TOKEN_COMPTIME: return "TOKEN_COMPTIME";
         case TOKEN_TRY: return "TOKEN_TRY";
         case TOKEN_CATCH: return "TOKEN_CATCH";
+        case TOKEN_ASSERT: return "TOKEN_ASSERT";
+        case TOKEN_TEST: return "TOKEN_TEST";
         case TOKEN_TRUE: return "TOKEN_TRUE";
         case TOKEN_FALSE: return "TOKEN_FALSE";
         case TOKEN_NULL: return "TOKEN_NULL";
@@ -119,6 +124,7 @@ static KeywordEntry keywords[] = {
     {"case",   TOKEN_CASE},
     {"struct", TOKEN_STRUCT},
     {"enum",   TOKEN_ENUM},
+    {"actor",  TOKEN_ACTOR},
     {"impl",   TOKEN_IMPL},
     {"trait",  TOKEN_TRAIT},
     {"type",   TOKEN_TYPE},
@@ -131,6 +137,9 @@ static KeywordEntry keywords[] = {
     {"continue", TOKEN_CONTINUE},
     {"try",    TOKEN_TRY},
     {"catch",  TOKEN_CATCH},
+    {"assert", TOKEN_ASSERT},
+    {"test",   TOKEN_TEST},
+    {"comptime", TOKEN_COMPTIME},
     {"true",   TOKEN_TRUE},
     {"false",  TOKEN_FALSE},
     {"null",   TOKEN_NULL},
@@ -607,6 +616,7 @@ Token lexer_next(Lexer *lexer) {
             return make_token(lexer, TOKEN_EQUAL);
 
         case '<':
+            if (match(lexer, '-')) return make_token(lexer, TOKEN_LEFT_ARROW);
             if (match(lexer, '=')) return make_token(lexer, TOKEN_LESS_EQUAL);
             return make_token(lexer, TOKEN_LESS);
 

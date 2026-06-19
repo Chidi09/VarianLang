@@ -1,0 +1,24 @@
+// FFI bridge test: call C functions via libm and libc
+
+// sqrt from libm
+@ffi("libm.so.6", "sqrt")
+fn fast_sqrt(x: c_double) -> c_double
+
+// pow from libm
+@ffi("libm.so.6", "pow")
+fn fast_pow(x: c_double, y: c_double) -> c_double
+
+// abs from libc (returns int)
+@ffi("libc.so.6", "abs")
+fn fast_abs(x: c_int) -> c_int
+
+// toupper from libc (returns char as int)
+@ffi("libc.so.6", "toupper")
+fn fast_toupper(c: c_char) -> c_int
+
+print(fast_sqrt(9.0))
+print(fast_sqrt(25.0))
+print(fast_pow(2.0, 3.0))
+print(fast_abs(-42))
+print(fast_toupper(97))  // 'a' -> 'A' (65)
+print("done")

@@ -1,0 +1,7 @@
+// Test PostgreSQL connectivity via native libpq bridge
+let conn = postgres.connect("postgresql://postgres:postgres@localhost/postgres")
+let rows = postgres.query(conn, "SELECT 42 as id, 'Hello Zenith' as message", [])
+print(rows.len())
+print(rows[0].id)
+print(rows[0].message)
+postgres.close(conn)

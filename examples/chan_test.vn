@@ -1,0 +1,21 @@
+// Test channels
+fn sender(ch) {
+    ch <- 42
+    ch <- 100
+    print("sent")
+}
+
+fn receiver(ch) {
+    let a = <- ch
+    print(a)
+    let b = <- ch
+    print(b)
+    print("received")
+}
+
+let ch = task.channel(10)
+task.spawn(sender, [ch])
+task.yield()
+task.spawn(receiver, [ch])
+
+print("done")

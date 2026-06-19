@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c99 -g -Iinclude
-LDFLAGS = -lm
+CFLAGS = -Wall -Wextra -std=c99 -g -Iinclude -I/usr/include/x86_64-linux-gnu -I/usr/include/postgresql -D_POSIX_C_SOURCE=200809L
+LDFLAGS = -lm -lffi -ldl -lcurl -lpq -lcrypto -lsqlite3 -lhiredis
 
 SRCDIR = src
 INCDIR = include

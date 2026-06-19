@@ -1,0 +1,10 @@
+actor Greeter {
+    name: string,
+    fn greet(self) {
+        print("Hello from actor!")
+    }
+}
+
+let a = Greeter.spawn()
+a.greet()
+print("done")

@@ -1,100 +1,96 @@
-# VarianLang
+# Varian 🚀
 
-A systems programming language built from scratch in C with a custom bytecode VM.
+A blazing fast, concurrent, systems-level programming language built from scratch in C with a custom bytecode VM. Varian combines the speed of C, the concurrency model of Go (Actors & Channels), and the ecosystem of Python into a single, cohesive developer experience.
 
-## Phase 1: Core Compiler & Runtime Engine ✓
+## The Cheat Code Architecture
+Varian doesn't force you to rewrite the world. It comes built-in with a zero-overhead **C FFI** and a fully integrated **Python Bridge**. You can import and use any Python package (like NumPy or PyTorch) seamlessly as if it were written in Varian.
 
-The raw execution pipeline is bulletproof. Transforms source code into executable bytecode through a hand-written recursive descent parser and custom stack-based VM.
+```varian
+import python
 
-### Features
-- **Lexer & Parser:** Full recursive descent parser with string interpolation (`"hello {name}"`), regex literals, and operator precedence
-- **Primitive Types:** `bool`, `int`, `float`, `string`, byte slices (`b"..."`)
-- **Control Flow:** `if/else`, `while`, `for` (with range `..`), `loop`, `break`/`continue`
-- **Functions:** Declarations, calls, arrow shorthand (`fn name(params) => expr`), **multiple return values**
-- **Lambda Expressions:** `|params| expr` syntax
-- **Pattern Matching:** `match expr { pattern => body, ... }`
-- **String Interpolation:** Automatic int/float/bool conversion
-- **Error Handling:** `?` operator for nil propagation, `try`/`catch` with `throw()`
-- **Line Numbers:** RLE-encoded line info in bytecode, proper stack traces
+fn array(args: any) -> any {
+    return python.run("numpy", "array", [args])
+}
+```
 
-### Data Structures
-- **Structs:** `struct Name { field: Type, ... }` with field access (`obj.field`)
-- **Enums:** `enum Name { Variant, Variant(Type), ... }` with `Enum::Variant(args)` syntax
-- **Methods:** `impl Type { fn method(self, ...) { ... } }` with dot-call sugar (`obj.method()`)
-- Arrays, tuples
+## Features
 
-### Execution
-Custom stack-based bytecode VM with:
-- 40+ opcodes
-- RLE-encoded line numbers for error reporting
-- Native function support (`print`, `throw`)
-- Global/local variable scoping
+### ⚡ Thread-Safe Concurrency (Actors & Channels)
+Say goodbye to mutex locks and race conditions. Varian uses a cooperative spin-yield scheduler and the Actor model to run thousands of lightweight tasks concurrently.
 
-## Building
+```varian
+actor Counter {
+    count: int = 0
+    fn increment() { count += 1 }
+    fn get() -> int { return count }
+}
+
+c = Counter.spawn()
+task.spawn(fn() { c.increment() })
+```
+
+### 🌐 The Zenith Web Framework
+Varian includes `Zenith`, a blazing-fast, non-blocking HTTP web framework powered by native POSIX sockets deeply integrated into Varian's task scheduler.
+
+```varian
+import zenith
+
+app = zenith.ZenithApp.spawn()
+
+app.get("/", fn(req) {
+    return "Hello from Zenith!"
+})
+
+app.listen(3000)
+```
+
+### 🛠️ The High-Fidelity Toolchain
+Varian isn't just a compiler; it's a complete ecosystem.
+- **`vn fmt`**: Opinionated, zero-config code formatter built into the compiler.
+- **`vn test`**: Integrated test runner with `test "desc" {}` blocks and native assertions.
+- **`vn pkg`**: Package manager with `vn wrap python:<pkg>` to automatically generate native Varian SDK wrappers for foreign libraries using introspection.
+
+### 🎯 Native Metadata Decorators
+Fastest-in-class native memoization and retry mechanics evaluated natively by the VM in C.
+```varian
+@cache
+@retry(3)
+fn fetch_data() { ... }
+```
+
+### 🛡️ Language Core
+- **First-Class Types:** `bool`, `int`, `float`, `string`, structs, enums, arrays, tuples.
+- **Pattern Matching:** Exhaustive `match` statements with destructuring.
+- **Error Handling:** Clean `?` propagation and typed `try/catch`.
+- **Comptime:** Execute Varian code during compilation for macros and static generation.
+
+## CLI Usage
 
 ```sh
-make
-./vn examples/test.vn
+./vn run app.vn         # Execute a file
+./vn fmt .              # Format all code
+./vn test .             # Run the test suite
+./vn wrap python:math   # Generate a native Varian wrapper for Python's math module
 ```
 
-## Usage
-
-```sh
-./vn <file.vn>     # Run a file
-./vn                # Interactive REPL
-```
-
-### Debug environment variables
-- `VN_DEBUG_AST` — Print AST before compilation
-- `VN_DEBUG_BYTECODE` — Print bytecode disassembly
-
-## Examples
-
-```sh
-# Simple
-./vn examples/hello.vn
-./vn examples/fib.vn
-
-# Structs & methods
-./vn examples/structs.vn
-./vn examples/methods.vn
-
-# Enums & pattern matching
-./vn examples/enums.vn
-
-# Multiple return values
-./vn examples/multi_return.vn
-
-# String interpolation
-./vn examples/interp.vn
-
-# Error handling
-./vn examples/errors.vn
-```
-
-## Project Structure
-
-```
-├── include/          # Header files
-│   ├── varian.h     # Core types, arena allocator
-│   ├── lexer.h       # Token types, lexer state
-│   ├── parser.h      # Parser state, struct/enum registries
-│   ├── ast.h         # AST node types, constructors
-│   └── vm.h          # Opcodes, value types, VM state
-├── src/              # Implementation
-│   ├── arena.c       # Arena allocator
-│   ├── lexer.c       # Tokenizer
-│   ├── parser.c      # Recursive descent parser
-│   ├── ast.c         # AST construction & debug printing
-│   ├── vm.c          # Compiler + bytecode VM
-│   └── main.c        # CLI & REPL
-├── examples/         # Example programs
-├── Makefile
-└── PLAN.md           # Full roadmap
-```
+## Project Status
+We are currently progressing through the **Varian Architecture Roadmap**:
+- [x] **Phase 1:** Core Compiler & Runtime Engine
+- [x] **Phase 2:** Advanced Type System & Memory Semantics
+- [x] **Phase 3:** The Bridge System (FFI & Python)
+- [x] **Phase 4:** Concurrency & Distributed Architecture (Actors/Tasks/Channels)
+- [x] **Phase 5:** The High-Fidelity Toolchain (`vn fmt`, `vn test`, `vn pkg`)
+- [ ] **Phase 6:** Production Readiness & Observability (`vn shield`, CI/CD)
 
 ## Architecture
 
 Source → Lexer → Parser → AST → Compiler → Bytecode → VM
 
-All frontend allocations use a fast arena allocator. The bytecode VM is a register-style stack machine with heap-allocated objects (strings, arrays, structs, enums).
+All frontend allocations use a fast arena allocator. The bytecode VM is a register-style stack machine with heap-allocated objects and a deeply integrated cooperative green-thread scheduler.
+
+## Building
+
+```sh
+make
+./vn examples/hello.vn
+```

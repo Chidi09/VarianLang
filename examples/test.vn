@@ -1,4 +1,5 @@
 // Minimal if test
+
 let sum = 10 + 20
 if sum > 0 {
     let positive = true

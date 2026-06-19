@@ -22,6 +22,12 @@ typedef enum {
     PRIMITIVE_STRING,
     PRIMITIVE_BYTE,
     PRIMITIVE_VOID,
+    /* FFI types */
+    PRIMITIVE_PTR,
+    PRIMITIVE_C_INT,
+    PRIMITIVE_C_DOUBLE,
+    PRIMITIVE_C_FLOAT,
+    PRIMITIVE_C_CHAR,
 } PrimitiveKind;
 
 typedef struct Type {
@@ -91,6 +97,9 @@ typedef enum {
     NODE_STRUCT_DECL,
     NODE_STRUCT_LITERAL,
 
+    /* Actor */
+    NODE_ACTOR_DECL,
+
     /* Enums */
     NODE_ENUM_DECL,
     NODE_ENUM_LITERAL,
@@ -102,10 +111,23 @@ typedef enum {
     /* Traits */
     NODE_TRAIT_DECL,
 
-    /* Error handling */
+    /* Channels + Async */
+    NODE_CHAN_SEND,
+    NODE_CHAN_RECEIVE,
+    NODE_AWAIT,
+
+    /* Assertion */
+    NODE_ASSERT,
+
+    /* Test declaration */
+    NODE_TEST,
+
+    /* Error handling / Compile-time */
     NODE_PROPAGATE,
     NODE_TRY,
+    NODE_COMPTIME,
     NODE_DISPATCH_CALL,
+    NODE_FFI_DECL,
 } NodeKind;
 
 /* Forward declaration */
@@ -159,6 +181,10 @@ struct AstNode {
             bool is_async;
             bool is_method;
             char *impl_type;
+            /* Metadata decorators */
+            char **decorator_keys;
+            AstNode **decorator_values;
+            int decorator_count;
         } fn_decl;
 
         /* Block */
@@ -287,6 +313,13 @@ struct AstNode {
             int arm_count;
         } match_stmt;
 
+        /* Actor declaration (emits BC_ACTOR_INIT) */
+        struct {
+            char *name;
+            char **field_names;
+            int field_count;
+        } actor_decl;
+
         /* Struct declaration */
         struct {
             char *name;
@@ -294,6 +327,14 @@ struct AstNode {
             int field_count;
             char **type_params;
             int type_param_count;
+            /* Validation decorators on struct */
+            char **decorator_keys;
+            AstNode **decorator_values;
+            int decorator_count;
+            /* Validation decorators on fields (parallel to field_names) */
+            char ***field_decorator_keys;
+            AstNode ***field_decorator_values;
+            int *field_decorator_counts;
         } struct_decl;
 
         /* Struct literal */
@@ -330,6 +371,15 @@ struct AstNode {
             int method_count;
         } trait_decl;
 
+        /* FFI declaration */
+        struct {
+            char *name;
+            char *lib_name;
+            char *func_name;
+            char **param_names;
+            int param_count;
+        } ffi_decl;
+
         /* Propagate (expr?) */
         struct {
             AstNode *expr;
@@ -349,6 +399,36 @@ struct AstNode {
             AstNode *catch_body;
             char *catch_var;  /* may be NULL */
         } try_stmt;
+
+        /* Assert statement */
+        struct {
+            AstNode *condition;
+        } assert_stmt;
+
+        /* Test declaration */
+        struct {
+            char *description;
+            AstNode *body;
+        } test_decl;
+
+        /* Channel send/receive */
+        struct {
+            AstNode *channel;
+            AstNode *value;
+        } chan_send;
+        struct {
+            AstNode *channel;
+        } chan_receive;
+
+        /* Async/await */
+        struct {
+            AstNode *expr;
+        } await;
+
+        /* Compile-time execution */
+        struct {
+            AstNode *body;
+        } comptime;
 
         /* Match arm */
         struct {
@@ -370,7 +450,9 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
                      char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async,
-                     bool is_method, const char *impl_type);
+                     bool is_method, const char *impl_type,
+                     char **decorator_keys, AstNode **decorator_values,
+                     int decorator_count);
 AstNode *ast_block(Arena *arena, SourceLoc loc);
 void ast_block_add_stmt(AstNode *block, AstNode *stmt);
 AstNode *ast_expr_stmt(Arena *arena, SourceLoc loc, AstNode *expr);
@@ -409,7 +491,11 @@ AstNode *ast_continue(Arena *arena, SourceLoc loc);
 
 AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
                          char **field_names, int field_count,
-                         char **type_params, int type_param_count);
+                         char **type_params, int type_param_count,
+                         char **decorator_keys, AstNode **decorator_values, int decorator_count,
+                         char ***field_decorator_keys, AstNode ***field_decorator_values, int *field_decorator_counts);
+AstNode *ast_actor_decl(Arena *arena, SourceLoc loc, const char *name,
+                         char **field_names, int field_count);
 AstNode *ast_struct_literal(Arena *arena, SourceLoc loc, const char *name,
                             char **field_names, AstNode **field_values, int field_count);
 
@@ -432,6 +518,17 @@ AstNode *ast_dispatch_call(Arena *arena, SourceLoc loc, AstNode *object,
                             const char *method_name, AstNode **args, int arg_count);
 AstNode *ast_try(Arena *arena, SourceLoc loc, AstNode *try_body,
                  AstNode *catch_body, const char *catch_var);
+
+AstNode *ast_comptime(Arena *arena, SourceLoc loc, AstNode *body);
+AstNode *ast_assert_stmt(Arena *arena, SourceLoc loc, AstNode *condition);
+AstNode *ast_test_decl(Arena *arena, SourceLoc loc, const char *description, AstNode *body);
+AstNode *ast_await(Arena *arena, SourceLoc loc, AstNode *expr);
+AstNode *ast_chan_send(Arena *arena, SourceLoc loc, AstNode *channel, AstNode *value);
+AstNode *ast_chan_receive(Arena *arena, SourceLoc loc, AstNode *channel);
+
+AstNode *ast_ffi_decl(Arena *arena, SourceLoc loc, const char *name,
+                       const char *lib_name, const char *func_name,
+                       char **param_names, int param_count);
 
 /* ─── Type Construction ─── */
 Type *type_primitive(Arena *arena, PrimitiveKind pk);

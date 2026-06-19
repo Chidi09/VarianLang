@@ -1,0 +1,11 @@
+// Test compile-time execution
+let x = comptime { 10 + 20 }
+print(x)
+
+let y = comptime { 5 * 6 }
+print(y)
+
+let z = comptime { 100 / 4 }
+print(z)
+
+print("done")

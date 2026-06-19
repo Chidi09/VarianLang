@@ -1,0 +1,11 @@
+// Test io module
+let ok = io.write_text("/tmp/varian_test.txt", "Hello from Varian!")
+print(ok)
+
+let content = io.read_text("/tmp/varian_test.txt")
+print(content)
+
+let missing = io.read_text("/tmp/nonexistent_file_xyz")
+print(missing)
+
+print("done")

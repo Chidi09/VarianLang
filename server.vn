@@ -1,0 +1,51 @@
+struct User { id: string, name: string, email: string }
+
+let users = [
+    User { id: "1", name: "Alice", email: "alice@example.com" },
+    User { id: "2", name: "Bob", email: "bob@example.com" },
+]
+
+add_middleware(|req, next| {
+    print("LOG: incoming request", req.method, req.path)
+    let res = next(req)
+    print("LOG: request processed")
+    return res
+})
+
+get("/", |req| {
+    return "Welcome to Zenith!"
+}, "Root endpoint")
+
+get("/api/users", |req| {
+    let body = json_encode(users)
+    return Response { status: 200, body: body, content_type: "application/json" }
+}, "List all users")
+
+get("/api/users/:id", |req| {
+    for i in 0..users.len() {
+        if users[i].id == req.params.id {
+            let body = json_encode(users[i])
+            return Response { status: 200, body: body, content_type: "application/json" }
+        }
+    }
+    return Response { status: 404, body: "User not found", content_type: "application/json" }
+}, "Get user by ID")
+
+post("/api/users", |req| {
+    let new_user = User {
+        id: req.json.id,
+        name: req.json.name,
+        email: req.json.email,
+    }
+    users = users.push(new_user)
+    let body = json_encode(new_user)
+    return Response { status: 201, body: body, content_type: "application/json" }
+}, "Create a new user")
+
+get("/hello/:name", |req| {
+    return "Hello, " + req.params.name + "!"
+}, "Personalized greeting")
+
+enable_docs("/docs")
+
+listen(3000)

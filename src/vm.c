@@ -4,11 +4,115 @@
 #include <stdio.h>
 #include <math.h>
 #include <stdarg.h>
+#include <sys/time.h>
+#include <unistd.h>
 
 
 
 /* ─── Forward declarations ─── */
 static void compile_node(Compiler *compiler, AstNode *node);
+static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
+
+/* ─── Validation Registry ─── */
+static void register_struct_validations(VM *vm, AstNode *node) {
+    if (!node || node->kind != NODE_STRUCT_DECL) return;
+
+    ValidationRegistry *reg = &vm->validation_registry;
+    if (reg->count >= MAX_STRUCT_VALIDATIONS) return;
+
+    StructValidationInfo *info = &reg->validations[reg->count++];
+    strncpy(info->type_name, node->struct_decl.name, 63);
+    info->type_name[63] = '\0';
+    info->field_count = node->struct_decl.field_count;
+
+    /* Struct-level validations */
+    info->struct_validation_count = node->struct_decl.decorator_count;
+    if (info->struct_validation_count > 0) {
+        info->struct_validations = (ValidationRule *)calloc(info->struct_validation_count, sizeof(ValidationRule));
+        for (int i = 0; i < info->struct_validation_count; i++) {
+            info->struct_validations[i].rule_name = strdup(node->struct_decl.decorator_keys[i]);
+            /* For now, store the AST node as rule_args - we'll evaluate at runtime */
+            info->struct_validations[i].rule_args = NULL;
+            info->struct_validations[i].rule_arg_count = 0;
+        }
+    } else {
+        info->struct_validations = NULL;
+    }
+
+    /* Field-level validations */
+    info->field_validations = (ValidationRule **)calloc(info->field_count, sizeof(ValidationRule *));
+    info->field_validation_counts = (int *)calloc(info->field_count, sizeof(int));
+    info->field_names = (char **)calloc(info->field_count, sizeof(char *));
+
+    for (int i = 0; i < info->field_count; i++) {
+        info->field_names[i] = strdup(node->struct_decl.field_names[i]);
+        int fcount = 0;
+        if (node->struct_decl.field_decorator_counts) {
+            fcount = node->struct_decl.field_decorator_counts[i];
+        }
+        info->field_validation_counts[i] = fcount;
+        if (fcount > 0 && node->struct_decl.field_decorator_keys && node->struct_decl.field_decorator_keys[i]) {
+            info->field_validations[i] = (ValidationRule *)calloc(fcount, sizeof(ValidationRule));
+            for (int j = 0; j < fcount; j++) {
+                info->field_validations[i][j].rule_name = strdup(node->struct_decl.field_decorator_keys[i][j]);
+                info->field_validations[i][j].rule_args = NULL;
+                info->field_validations[i][j].rule_arg_count = 0;
+            }
+        } else {
+            info->field_validations[i] = NULL;
+        }
+    }
+}
+
+static bool call_validate_function(VM *vm, const char *rule_name, Value value, Value *args, int arg_count) {
+    Value validate_mod = vm->globals[0];
+    for (int i = 0; i < vm->global_count; i++) {
+        if (strcmp(vm->global_names[i], "validate") == 0) {
+            validate_mod = vm->globals[i];
+            break;
+        }
+    }
+    if (validate_mod.type != VAL_MODULE) return false;
+
+    ObjModule *mod = validate_mod.as.module;
+    Value *func_val = vm_find_dispatch(vm, mod->name, rule_name);
+    if (!func_val || func_val->type != VAL_NATIVE_FN) return false;
+
+    NativeFn fn = (NativeFn)func_val->as.native_fn;
+    Value all_args[8];
+    all_args[0] = value;
+    for (int i = 0; i < arg_count && i < 7; i++) {
+        all_args[i + 1] = args[i];
+    }
+    Value result = fn(vm, arg_count + 1, all_args);
+    return result.type == VAL_BOOL && result.as.boolean;
+}
+
+static bool run_struct_validations(VM *vm, ObjStruct *s) {
+    /* Run struct-level validations */
+    for (int i = 0; i < s->struct_validation_count; i++) {
+        ValidationRule *rule = &s->struct_validations[i];
+        /* For struct-level validation, we'd need to pass the whole struct */
+        /* For now, skip struct-level validations as they need more context */
+        (void)rule;
+    }
+
+    /* Run field-level validations */
+    for (int i = 0; i < s->field_count; i++) {
+        int vcount = s->field_validation_counts ? s->field_validation_counts[i] : 0;
+        if (vcount > 0 && s->field_validations && s->field_validations[i]) {
+            Value field_value = s->fields[i];
+            for (int j = 0; j < vcount; j++) {
+                ValidationRule *rule = &s->field_validations[i][j];
+                if (!call_validate_function(vm, rule->rule_name, field_value, rule->rule_args, rule->rule_arg_count)) {
+                    runtime_error(vm, "Validation failed for field '%s': %s", s->field_names[i], rule->rule_name);
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
+}
 
 /* ─── Chunk Implementation ─── */
 
@@ -191,6 +295,34 @@ Value val_enum(ObjEnum *e) {
     return v;
 }
 
+Value val_module(ObjModule *m) {
+    Value v;
+    v.type = VAL_MODULE;
+    v.as.module = m;
+    return v;
+}
+
+Value val_task_obj(ObjTask *t) {
+    Value v;
+    v.type = VAL_TASK;
+    v.as.task_obj = t;
+    return v;
+}
+
+Value val_channel(ObjChannel *c) {
+    Value v;
+    v.type = VAL_CHANNEL;
+    v.as.channel = c;
+    return v;
+}
+
+Value val_actor(ObjActor *a) {
+    Value v;
+    v.type = VAL_ACTOR;
+    v.as.actor = a;
+    return v;
+}
+
 /* ─── Object Allocation ─── */
 static void gc_collect(VM *vm);
 
@@ -230,7 +362,7 @@ ObjString *copy_string(const char *chars, int length) {
     return s;
 }
 
-static ObjString *allocate_string(VM *vm, const char *chars, int length) {
+ObjString *allocate_string(VM *vm, const char *chars, int length) {
     ObjString *s = (ObjString *)allocate_object(vm, VAL_STRING, sizeof(ObjString));
     if (!s) return NULL;
     s->length = length;
@@ -283,6 +415,8 @@ ObjStruct *new_struct(int field_count) {
     s->field_count = field_count;
     s->field_names = (char **)calloc(field_count, sizeof(char *));
     s->fields = (Value *)calloc(field_count, sizeof(Value));
+    s->field_validations = (ValidationRule **)calloc(field_count, sizeof(ValidationRule *));
+    s->field_validation_counts = (int *)calloc(field_count, sizeof(int));
     return s;
 }
 
@@ -293,6 +427,14 @@ ObjEnum *new_enum(int value_count) {
     e->count = value_count;
     e->values = (Value *)calloc(value_count, sizeof(Value));
     return e;
+}
+
+ObjModule *new_module(const char *name) {
+    ObjModule *m = (ObjModule *)calloc(1, sizeof(ObjModule));
+    m->obj.type = VAL_MODULE;
+    m->name = (char *)malloc(strlen(name) + 1);
+    if (m->name) strcpy(m->name, name);
+    return m;
 }
 
 ObjFunction *new_function(void) {
@@ -329,6 +471,10 @@ static void gc_mark_value(VM *vm, Value value) {
         case VAL_FUNCTION: obj = (Obj *)value.as.function; break;
         case VAL_STRUCT:   obj = (Obj *)value.as.structure; break;
         case VAL_ENUM:     obj = (Obj *)value.as.enum_val; break;
+        case VAL_MODULE:   obj = (Obj *)value.as.module; break;
+        case VAL_TASK:     obj = (Obj *)value.as.task_obj; break;
+        case VAL_CHANNEL:  obj = (Obj *)value.as.channel; break;
+        case VAL_ACTOR:    obj = (Obj *)value.as.actor; break;
         default: return;
     }
     if (obj && !obj->is_marked) {
@@ -371,6 +517,24 @@ static void gc_trace(VM *vm) {
                     gc_mark_value(vm, f->constants[i]);
                 break;
             }
+            case VAL_ACTOR: {
+                ObjActor *a = (ObjActor *)obj;
+                gc_mark_value(vm, a->state);
+                gc_mark_value(vm, a->inbox);
+                break;
+            }
+            case VAL_CHANNEL: {
+                ObjChannel *c = (ObjChannel *)obj;
+                for (int i = 0; i < c->count; i++) {
+                    int idx = (c->head + i) % c->capacity;
+                    gc_mark_value(vm, c->buffer[idx]);
+                }
+                break;
+            }
+            case VAL_MODULE:
+            case VAL_TASK:
+                /* Task/Module has no heap Value references */
+                break;
             default: break;  /* VAL_STRING has no references */
         }
     }
@@ -413,6 +577,12 @@ static size_t gc_sweep(VM *vm) {
                     free(s->fields);
                     free(s->type_name);
                     obj_size = sizeof(ObjStruct);
+                    break;
+                }
+                case VAL_ACTOR: {
+                    ObjActor *a = (ObjActor *)obj;
+                    free(a->type_name);
+                    obj_size = sizeof(ObjActor);
                     break;
                 }
                 case VAL_FUNCTION: {
@@ -458,9 +628,33 @@ static void gc_mark_roots(VM *vm) {
         }
     }
 
-    /* Mark stack values */
-    for (int i = 0; i < vm->stack_top; i++)
-        gc_mark_value(vm, vm->stack[i]);
+    /* Mark ALL tasks' stacks AND frame functions */
+    for (int ti = 0; ti < vm->task_count; ti++) {
+        Task *t = vm->tasks[ti];
+        if (t->dead) continue;
+        for (int i = 0; i < t->stack_top; i++)
+            gc_mark_value(vm, t->stack[i]);
+        for (int i = 0; i < t->frame_count; i++) {
+            if (t->frames[i].function) {
+                Obj *fn_obj = (Obj *)t->frames[i].function;
+                if (!fn_obj->is_marked) {
+                    fn_obj->is_marked = true;
+                    gc_push_gray(vm, fn_obj);
+                }
+            }
+        }
+        /* Mark actor reply channel if waiting */
+        if (t->waiting_actor_reply)
+            gc_mark_value(vm, t->actor_reply_ch);
+        /* Mark actor ref for actor loop tasks */
+        if (t->is_actor_loop && t->actor_ref) {
+            Obj *aobj = (Obj *)t->actor_ref;
+            if (!aobj->is_marked) {
+                aobj->is_marked = true;
+                gc_push_gray(vm, aobj);
+            }
+        }
+    }
 
     /* Mark dispatch table function values */
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
@@ -529,6 +723,18 @@ void value_print(Value value) {
             }
             break;
         }
+        case VAL_MODULE:
+            printf("<module %s>", value.as.module->name);
+            break;
+        case VAL_TASK:
+            printf("<task %d>", value.as.task_obj->task->id);
+            break;
+        case VAL_CHANNEL:
+            printf("<channel %d/%d>", value.as.channel->count, value.as.channel->capacity);
+            break;
+        case VAL_ACTOR:
+            printf("<actor %s>", value.as.actor->type_name);
+            break;
     }
 }
 
@@ -579,6 +785,8 @@ void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *prog
     compiler->in_function = false;
     compiler->had_error = false;
     compiler->error_message[0] = '\0';
+    compiler->ffi_decl_count = 0;
+    compiler->test_count = 0;
 }
 
 static void compiler_error(Compiler *compiler, const char *fmt, ...) {
@@ -618,6 +826,7 @@ static void compiler_push_loop(Compiler *compiler, int loop_start) {
     LoopInfo *loop = &compiler->loops[compiler->loop_count++];
     loop->loop_start = loop_start;
     loop->break_count = 0;
+    loop->scope_depth = compiler->scope_depth;
 }
 
 static int compiler_pop_loop(Compiler *compiler, int exit_patch) {
@@ -792,6 +1001,26 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
         }
 
         case NODE_CALL: {
+            /* Check if this is an FFI function call */
+            if (node->call.callee->kind == NODE_IDENTIFIER) {
+                const char *name = node->call.callee->identifier.name;
+                int ffi_idx = -1;
+                for (int i = 0; i < compiler->ffi_decl_count; i++) {
+                    if (strcmp(compiler->ffi_decls[i].name, name) == 0) {
+                        ffi_idx = i;
+                        break;
+                    }
+                }
+                if (ffi_idx >= 0) {
+                    /* FFI call — emit BC_FFI_CALL */
+                    for (int i = 0; i < node->call.arg_count; i++)
+                        compile_expression(compiler, node->call.args[i]);
+                    emit_bytes(compiler, BC_FFI_CALL, (uint8_t)ffi_idx);
+                    emit_byte(compiler, (uint8_t)node->call.arg_count);
+                    break;
+                }
+            }
+            /* Normal call */
             compile_expression(compiler, node->call.callee);
             for (int i = 0; i < node->call.arg_count; i++)
                 compile_expression(compiler, node->call.args[i]);
@@ -843,9 +1072,35 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
             break;
         }
 
+        case NODE_CHAN_SEND:
+            compile_expression(compiler, node->chan_send.channel);
+            compile_expression(compiler, node->chan_send.value);
+            emit_byte(compiler, BC_CHAN_SEND);
+            break;
+        case NODE_CHAN_RECEIVE:
+            compile_expression(compiler, node->chan_receive.channel);
+            emit_byte(compiler, BC_CHAN_RECEIVE);
+            break;
+        case NODE_AWAIT:
+            compile_expression(compiler, node->await.expr);
+            emit_byte(compiler, BC_AWAIT);
+            break;
+
         default:
             compile_node(compiler, node);
             break;
+    }
+}
+
+/* Convert a Varian primitive FFI type to an FFITypeKind */
+static FFITypeKind primitive_to_ffi_kind(PrimitiveKind pk) {
+    switch (pk) {
+        case PRIMITIVE_PTR:     return FFI_PTR;
+        case PRIMITIVE_C_INT:   return FFI_INT;
+        case PRIMITIVE_C_DOUBLE: return FFI_DOUBLE;
+        case PRIMITIVE_C_FLOAT:  return FFI_FLOAT;
+        case PRIMITIVE_C_CHAR:   return FFI_CHAR;
+        default: return FFI_PTR;
     }
 }
 
@@ -906,6 +1161,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             }
             break;
 
+        case NODE_ASSERT:
+            compile_expression(compiler, node->assert_stmt.condition);
+            emit_byte(compiler, BC_ASSERT);
+            break;
+
         case NODE_FN_DECL: {
             Chunk fn_chunk;
             chunk_init(&fn_chunk);
@@ -918,6 +1178,10 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             fn_compiler.local_count = 0;
             fn_compiler.loop_count = 0;
             fn_compiler.in_function = true;
+            fn_compiler.ffi_decl_count = 0;
+            fn_compiler.test_count = 0;
+            fn_compiler.current_line = compiler->current_line;
+            fn_compiler.program = compiler->program;
 
             /* Register parameters as locals */
             for (int i = 0; i < node->fn_decl.param_count; i++) {
@@ -953,6 +1217,37 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_lines = fn_chunk.rle_lines;
             func->rle_counts = fn_chunk.rle_counts;
             func->rle_count = fn_chunk.rle_count;
+            func->metadata = val_nil();
+
+            /* Compile decorators into metadata array: [key1, val1, key2, val2, ...] */
+            if (node->fn_decl.decorator_count > 0) {
+                int dc = node->fn_decl.decorator_count;
+                ObjArray *meta_arr = (ObjArray *)calloc(1, sizeof(ObjArray));
+                meta_arr->obj.type = VAL_ARRAY;
+                meta_arr->count = dc * 2;
+                meta_arr->elements = (Value *)calloc(dc * 2, sizeof(Value));
+                for (int i = 0; i < dc; i++) {
+                    /* Key: compile the decorator key string into a constant */
+                    ObjString *ks = copy_string(node->fn_decl.decorator_keys[i],
+                                                (int)strlen(node->fn_decl.decorator_keys[i]));
+                    meta_arr->elements[i * 2] = val_string(ks);
+                    /* Value: compile the decorator value expression */
+                    /* For simplicity, evaluate literal values at compile time */
+                    AstNode *val_node = node->fn_decl.decorator_values[i];
+                    if (val_node->kind == NODE_BOOL_LITERAL) {
+                        meta_arr->elements[i * 2 + 1] = val_bool(val_node->literal.bool_value);
+                    } else if (val_node->kind == NODE_INT_LITERAL) {
+                        meta_arr->elements[i * 2 + 1] = val_int(val_node->literal.int_value);
+                    } else if (val_node->kind == NODE_STRING_LITERAL) {
+                        ObjString *vs = copy_string(val_node->literal.string_value,
+                                                    (int)strlen(val_node->literal.string_value));
+                        meta_arr->elements[i * 2 + 1] = val_string(vs);
+                    } else {
+                        meta_arr->elements[i * 2 + 1] = val_bool(true);
+                    }
+                }
+                func->metadata = val_array(meta_arr);
+            }
 
             emit_constant(compiler, val_function(func));
             if (node->fn_decl.is_method && node->fn_decl.impl_type) {
@@ -970,12 +1265,63 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     emit_byte(compiler, (uint8_t)mi);
                 }
             }
-            emit_byte(compiler, BC_DEFINE_GLOBAL);
-            {
-                ObjString *s = copy_string(node->fn_decl.name,
-                                           (int)strlen(node->fn_decl.name));
-                int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                emit_byte(compiler, (uint8_t)idx);
+            /* Lambdas (name "__lambda__") are expressions, not statements —
+             * skip BC_DEFINE_GLOBAL so the function value stays on the stack. */
+            if (strcmp(node->fn_decl.name, "__lambda__") != 0) {
+                emit_byte(compiler, BC_DEFINE_GLOBAL);
+                {
+                    ObjString *s = copy_string(node->fn_decl.name,
+                                               (int)strlen(node->fn_decl.name));
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, (uint8_t)idx);
+                }
+            }
+            break;
+        }
+
+        case NODE_TEST: {
+            Chunk fn_chunk;
+            chunk_init(&fn_chunk);
+            Compiler fn_compiler;
+            fn_compiler.arena = compiler->arena;
+            fn_compiler.chunk = &fn_chunk;
+            fn_compiler.scope_depth = 1;
+            fn_compiler.had_error = false;
+            fn_compiler.error_message[0] = '\0';
+            fn_compiler.local_count = 0;
+            fn_compiler.loop_count = 0;
+            fn_compiler.in_function = true;
+            fn_compiler.ffi_decl_count = 0;
+            fn_compiler.test_count = 0;
+
+            if (node->test_decl.body) {
+                for (int i = 0; i < node->test_decl.body->block.stmt_count; i++)
+                    compile_node(&fn_compiler, node->test_decl.body->block.stmts[i]);
+            }
+            /* Implicit return */
+            emit_byte(&fn_compiler, BC_NIL);
+            emit_byte(&fn_compiler, BC_RETURN);
+
+            ObjFunction *func = (ObjFunction *)calloc(1, sizeof(ObjFunction));
+            func->obj.type = VAL_FUNCTION;
+            func->arity = 0;
+            func->code = fn_chunk.code;
+            func->code_count = fn_chunk.count;
+            func->code_capacity = fn_chunk.capacity;
+            func->constants = fn_chunk.constants;
+            func->constant_count = fn_chunk.constant_count;
+            func->constant_capacity = fn_chunk.constant_capacity;
+            func->rle_lines = fn_chunk.rle_lines;
+            func->rle_counts = fn_chunk.rle_counts;
+            func->rle_count = fn_chunk.rle_count;
+            func->metadata = val_nil();
+
+            /* Store in compiler's test registry (not emitted as global) */
+            if (compiler->test_count < MAX_TESTS) {
+                compiler->tests[compiler->test_count].description =
+                    strdup(node->test_decl.description);
+                compiler->tests[compiler->test_count].func = func;
+                compiler->test_count++;
             }
             break;
         }
@@ -1175,8 +1521,8 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             break;
 
         case NODE_ASSIGN:
-            compile_expression(compiler, node->assign.value);
             if (node->assign.target->kind == NODE_IDENTIFIER) {
+                compile_expression(compiler, node->assign.value);
                 int local_idx = compiler_find_local(compiler, node->assign.target->identifier.name);
                 if (local_idx >= 0) {
                     emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)local_idx);
@@ -1187,12 +1533,24 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, (uint8_t)idx);
                 }
+            } else if (node->assign.target->kind == NODE_MEMBER) {
+                compile_expression(compiler, node->assign.target->member.object);
+                compile_expression(compiler, node->assign.value);
+                emit_byte(compiler, BC_SET_MEMBER);
+                ObjString *s = copy_string(node->assign.target->member.member,
+                                           (int)strlen(node->assign.target->member.member));
+                int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                emit_byte(compiler, (uint8_t)idx);
             }
             break;
 
         case NODE_BREAK: {
             if (compiler->loop_count > 0) {
-                emit_pop_scope(compiler, compiler->scope_depth - 1);
+                LoopInfo *loop = &compiler->loops[compiler->loop_count - 1];
+                for (int i = compiler->local_count - 1; i >= 0; i--) {
+                    if (compiler->local_depths[i] > loop->scope_depth)
+                        emit_byte(compiler, BC_POP);
+                }
             }
             int jump_offset = emit_jump(compiler, BC_JUMP);
             compiler_record_break(compiler, jump_offset);
@@ -1201,7 +1559,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
         case NODE_CONTINUE: {
             if (compiler->loop_count > 0) {
-                emit_pop_scope(compiler, compiler->scope_depth - 1);
+                LoopInfo *loop = &compiler->loops[compiler->loop_count - 1];
+                for (int i = compiler->local_count - 1; i >= 0; i--) {
+                    if (compiler->local_depths[i] > loop->scope_depth)
+                        emit_byte(compiler, BC_POP);
+                }
                 emit_loop(compiler, compiler->loops[compiler->loop_count - 1].loop_start);
             }
             break;
@@ -1303,9 +1665,88 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             break;
         }
 
-        case NODE_STRUCT_DECL:
-            /* Struct declaration — no bytecode emitted */
+        case NODE_STRUCT_DECL: {
+            /* Check if struct has validation decorators */
+            bool has_validations = (node->struct_decl.decorator_count > 0);
+            if (!has_validations) {
+                for (int i = 0; i < node->struct_decl.field_count; i++) {
+                    if (node->struct_decl.field_decorator_counts &&
+                        node->struct_decl.field_decorator_counts[i] > 0) {
+                        has_validations = true;
+                        break;
+                    }
+                }
+            }
+
+            if (has_validations) {
+                /* Emit bytecode to register validations at runtime */
+                emit_byte(compiler, BC_REGISTER_VALIDATIONS);
+
+                /* Struct name */
+                ObjString *ts = copy_string(node->struct_decl.name,
+                                            (int)strlen(node->struct_decl.name));
+                int ti = chunk_add_constant(compiler->chunk, val_string(ts));
+                emit_byte(compiler, (uint8_t)ti);
+
+                /* Struct-level validation count */
+                emit_byte(compiler, (uint8_t)node->struct_decl.decorator_count);
+
+                /* Struct-level validation rules */
+                for (int i = 0; i < node->struct_decl.decorator_count; i++) {
+                    ObjString *key = copy_string(node->struct_decl.decorator_keys[i],
+                                                 (int)strlen(node->struct_decl.decorator_keys[i]));
+                    int ki = chunk_add_constant(compiler->chunk, val_string(key));
+                    emit_byte(compiler, (uint8_t)ki);
+                    /* For now, we don't serialize the value - just the rule name */
+                    /* In a full implementation, we'd serialize the args too */
+                }
+
+                /* Field count */
+                emit_byte(compiler, (uint8_t)node->struct_decl.field_count);
+
+                /* Field names and their validations */
+                for (int i = 0; i < node->struct_decl.field_count; i++) {
+                    ObjString *fname = copy_string(node->struct_decl.field_names[i],
+                                                   (int)strlen(node->struct_decl.field_names[i]));
+                    int fi = chunk_add_constant(compiler->chunk, val_string(fname));
+                    emit_byte(compiler, (uint8_t)fi);
+
+                    int fcount = 0;
+                    if (node->struct_decl.field_decorator_counts) {
+                        fcount = node->struct_decl.field_decorator_counts[i];
+                    }
+                    emit_byte(compiler, (uint8_t)fcount);
+
+                    if (fcount > 0 && node->struct_decl.field_decorator_keys &&
+                        node->struct_decl.field_decorator_keys[i]) {
+                        for (int j = 0; j < fcount; j++) {
+                            ObjString *fkey = copy_string(node->struct_decl.field_decorator_keys[i][j],
+                                                          (int)strlen(node->struct_decl.field_decorator_keys[i][j]));
+                            int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
+                            emit_byte(compiler, (uint8_t)fki);
+                        }
+                    }
+                }
+            }
             break;
+        }
+
+        case NODE_ACTOR_DECL: {
+            /* Actor init — emit BC_ACTOR_INIT with type name + field info */
+            emit_byte(compiler, BC_ACTOR_INIT);
+            ObjString *ts = copy_string(node->actor_decl.name,
+                                        (int)strlen(node->actor_decl.name));
+            int ti = chunk_add_constant(compiler->chunk, val_string(ts));
+            emit_byte(compiler, (uint8_t)ti);
+            emit_byte(compiler, (uint8_t)node->actor_decl.field_count);
+            for (int i = 0; i < node->actor_decl.field_count; i++) {
+                ObjString *fs = copy_string(node->actor_decl.field_names[i],
+                                            (int)strlen(node->actor_decl.field_names[i]));
+                int fi = chunk_add_constant(compiler->chunk, val_string(fs));
+                emit_byte(compiler, (uint8_t)fi);
+            }
+            break;
+        }
 
         case NODE_STRUCT_LITERAL: {
             for (int i = 0; i < node->struct_literal.field_count; i++)
@@ -1334,6 +1775,48 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             /* Trait declaration — no bytecode emitted */
             break;
 
+        case NODE_FFI_DECL: {
+            /* Register this function in the compiler's FFI declaration list */
+            if (compiler->ffi_decl_count >= MAX_FFI_ENTRIES) {
+                compiler_error(compiler, "Too many FFI declarations");
+                break;
+            }
+            int idx = compiler->ffi_decl_count++;
+            FFIDecl *decl = &compiler->ffi_decls[idx];
+
+            strncpy(decl->name, node->ffi_decl.name, 63);
+            decl->name[63] = '\0';
+            strncpy(decl->lib_name, node->ffi_decl.lib_name, MAX_FFI_LIB_NAME - 1);
+            decl->lib_name[MAX_FFI_LIB_NAME - 1] = '\0';
+            strncpy(decl->func_name, node->ffi_decl.func_name, MAX_FFI_FUNC_NAME - 1);
+            decl->func_name[MAX_FFI_FUNC_NAME - 1] = '\0';
+
+            /* Extract FFI types from node->type (function type) */
+            decl->param_count = 0;
+            decl->return_kind = FFI_PTR; /* default */
+
+            if (node->type && node->type->kind == TYPE_FUNCTION) {
+                /* Param types */
+                for (int i = 0; i < node->type->function.param_count && i < MAX_FFI_PARAMS; i++) {
+                    Type *pt = node->type->function.param_types[i];
+                    if (pt->kind == TYPE_PRIMITIVE) {
+                        decl->param_kinds[i] = primitive_to_ffi_kind(pt->primitive);
+                        decl->param_count++;
+                    } else {
+                        decl->param_kinds[i] = FFI_PTR;
+                        decl->param_count++;
+                    }
+                }
+                /* Return type */
+                Type *rt = node->type->function.return_type;
+                if (rt && rt->kind == TYPE_PRIMITIVE)
+                    decl->return_kind = primitive_to_ffi_kind(rt->primitive);
+            }
+
+            /* No bytecode emitted — the function is handled at VM init */
+            break;
+        }
+
         case NODE_ENUM_LITERAL: {
             for (int i = 0; i < node->enum_literal.value_count; i++)
                 compile_expression(compiler, node->enum_literal.values[i]);
@@ -1360,6 +1843,65 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 emit_byte(compiler, (uint8_t)idx);
             }
             emit_byte(compiler, (uint8_t)node->dispatch_call.arg_count);
+            break;
+        }
+
+        case NODE_COMPTIME: {
+            /* Compile the inner body into a temporary function */
+            Chunk tmp_chunk;
+            chunk_init(&tmp_chunk);
+            Compiler tmp_comp;
+            tmp_comp.arena = compiler->arena;
+            tmp_comp.chunk = &tmp_chunk;
+            tmp_comp.scope_depth = 0;
+            tmp_comp.had_error = false;
+            tmp_comp.error_message[0] = '\0';
+            tmp_comp.local_count = 0;
+            tmp_comp.loop_count = 0;
+            tmp_comp.in_function = true;
+            tmp_comp.ffi_decl_count = 0;
+
+            compile_node(&tmp_comp, node->comptime.body);
+
+            /* Remove trailing BC_POP (expression statement) to keep
+             * the last value on the stack as the comptime result */
+            if (tmp_chunk.count > 0 &&
+                tmp_chunk.code[tmp_chunk.count - 1] == BC_POP)
+                tmp_chunk.count--;
+
+            emit_byte(&tmp_comp, BC_RETURN);
+
+            /* Create ObjFunction from the temp chunk */
+            ObjFunction *fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
+            fn->obj.type = VAL_FUNCTION;
+            fn->arity = 0;
+            fn->code = tmp_chunk.code;
+            fn->code_count = tmp_chunk.count;
+            fn->code_capacity = tmp_chunk.capacity;
+            fn->constants = tmp_chunk.constants;
+            fn->constant_count = tmp_chunk.constant_count;
+            fn->constant_capacity = tmp_chunk.constant_capacity;
+            fn->rle_lines = tmp_chunk.rle_lines;
+            fn->rle_counts = tmp_chunk.rle_counts;
+            fn->rle_count = tmp_chunk.rle_count;
+
+            /* Store fn in outer constants */
+            int fn_idx = chunk_add_constant(compiler->chunk, val_function(fn));
+            if (fn_idx > 255) {
+                compiler_error(compiler, "Too many constants for comptime");
+                break;
+            }
+
+            /* Reserve result slot */
+            int result_idx = chunk_add_constant(compiler->chunk, val_nil());
+            if (result_idx > 255) {
+                compiler_error(compiler, "Too many constants for comptime result");
+                break;
+            }
+
+            emit_byte(compiler, BC_COMPTIME_EXEC);
+            emit_byte(compiler, (uint8_t)result_idx);
+            emit_byte(compiler, (uint8_t)fn_idx);
             break;
         }
 
@@ -1391,32 +1933,58 @@ bool compiler_compile(Compiler *compiler) {
     return !compiler->had_error;
 }
 
-/* ─── VM Execution ─── */
-
-#define READ_BYTE() (*vm->frames[vm->frame_count - 1].ip++)
-#define READ_SHORT() \
-    (vm->frames[vm->frame_count - 1].ip += 2, \
-     (uint16_t)((vm->frames[vm->frame_count - 1].ip[-2] << 8) | \
-                vm->frames[vm->frame_count - 1].ip[-1]))
-#define READ_CONSTANT() (vm->frames[vm->frame_count - 1].function->constants[READ_BYTE()])
-#define PUSH(v) do { \
-    vm->stack[vm->stack_top] = (v); \
-    vm->stack_top++; \
+/* ─── Per-task macros (used inside task_run) ─── */
+/* These require local variables: task (Task*), vm (VM*) */
+#define TASK_READ_BYTE()  (*task->frames[task->frame_count - 1].ip++)
+#define TASK_READ_SHORT() \
+    (task->frames[task->frame_count - 1].ip += 2, \
+     (uint16_t)((task->frames[task->frame_count - 1].ip[-2] << 8) | \
+                task->frames[task->frame_count - 1].ip[-1]))
+#define TASK_READ_CONSTANT() (task->frames[task->frame_count - 1].function->constants[TASK_READ_BYTE()])
+#define TASK_PUSH(v) do { \
+    task->stack[task->stack_top] = (v); \
+    task->stack_top++; \
 } while (0)
-#define POP() (vm->stack[--vm->stack_top])
-#define PEEK(n) (vm->stack[vm->stack_top - 1 - (n)])
+#define TASK_POP() (task->stack[--task->stack_top])
+#define TASK_PEEK(n) (task->stack[task->stack_top - 1 - (n)])
+
+/* ─── Task allocation ─── */
+Task *task_new(VM *vm) {
+    Task *t = (Task *)calloc(1, sizeof(Task));
+    if (!t) return NULL;
+    if (vm->task_count >= vm->task_capacity) {
+        int new_cap = vm->task_capacity ? vm->task_capacity * 2 : 8;
+        Task **new_tasks = (Task **)realloc(vm->tasks, (size_t)new_cap * sizeof(Task *));
+        if (!new_tasks) { free(t); return NULL; }
+        vm->tasks = new_tasks;
+        vm->task_capacity = new_cap;
+    }
+    t->id = vm->task_count;
+    t->dead = false;
+    t->yielded = false;
+    t->waiting_actor_reply = false;
+    t->actor_reply_ch = val_nil();
+    t->is_actor_loop = false;
+    t->actor_ref = NULL;
+    t->cache_on_return = false;
+    t->cache_result_key = 0;
+    t->http_listen_fd = -1;
+    t->wakeup_time = 0.0;
+    vm->tasks[vm->task_count++] = t;
+    return t;
+}
 
 void vm_init(VM *vm, Compiler *compiler) {
-    vm->frame_count = 0;
-    vm->stack_top = 0;
+    vm->tasks = NULL;
+    vm->task_count = 0;
+    vm->task_capacity = 0;
+    vm->current_task = NULL;
+    vm->current_task_index = 0;
     vm->objects = NULL;
     vm->global_count = 0;
     vm->compiler = compiler;
     vm->had_error = false;
     vm->main_fn = NULL;
-    vm->try_count = 0;
-    vm->is_throwing = false;
-    vm->throw_value = val_nil();
     memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
     vm->gray_stack = NULL;
     vm->gray_capacity = 0;
@@ -1427,36 +1995,84 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->intern_capacity = 0;
     vm->intern_count = 0;
     memset(vm->globals, 0, sizeof(vm->globals));
+    vm->ffi_entries = NULL;
+    vm->ffi_entry_count = 0;
+    vm->actor_field_count = 0;
+    vm->cache_map = NULL;
+    vm->cache_map_count = 0;
+    vm->cache_map_capacity = 0;
+    vm->test_count = 0;
+    memset(vm->tests, 0, sizeof(vm->tests));
+    vm->validation_registry.count = 0;
 }
 
-static void runtime_error(VM *vm, const char *format, ...) {
+/* ─── FFI Resolution ─── */
+/* Called at the start of vm_run to resolve all FFI declarations */
+static bool vm_resolve_ffi(VM *vm) {
+    Compiler *compiler = vm->compiler;
+    if (compiler->ffi_decl_count == 0) return true;
+
+    vm->ffi_entries = (VMFFIEntry *)calloc((size_t)compiler->ffi_decl_count, sizeof(VMFFIEntry));
+    if (!vm->ffi_entries) return false;
+    vm->ffi_entry_count = compiler->ffi_decl_count;
+
+    for (int i = 0; i < compiler->ffi_decl_count; i++) {
+        FFIDecl *decl = &compiler->ffi_decls[i];
+        VMFFIEntry *entry = &vm->ffi_entries[i];
+
+        void *lib = ffi_open_lib(decl->lib_name);
+        if (!lib) {
+            fprintf(stderr, "FFI: Cannot open library '%s'\n", decl->lib_name);
+            return false;
+        }
+
+        void *fn_ptr = ffi_find_sym(lib, decl->func_name);
+        if (!fn_ptr) {
+            fprintf(stderr, "FFI: Cannot find symbol '%s' in '%s'\n",
+                    decl->func_name, decl->lib_name);
+            return false;
+        }
+
+        if (!ffi_entry_init(entry, fn_ptr, decl->return_kind,
+                           decl->param_kinds, decl->param_count)) {
+            fprintf(stderr, "FFI: Failed to init call interface for '%s'\n", decl->func_name);
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void runtime_error(VM *vm, const char *format, ...) {
     va_list args;
     va_start(args, format);
     vfprintf(stderr, format, args);
     va_end(args);
     fprintf(stderr, "\n");
-    for (int i = vm->frame_count - 1; i >= 0; i--) {
-        CallFrame *frame = &vm->frames[i];
-        int offset = (int)(frame->ip - frame->function->code - 1);
-        if (offset < 0) offset = 0;
-        int line = 0;
-        if (frame->function == vm->main_fn) {
-            line = chunk_get_line(vm->compiler->chunk, offset);
-        } else {
-            /* Walk RLE data in the function */
-            ObjFunction *fn = frame->function;
-            int pos = 0;
-            for (int j = 0; j < fn->rle_count; j++) {
-                pos += fn->rle_counts[j];
-                if (offset < pos) { line = fn->rle_lines[j]; break; }
+    Task *t = vm->current_task;
+    if (t) {
+        for (int i = t->frame_count - 1; i >= 0; i--) {
+            CallFrame *frame = &t->frames[i];
+            int offset = (int)(frame->ip - frame->function->code - 1);
+            if (offset < 0) offset = 0;
+            int line = 0;
+            if (frame->function == vm->main_fn) {
+                line = chunk_get_line(vm->compiler->chunk, offset);
+            } else {
+                ObjFunction *fn = frame->function;
+                int pos = 0;
+                for (int j = 0; j < fn->rle_count; j++) {
+                    pos += fn->rle_counts[j];
+                    if (offset < pos) { line = fn->rle_lines[j]; break; }
+                }
             }
+            fprintf(stderr, "[line %d] in script\n", line);
         }
-        fprintf(stderr, "[line %d] in script\n", line);
     }
     vm->had_error = true;
 }
 
-static void define_global(VM *vm, ObjString *name, Value value) {
+void define_global(VM *vm, ObjString *name, Value value) {
     for (int i = 0; i < vm->global_count; i++) {
         if (strcmp(vm->global_names[i], name->chars) == 0) {
             vm->globals[i] = value;
@@ -1492,17 +2108,176 @@ static void set_global(VM *vm, ObjString *name, Value value) {
     runtime_error(vm, "Undefined variable '%s'", name->chars);
 }
 
-static int native_print(VM *vm) {
-    Value v = POP();
-    value_print(v);
-    printf("\n");
-    return 0;
+static Value native_print(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    for (int i = 0; i < arg_count; i++) {
+        value_print(args[i]);
+        if (i < arg_count - 1) printf(" ");
+    }
+    if (arg_count > 0) printf("\n");
+    fflush(stdout);
+    return val_nil();
 }
 
-static int native_throw(VM *vm) {
-    vm->throw_value = POP();
-    vm->is_throwing = true;
-    return 0;
+static Value native_throw(VM *vm, int arg_count, Value *args) {
+    Task *t = vm->current_task;
+    if (t) {
+        t->throw_value = (arg_count > 0) ? args[0] : val_nil();
+        t->is_throwing = true;
+    }
+    return val_nil();
+}
+
+/* Builtin: convert a C pointer (int) to a managed ObjString */
+static Value native_ffi_to_string(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || args[0].type != VAL_INT)
+        return val_nil();
+    const char *cstr = (const char *)(uintptr_t)args[0].as.integer;
+    if (!cstr) return val_nil();
+    size_t len = strlen(cstr);
+    ObjString *s = allocate_string(vm, cstr, (int)len);
+    return val_string(s);
+}
+
+/* Forward declarations needed by actor functions */
+static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
+bool task_run(VM *vm, Task *task);
+
+/* ─── Channel helpers (used by actor system) ─── */
+static bool channel_try_receive(ObjChannel *ch, Value *result) {
+    if (ch->count > 0) {
+        *result = ch->buffer[ch->head];
+        ch->head = (ch->head + 1) % ch->capacity;
+        ch->count--;
+        return true;
+    }
+    return false;
+}
+
+static bool channel_try_send(ObjChannel *ch, Value val) {
+    if (ch->count < ch->capacity) {
+        ch->buffer[ch->tail] = val;
+        ch->tail = (ch->tail + 1) % ch->capacity;
+        ch->count++;
+        return true;
+    }
+    return false;
+}
+
+/* ─── Actor functions ─── */
+/* Called by the scheduler to process one message for an actor loop task.
+   Creates a temporary task to execute the method and sends the result
+   to the reply channel. The inbox channel must have a message. */
+static bool actor_scheduler_process(VM *vm, Task *task) {
+    ObjActor *actor = task->actor_ref;
+    if (!actor) return false;
+
+    Value msg_val;
+    if (!channel_try_receive(actor->inbox.as.channel, &msg_val))
+        return false;
+
+    if (msg_val.type != VAL_TUPLE) return false;
+    ObjTuple *msg = msg_val.as.tuple;
+    if (msg->count < 3) return false;
+
+    char *method_name = msg->elements[0].as.string->chars;
+    ObjArray *msg_args = msg->elements[1].as.array;
+    Value reply_ch = msg->elements[2];
+
+    Value *func_val = vm_find_dispatch(vm, actor->type_name, method_name);
+    if (!func_val || func_val->type != VAL_FUNCTION)
+        return false;
+
+    ObjFunction *method_fn = func_val->as.function;
+
+    Task *tmp_task = task_new(vm);
+    tmp_task->stack[tmp_task->stack_top++] = actor->state;
+    for (int i = 0; i < msg_args->count; i++)
+        tmp_task->stack[tmp_task->stack_top++] = msg_args->elements[i];
+
+    tmp_task->frames[0].function = method_fn;
+    tmp_task->frames[0].ip = method_fn->code;
+    tmp_task->frames[0].slots = tmp_task->stack;
+    tmp_task->frame_count = 1;
+
+    Task *prev = vm->current_task;
+    vm->current_task = tmp_task;
+    task_run(vm, tmp_task);
+    vm->current_task = prev;
+
+    Value result = val_nil();
+    if (tmp_task->stack_top > 0)
+        result = tmp_task->stack[tmp_task->stack_top - 1];
+
+    if (reply_ch.type == VAL_CHANNEL)
+        channel_try_send(reply_ch.as.channel, result);
+
+    tmp_task->dead = true;
+    return true;
+}
+
+/* actor_spawn_native is registered as the "spawn" method on each actor module.
+   It creates the ObjActor, its inner VAL_STRUCT state, inbox channel,
+   and background loop task. */
+static Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || args[0].type != VAL_MODULE) {
+        runtime_error(vm, "actor.spawn: expected module as first argument");
+        return val_nil();
+    }
+    char *type_name = args[0].as.module->name;
+
+    /* Find actor field info */
+    ActorFieldInfo *info = NULL;
+    for (int i = 0; i < vm->actor_field_count; i++) {
+        if (strcmp(vm->actor_fields[i].type_name, type_name) == 0) {
+            info = &vm->actor_fields[i];
+            break;
+        }
+    }
+    if (!info) {
+        runtime_error(vm, "actor.spawn: unknown actor type '%s'", type_name);
+        return val_nil();
+    }
+
+    /* 1. Create inner state struct */
+    ObjStruct *state = new_struct(info->field_count);
+    state->type_name = (char *)malloc(strlen(type_name) + 1);
+    strcpy(state->type_name, type_name);
+    for (int i = 0; i < info->field_count; i++) {
+        state->field_names[i] = (char *)malloc(strlen(info->field_names[i]) + 1);
+        strcpy(state->field_names[i], info->field_names[i]);
+        state->fields[i] = val_nil();
+    }
+
+    /* 2. Create inbox channel (capacity 64) */
+    ObjChannel *inbox = (ObjChannel *)calloc(1, sizeof(ObjChannel));
+    inbox->obj.type = VAL_CHANNEL;
+    inbox->capacity = 64;
+    inbox->buffer = (Value *)calloc(64, sizeof(Value));
+
+    /* 3. Create ObjActor */
+    ObjActor *obj_actor = (ObjActor *)calloc(1, sizeof(ObjActor));
+    obj_actor->obj.type = VAL_ACTOR;
+    obj_actor->type_name = (char *)malloc(strlen(type_name) + 1);
+    strcpy(obj_actor->type_name, type_name);
+    obj_actor->state = val_struct(state);
+    obj_actor->inbox = val_channel(inbox);
+
+    /* Link into GC */
+    state->obj.next = vm->objects;
+    vm->objects = (Obj *)state;
+    inbox->obj.next = vm->objects;
+    vm->objects = (Obj *)inbox;
+    obj_actor->obj.next = vm->objects;
+    vm->objects = (Obj *)obj_actor;
+
+    /* Create a background task for the actor loop */
+    Task *loop_task = task_new(vm);
+    loop_task->is_actor_loop = true;
+    loop_task->actor_ref = obj_actor;
+    obj_actor->loop_task = loop_task;
+
+    return val_actor(obj_actor);
 }
 
 /* Sequential FNV-1a hash: hashes two strings without allocation */
@@ -1515,7 +2290,7 @@ static uint32_t fnv1a_hash_two(const char *a, const char *b) {
 }
 
 /* Dispatch table helpers — FNV-1a open-addressing hash table */
-static void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
+void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
     uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
@@ -1547,7 +2322,77 @@ static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method
     return NULL;
 }
 
-bool vm_run(VM *vm) {
+/* ─── Forward declarations ─── */
+
+/* ─── Resolve comptime blocks at VM startup ─── */
+static bool vm_resolve_comptime(VM *vm) {
+    Chunk *chunk = vm->compiler->chunk;
+    for (int i = 0; i < chunk->count; ) {
+        if (chunk->code[i] == BC_COMPTIME_EXEC) {
+            int result_idx = chunk->code[i + 1];
+            int fn_idx = chunk->code[i + 2];
+
+            if (fn_idx >= chunk->constant_count ||
+                chunk->constants[fn_idx].type != VAL_FUNCTION) {
+                fprintf(stderr, "comptime: invalid fn constant\n");
+                return false;
+            }
+            ObjFunction *fn = chunk->constants[fn_idx].as.function;
+
+            /* Create a temporary task */
+            Task *tmp_task = task_new(vm);
+            if (!tmp_task) return false;
+            tmp_task->frames[0].function = fn;
+            tmp_task->frames[0].ip = fn->code;
+            tmp_task->frames[0].slots = tmp_task->stack;
+            tmp_task->frame_count = 1;
+
+            vm->current_task = tmp_task;
+            bool ok = task_run(vm, tmp_task);
+            vm->current_task = NULL;
+
+            if (!ok) return false;
+
+            /* Read result from top of task's stack */
+            if (tmp_task->stack_top > 0)
+                chunk->constants[result_idx] = tmp_task->stack[tmp_task->stack_top - 1];
+
+            tmp_task->dead = true;
+            i += 3;
+        } else {
+            /* Skip to next instruction — for BC_CONSTANT, skip 2; for others skip 1 */
+            /* Simple heuristic: most opcodes are 1 byte. Only skip extra for known multi-byte. */
+            uint8_t op = chunk->code[i];
+            i++;
+            if (op == BC_JUMP || op == BC_JUMP_IF_FALSE || op == BC_LOOP ||
+                op == BC_COMPTIME_EXEC || op == BC_FFI_CALL || op == BC_DISPATCH ||
+                op == BC_ENUM || op == BC_TRY || op == BC_CONSTANT_LONG ||
+                op == BC_REGISTER_METHOD || op == BC_UNPACK_ENUM)
+                i += 2;
+            else if (op == BC_STRUCT) {
+                int fc = chunk->code[i];
+                i += 2 + fc;
+            }
+            else if (op == BC_CONSTANT || op == BC_GET_GLOBAL || op == BC_SET_GLOBAL ||
+                     op == BC_DEFINE_GLOBAL || op == BC_GET_LOCAL || op == BC_SET_LOCAL ||
+                     op == BC_CALL || op == BC_ARRAY || op == BC_TUPLE ||
+                     op == BC_RETURN_N || op == BC_BUILD_STRING ||
+                     op == BC_MEMBER || op == BC_SET_MEMBER || op == BC_TAG_EQ)
+                i += 1;
+            else if (op == BC_ACTOR_INIT) {
+                /* variable length: op + type_name_idx + field_count + field_name_idxs */
+                int fc = chunk->code[i + 1];
+                i += 2 + fc;
+                continue;
+            }
+            /* else: single-byte opcode */
+        }
+    }
+    return true;
+}
+
+bool vm_run(VM *vm, bool run_tests) {
+    vm->test_fail_count = 0;
     /* Create main script function (not tracked in objects list) */
     vm->main_fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
     vm->main_fn->obj.type = VAL_FUNCTION;
@@ -1558,29 +2403,247 @@ bool vm_run(VM *vm) {
     vm->main_fn->constant_count = vm->compiler->chunk->constant_count;
     vm->main_fn->constant_capacity = vm->compiler->chunk->constant_capacity;
 
-    CallFrame *frame = &vm->frames[vm->frame_count++];
-    frame->function = vm->main_fn;
-    frame->ip = vm->main_fn->code;
-    frame->slots = NULL;  /* main script uses globals, not locals */
+    /* Create and set up the initial task */
+    Task *init_task = task_new(vm);
+    if (!init_task) return false;
+    init_task->frames[0].function = vm->main_fn;
+    init_task->frames[0].ip = vm->main_fn->code;
+    init_task->frames[0].slots = NULL;
+    init_task->frame_count = 1;
+    vm->current_task = init_task;
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
+    define_global(vm, copy_string("ffi_to_string", 13), val_native_fn((void *)native_ffi_to_string));
+    extern Value native_json_encode(VM *vm, int arg_count, Value *args);
+    extern Value native_json_decode(VM *vm, int arg_count, Value *args);
+    define_global(vm, copy_string("json_encode", 11), val_native_fn((void *)native_json_encode));
+    define_global(vm, copy_string("json_decode", 11), val_native_fn((void *)native_json_decode));
+
+    /* Initialize built-in modules */
+    {
+        extern void lib_math_init(VM *vm);
+        extern void lib_io_init(VM *vm);
+        extern void lib_string_init(VM *vm);
+        extern void lib_http_init(VM *vm);
+        extern void lib_python_init(VM *vm);
+        extern void lib_postgres_init(VM *vm);
+        extern void lib_validate_init(VM *vm);
+        extern void lib_sanitize_init(VM *vm);
+        extern void lib_auth_init(VM *vm);
+        extern void lib_task_init(VM *vm);
+        extern void lib_sqlite_init(VM *vm);
+        extern void lib_redis_init(VM *vm);
+        lib_math_init(vm);
+        lib_io_init(vm);
+        lib_string_init(vm);
+        lib_http_init(vm);
+        lib_python_init(vm);
+        lib_postgres_init(vm);
+        lib_validate_init(vm);
+        lib_sanitize_init(vm);
+        lib_auth_init(vm);
+        lib_task_init(vm);
+        lib_sqlite_init(vm);
+        lib_redis_init(vm);
+    }
 
 #define BINARY_OP_NUM(op) \
     do { \
-        Value b = POP(); \
-        Value a = POP(); \
+        Value b = TASK_POP(); \
+        Value a = TASK_POP(); \
         if (a.type == VAL_INT && b.type == VAL_INT) { \
-            PUSH(val_int(a.as.integer op b.as.integer)); \
+            TASK_PUSH(val_int(a.as.integer op b.as.integer)); \
         } else { \
             double bv = (b.type == VAL_FLOAT) ? b.as.floating : (double)b.as.integer; \
             double av = (a.type == VAL_FLOAT) ? a.as.floating : (double)a.as.integer; \
-            PUSH(val_float(av op bv)); \
+            TASK_PUSH(val_float(av op bv)); \
         } \
     } while (0)
 
-    while (!vm->had_error) {
-        uint8_t instruction = READ_BYTE();
+    /* Resolve FFI declarations */
+    if (!vm_resolve_ffi(vm)) {
+        return false;
+    }
+
+    /* Resolve comptime blocks */
+    if (!vm_resolve_comptime(vm)) {
+        return false;
+    }
+
+    /* ─── Round-robin scheduler ─── */
+    while (true) {
+        bool any_alive = false;
+        bool made_progress = false;
+        for (int i = 0; i < vm->task_count; i++) {
+            Task *t = vm->tasks[i];
+            if (t->dead) continue;
+            /* Actor loop tasks don't keep the process alive by themselves */
+            if (!t->is_actor_loop)
+                any_alive = true;
+
+            if (t->wakeup_time > 0) {
+                struct timeval tv;
+                gettimeofday(&tv, NULL);
+                double now = tv.tv_sec + tv.tv_usec / 1000000.0;
+                if (now < t->wakeup_time) continue;
+                t->wakeup_time = 0;
+            }
+
+            if (t->is_actor_loop) {
+                /* Native actor loop: process one message if available */
+                if (actor_scheduler_process(vm, t)) {
+                    made_progress = true;
+                }
+            } else {
+                /* Normal Varian task */
+                vm->current_task = t;
+                vm->current_task_index = i;
+                t->yielded = false;
+                vm->had_error = false;
+                uint8_t *prev_ip = NULL;
+                if (t->frame_count > 0) {
+                    prev_ip = t->frames[t->frame_count - 1].ip;
+                }
+                task_run(vm, t);
+                if (vm->had_error) {
+                    t->dead = true;
+                }
+                if (t->dead || t->frame_count == 0 || (t->frame_count > 0 && t->frames[t->frame_count - 1].ip != prev_ip)) {
+                    made_progress = true;
+                }
+            }
+        }
+        /* Stop only when no tasks remain alive */
+        if (!any_alive) break;
+
+        if (!made_progress) {
+            usleep(1000); // Sleep for 1ms to prevent hot spinning
+        }
+    }
+
+    /* ─── Test execution mini-scheduler ─── */
+    if (run_tests) {
+        for (int i = 0; i < vm->test_count; i++) {
+            TestRecord *tr = &vm->tests[i];
+
+            Task *t = task_new(vm);
+            if (!t) continue;
+            t->frames[0].function = tr->func;
+            t->frames[0].ip = tr->func->code;
+            t->frames[0].slots = t->stack;
+            t->frame_count = 1;
+
+            vm->had_error = false;
+
+            /* Mini-scheduler: handle yields from await, actors, etc. */
+            while (!t->dead && !vm->had_error) {
+                t->yielded = false;
+                vm->current_task = t;
+                task_run(vm, t);
+
+                /* Run background tasks (e.g. actor loops) so the test doesn't deadlock */
+                for (int j = 0; j < vm->task_count; j++) {
+                    Task *other = vm->tasks[j];
+                    if (other != t && !other->dead) {
+                        if (other->is_actor_loop) {
+                            actor_scheduler_process(vm, other);
+                        } else {
+                            other->yielded = false;
+                            vm->current_task = other;
+                            task_run(vm, other);
+                        }
+                    }
+                }
+            }
+
+            if (vm->had_error) {
+                printf("  \u274c FAIL: %s\n", tr->description);
+                vm->had_error = false; /* reset for next test */
+                vm->test_fail_count++;
+            } else {
+                printf("  \u2705 PASS: %s\n", tr->description);
+            }
+        }
+    }
+
+    return !vm->had_error && vm->test_fail_count == 0;
+}
+
+/* ─── Metadata decorator helpers ─── */
+/* Check if a Value (metadata array) contains a given key with a truthy value */
+static bool metadata_has(Value metadata, const char *key) {
+    if (metadata.type != VAL_ARRAY) return false;
+    ObjArray *arr = metadata.as.array;
+    for (int i = 0; i < arr->count; i += 2) {
+        if (arr->elements[i].type == VAL_STRING &&
+            strcmp(arr->elements[i].as.string->chars, key) == 0) {
+            return value_is_truthy(arr->elements[i + 1]);
+        }
+    }
+    return false;
+}
+
+/* Get the value associated with a metadata key */
+static Value metadata_get(Value metadata, const char *key) {
+    if (metadata.type != VAL_ARRAY) return val_nil();
+    ObjArray *arr = metadata.as.array;
+    for (int i = 0; i < arr->count; i += 2) {
+        if (arr->elements[i].type == VAL_STRING &&
+            strcmp(arr->elements[i].as.string->chars, key) == 0) {
+            return arr->elements[i + 1];
+        }
+    }
+    return val_nil();
+}
+
+/* Cache map helpers */
+static int cache_map_find(VM *vm, uint64_t key_hash) {
+    for (int i = 0; i < vm->cache_map_count; i += 2) {
+        if (vm->cache_map[i].type == VAL_INT &&
+            vm->cache_map[i].as.integer == (int64_t)key_hash) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void cache_map_put(VM *vm, uint64_t key_hash, Value result) {
+    if (vm->cache_map_count + 2 > vm->cache_map_capacity) {
+        int new_cap = vm->cache_map_capacity ? vm->cache_map_capacity * 2 : 16;
+        vm->cache_map = (Value *)realloc(vm->cache_map, new_cap * sizeof(Value));
+        vm->cache_map_capacity = new_cap;
+    }
+    vm->cache_map[vm->cache_map_count++] = val_int((int64_t)key_hash);
+    vm->cache_map[vm->cache_map_count++] = result;
+}
+
+/* Compute a simple hash for cache key: fn ptr + arg values */
+static uint64_t cache_key_hash(ObjFunction *fn, int arg_count, Value *args) {
+    uint64_t h = (uint64_t)(uintptr_t)fn;
+    for (int i = 0; i < arg_count; i++) {
+        h ^= (uint64_t)args[i].type << (i * 8);
+        if (args[i].type == VAL_INT)
+            h ^= (uint64_t)args[i].as.integer;
+    }
+    return h;
+}
+
+bool task_run(VM *vm, Task *task) {
+    Task * const t = task;
+    (void)vm;
+    (void)t;
+
+#define READ_BYTE()  TASK_READ_BYTE()
+#define READ_SHORT() TASK_READ_SHORT()
+#define READ_CONSTANT() TASK_READ_CONSTANT()
+#define PUSH(v) TASK_PUSH(v)
+#define POP() TASK_POP()
+#define PEEK(n) TASK_PEEK(n)
+
+    uint8_t instruction;
+    while (!vm->had_error && !t->dead && !t->yielded) {
+        instruction = READ_BYTE();
 
         switch (instruction) {
             case BC_CONSTANT: {
@@ -1590,8 +2653,106 @@ bool vm_run(VM *vm) {
             }
             case BC_CONSTANT_LONG: {
                 uint16_t idx = READ_SHORT();
-                Value constant = vm->frames[vm->frame_count - 1].function->constants[idx];
+                Value constant = t->frames[t->frame_count - 1].function->constants[idx];
                 PUSH(constant);
+                break;
+            }
+            case BC_COMPTIME_EXEC: {
+                /* Pushes pre-computed value from constant table */
+                uint8_t result_idx = READ_BYTE();
+                (void)READ_BYTE(); /* skip fn_idx */
+                PUSH(vm->compiler->chunk->constants[result_idx]);
+                break;
+            }
+            case BC_AWAIT: {
+                Value v = POP();
+                if (v.type != VAL_TASK) {
+                    runtime_error(vm, "await requires a task value");
+                    return false;
+                }
+                ObjTask *ot = v.as.task_obj;
+                if (ot->task->dead) {
+                    /* Task done — push its result */
+                    PUSH(ot->task->result);
+                } else {
+                    /* Task not done — yield and retry this instruction */
+                    PUSH(v);
+                    t->yielded = true;
+                    t->frames[t->frame_count - 1].ip--;
+                }
+                break;
+            }
+            case BC_CHAN_SEND: {
+                Value val = POP();
+                Value chan_v = POP();
+                if (chan_v.type != VAL_CHANNEL) {
+                    runtime_error(vm, "send requires a channel");
+                    return false;
+                }
+                ObjChannel *ch = chan_v.as.channel;
+                if (ch->closed) {
+                    runtime_error(vm, "send on closed channel");
+                    return false;
+                }
+                if (ch->count < ch->capacity) {
+                    ch->buffer[ch->tail] = val;
+                    ch->tail = (ch->tail + 1) % ch->capacity;
+                    ch->count++;
+                    PUSH(val_nil());
+                } else {
+                    /* Buffer full — retry later */
+                    PUSH(chan_v);
+                    PUSH(val);
+                    t->yielded = true;
+                    t->frames[t->frame_count - 1].ip--;
+                }
+                break;
+            }
+            case BC_CHAN_RECEIVE: {
+                Value chan_v = POP();
+                if (chan_v.type != VAL_CHANNEL) {
+                    runtime_error(vm, "receive requires a channel");
+                    return false;
+                }
+                ObjChannel *ch = chan_v.as.channel;
+                if (ch->count > 0) {
+                    Value result = ch->buffer[ch->head];
+                    ch->head = (ch->head + 1) % ch->capacity;
+                    ch->count--;
+                    PUSH(result);
+                } else if (ch->closed) {
+                    PUSH(val_nil());
+                } else {
+                    /* Empty — retry later */
+                    PUSH(chan_v);
+                    t->yielded = true;
+                    t->frames[t->frame_count - 1].ip--;
+                }
+                break;
+            }
+            case BC_ACTOR_INIT: {
+                ObjString *type_name = READ_CONSTANT().as.string;
+                uint8_t field_count = READ_BYTE();
+                if (vm->actor_field_count < MAX_ACTOR_TYPES) {
+                    ActorFieldInfo *info = &vm->actor_fields[vm->actor_field_count++];
+                    strncpy(info->type_name, type_name->chars, 63);
+                    info->type_name[63] = '\0';
+                    info->field_count = field_count;
+                    for (int i = 0; i < field_count; i++) {
+                        ObjString *fname = READ_CONSTANT().as.string;
+                        strncpy(info->field_names[i], fname->chars, 63);
+                        info->field_names[i][63] = '\0';
+                    }
+                } else {
+                    /* Skip field name constants */
+                    for (int i = 0; i < field_count; i++)
+                        (void)READ_BYTE();
+                }
+                ObjModule *mod = new_module(type_name->chars);
+                mod->obj.next = vm->objects;
+                vm->objects = (Obj *)mod;
+                define_global(vm, copy_string(type_name->chars, type_name->length), val_module(mod));
+                vm_register_dispatch(vm, type_name->chars, "spawn", val_native_fn((void *)actor_spawn_native));
                 break;
             }
             case BC_NIL:    PUSH(val_nil()); break;
@@ -1602,11 +2763,34 @@ bool vm_run(VM *vm) {
             case BC_ADD: {
                 Value b = POP();
                 Value a = POP();
-                if (a.type == VAL_STRING && b.type == VAL_STRING) {
-                    int len = a.as.string->length + b.as.string->length;
+                if (a.type == VAL_STRING || b.type == VAL_STRING) {
+                    char buf_a[64], buf_b[64];
+                    const char *sa, *sb;
+                    int la, lb;
+                    if (a.type == VAL_STRING) { sa = a.as.string->chars; la = a.as.string->length; }
+                    else {
+                        switch (a.type) {
+                            case VAL_INT:    la = snprintf(buf_a, sizeof(buf_a), "%ld", (long)a.as.integer); break;
+                            case VAL_FLOAT:  la = snprintf(buf_a, sizeof(buf_a), "%g", a.as.floating); break;
+                            case VAL_BOOL:   { const char *s = a.as.boolean ? "true" : "false"; la = (int)strlen(s); memcpy(buf_a, s, la + 1); break; }
+                            default:         la = snprintf(buf_a, sizeof(buf_a), "<object>"); break;
+                        }
+                        sa = buf_a;
+                    }
+                    if (b.type == VAL_STRING) { sb = b.as.string->chars; lb = b.as.string->length; }
+                    else {
+                        switch (b.type) {
+                            case VAL_INT:    lb = snprintf(buf_b, sizeof(buf_b), "%ld", (long)b.as.integer); break;
+                            case VAL_FLOAT:  lb = snprintf(buf_b, sizeof(buf_b), "%g", b.as.floating); break;
+                            case VAL_BOOL:   { const char *s = b.as.boolean ? "true" : "false"; lb = (int)strlen(s); memcpy(buf_b, s, lb + 1); break; }
+                            default:         lb = snprintf(buf_b, sizeof(buf_b), "<object>"); break;
+                        }
+                        sb = buf_b;
+                    }
+                    int len = la + lb;
                     char *chars = (char *)malloc(len + 1);
-                    memcpy(chars, a.as.string->chars, a.as.string->length);
-                    memcpy(chars + a.as.string->length, b.as.string->chars, b.as.string->length);
+                    memcpy(chars, sa, la);
+                    memcpy(chars + la, sb, lb);
                     chars[len] = '\0';
                     ObjString *result = allocate_string(vm, chars, len);
                     free(chars);
@@ -1654,6 +2838,15 @@ bool vm_run(VM *vm) {
             case BC_NOT: {
                 Value v = POP();
                 PUSH(val_bool(!value_is_truthy(v)));
+                break;
+            }
+
+            case BC_ASSERT: {
+                Value val = POP();
+                if (!value_is_truthy(val)) {
+                    runtime_error(vm, "Assertion failed");
+                    return false;
+                }
                 break;
             }
 
@@ -1719,18 +2912,18 @@ bool vm_run(VM *vm) {
 
             case BC_JUMP: {
                 uint16_t offset = READ_SHORT();
-                vm->frames[vm->frame_count - 1].ip += offset;
+                t->frames[t->frame_count - 1].ip += offset;
                 break;
             }
             case BC_JUMP_IF_FALSE: {
                 uint16_t offset = READ_SHORT();
                 if (!value_is_truthy(PEEK(0)))
-                    vm->frames[vm->frame_count - 1].ip += offset;
+                    t->frames[t->frame_count - 1].ip += offset;
                 break;
             }
             case BC_LOOP: {
                 uint16_t offset = READ_SHORT();
-                vm->frames[vm->frame_count - 1].ip -= offset;
+                t->frames[t->frame_count - 1].ip -= offset;
                 break;
             }
 
@@ -1739,17 +2932,47 @@ bool vm_run(VM *vm) {
                 Value callee = PEEK(arg_count);
 
                 if (callee.type == VAL_NATIVE_FN) {
-                    int (*fn)(VM *) = (int (*)(VM *))callee.as.native_fn;
-                    fn(vm);
-                    if (vm->is_throwing) {
-                        vm->is_throwing = false;
-                        if (vm->try_count > 0) {
-                            vm->try_count--;
-                            vm->stack_top = vm->try_stack[vm->try_count].stack_depth;
-                            PUSH(vm->throw_value);
-                            vm->frames[vm->frame_count - 1].ip =
-                                vm->frames[vm->frame_count - 1].function->code +
-                                vm->try_stack[vm->try_count].catch_offset;
+                    Value *args = &t->stack[t->stack_top - arg_count];
+                    NativeFn fn = (NativeFn)callee.as.native_fn;
+                    Value result = fn(vm, arg_count, args);
+                    t->stack_top -= (arg_count + 1);
+                    PUSH(result);
+                    if (t->is_throwing) {
+                        t->is_throwing = false;
+                        /* ─── @retry: restart the CALLER function ─── */
+                        if (t->frame_count > 0) {
+                            ObjFunction *caller_fn = t->frames[t->frame_count - 1].function;
+                            if (caller_fn->metadata.type != VAL_NIL) {
+                                Value rv = metadata_get(caller_fn->metadata, "retry");
+                                int max_retries = (rv.type == VAL_INT) ? (int)rv.as.integer :
+                                                  (rv.type == VAL_BOOL && rv.as.boolean) ? 1 : 0;
+                                if (max_retries > 0) {
+                                    max_retries--;
+                                    if (caller_fn->metadata.type == VAL_ARRAY) {
+                                        ObjArray *ma = caller_fn->metadata.as.array;
+                                        for (int i = 0; i < ma->count; i += 2) {
+                                            if (ma->elements[i].type == VAL_STRING &&
+                                                strcmp(ma->elements[i].as.string->chars, "retry") == 0) {
+                                                ma->elements[i + 1] = val_int(max_retries);
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    /* Restart the caller function from its beginning */
+                                    t->stack_top = t->frames[t->frame_count - 1].slots - t->stack +
+                                                   caller_fn->arity;
+                                    t->frames[t->frame_count - 1].ip = caller_fn->code;
+                                    break;
+                                }
+                            }
+                        }
+                        if (t->try_count > 0) {
+                            t->try_count--;
+                            t->stack_top = t->try_stack[t->try_count].stack_depth;
+                            PUSH(t->throw_value);
+                            t->frames[t->frame_count - 1].ip =
+                                t->frames[t->frame_count - 1].function->code +
+                                t->try_stack[t->try_count].catch_offset;
                         } else {
                             runtime_error(vm, "Unhandled exception");
                             return false;
@@ -1757,19 +2980,36 @@ bool vm_run(VM *vm) {
                     }
                 } else if (callee.type == VAL_FUNCTION) {
                     ObjFunction *fn = callee.as.function;
+
+                    /* ─── @cache decorator ─── */
+                    if (fn->metadata.type != VAL_NIL && metadata_has(fn->metadata, "cache")) {
+                        Value *args = &t->stack[t->stack_top - arg_count];
+                        uint64_t kh = cache_key_hash(fn, arg_count, args);
+                        int ci = cache_map_find(vm, kh);
+                        if (ci >= 0) {
+                            /* Cache hit — pop args + callee, push cached result */
+                            t->stack_top -= (arg_count + 1);
+                            PUSH(vm->cache_map[ci + 1]);
+                            break;
+                        }
+                        /* Cache miss — save key, intercept BC_RETURN to store result */
+                        t->cache_on_return = true;
+                        t->cache_result_key = kh;
+                    }
+
                     if (fn->arity != arg_count) {
                         runtime_error(vm, "Expected %d arguments but got %d", fn->arity, arg_count);
                         return false;
                     }
-                    if (vm->frame_count >= FRAMES_MAX) {
+                    if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
                         return false;
                     }
-                    CallFrame *new_frame = &vm->frames[vm->frame_count++];
+                    CallFrame *new_frame = &t->frames[t->frame_count++];
                     new_frame->function = fn;
                     new_frame->ip = fn->code;
-                    /* slots points to first argument on stack */
-                    new_frame->slots = &vm->stack[vm->stack_top - arg_count];
+                    new_frame->slots = &t->stack[t->stack_top - arg_count];
+
                 } else {
                     runtime_error(vm, "Can only call functions");
                     return false;
@@ -1779,46 +3019,59 @@ bool vm_run(VM *vm) {
 
             case BC_GET_LOCAL: {
                 uint8_t local_idx = READ_BYTE();
-                PUSH(vm->frames[vm->frame_count - 1].slots[local_idx]);
+                PUSH(t->frames[t->frame_count - 1].slots[local_idx]);
                 break;
             }
 
             case BC_SET_LOCAL: {
                 uint8_t local_idx = READ_BYTE();
-                vm->frames[vm->frame_count - 1].slots[local_idx] = PEEK(0);
+                t->frames[t->frame_count - 1].slots[local_idx] = PEEK(0);
                 break;
             }
 
             case BC_RETURN: {
                 Value result = POP();
-                CallFrame *frame = &vm->frames[vm->frame_count - 1];
+                /* ─── @cache: save result before returning ─── */
+                if (t->cache_on_return) {
+                    cache_map_put(vm, t->cache_result_key, result);
+                    t->cache_on_return = false;
+                }
+                CallFrame *frame = &t->frames[t->frame_count - 1];
                 int arity = frame->function->arity;
-                vm->frame_count--;
-                if (vm->frame_count == 0) {
-                    /* Main script returning - push result and halt */
+                t->frame_count--;
+                if (t->frame_count == 0) {
+                    /* Task completed — save return value, mark dead */
+                    t->result = result;
+                    t->dead = true;
                     PUSH(result);
                     goto end_vm;
                 }
                 /* Pop args, callee, then push result for caller */
-                vm->stack_top -= (arity + 1);  /* args + callee */
+                if (t->stack_top < (arity + 1)) {
+                    runtime_error(vm, "Stack underflow on return");
+                    return false;
+                }
+                t->stack_top -= (arity + 1);  /* args + callee */
                 PUSH(result);
                 break;
             }
 
             case BC_RETURN_N: {
                 uint8_t rcount = READ_BYTE();
-                Value *return_vals = &vm->stack[vm->stack_top - rcount];
-                CallFrame *frame = &vm->frames[vm->frame_count - 1];
+                Value *return_vals = &t->stack[t->stack_top - rcount];
+                CallFrame *frame = &t->frames[t->frame_count - 1];
                 int arity = frame->function->arity;
-                vm->frame_count--;
-                if (vm->frame_count == 0) {
-                    /* Main script returning - push all values and halt */
+                t->frame_count--;
+                if (t->frame_count == 0) {
+                    /* Task completed — save first return value */
+                    t->result = (rcount > 0) ? return_vals[0] : val_nil();
+                    t->dead = true;
                     for (int i = 0; i < rcount; i++)
                         PUSH(return_vals[i]);
                     goto end_vm;
                 }
                 /* Pop args + callee, then push all return values for caller */
-                vm->stack_top -= (arity + 1);
+                t->stack_top -= (arity + 1);
                 for (int i = 0; i < rcount; i++)
                     PUSH(return_vals[i]);
                 break;
@@ -1879,6 +3132,27 @@ bool vm_run(VM *vm) {
                     memcpy(s->field_names[i], name->chars, name->length);
                     s->field_names[i][name->length] = '\0';
                 }
+
+                /* Look up and attach validation rules */
+                ValidationRegistry *reg = &vm->validation_registry;
+                for (int i = 0; i < reg->count; i++) {
+                    if (strcmp(reg->validations[i].type_name, s->type_name) == 0) {
+                        StructValidationInfo *info = &reg->validations[i];
+                        s->struct_validations = info->struct_validations;
+                        s->struct_validation_count = info->struct_validation_count;
+                        s->field_validations = info->field_validations;
+                        s->field_validation_counts = info->field_validation_counts;
+                        break;
+                    }
+                }
+
+                /* Run validations */
+                if (s->struct_validation_count > 0 || (s->field_validation_counts && s->field_validation_counts[0] > 0)) {
+                    if (!run_struct_validations(vm, s)) {
+                        return false;
+                    }
+                }
+
                 PUSH(val_struct(s));
                 break;
             }
@@ -1891,26 +3165,191 @@ bool vm_run(VM *vm) {
                 break;
             }
 
+            case BC_REGISTER_VALIDATIONS: {
+                ObjString *type_name_str = READ_CONSTANT().as.string;
+                char *type_name = (char *)malloc(type_name_str->length + 1);
+                memcpy(type_name, type_name_str->chars, type_name_str->length);
+                type_name[type_name_str->length] = '\0';
+
+                uint8_t struct_validation_count = READ_BYTE();
+                ValidationRule *struct_validations = NULL;
+                if (struct_validation_count > 0) {
+                    struct_validations = (ValidationRule *)calloc(struct_validation_count, sizeof(ValidationRule));
+                    for (int i = 0; i < struct_validation_count; i++) {
+                        ObjString *key = READ_CONSTANT().as.string;
+                        struct_validations[i].rule_name = (char *)malloc(key->length + 1);
+                        memcpy(struct_validations[i].rule_name, key->chars, key->length);
+                        struct_validations[i].rule_name[key->length] = '\0';
+                        struct_validations[i].rule_args = NULL;
+                        struct_validations[i].rule_arg_count = 0;
+                    }
+                }
+
+                uint8_t field_count = READ_BYTE();
+                ValidationRule **field_validations = (ValidationRule **)calloc(field_count, sizeof(ValidationRule *));
+                int *field_validation_counts = (int *)calloc(field_count, sizeof(int));
+                char **field_names = (char **)calloc(field_count, sizeof(char *));
+
+                for (int i = 0; i < field_count; i++) {
+                    ObjString *fname = READ_CONSTANT().as.string;
+                    field_names[i] = (char *)malloc(fname->length + 1);
+                    memcpy(field_names[i], fname->chars, fname->length);
+                    field_names[i][fname->length] = '\0';
+
+                    uint8_t fcount = READ_BYTE();
+                    field_validation_counts[i] = fcount;
+                    if (fcount > 0) {
+                        field_validations[i] = (ValidationRule *)calloc(fcount, sizeof(ValidationRule));
+                        for (int j = 0; j < fcount; j++) {
+                            ObjString *fkey = READ_CONSTANT().as.string;
+                            field_validations[i][j].rule_name = (char *)malloc(fkey->length + 1);
+                            memcpy(field_validations[i][j].rule_name, fkey->chars, fkey->length);
+                            field_validations[i][j].rule_name[fkey->length] = '\0';
+                            field_validations[i][j].rule_args = NULL;
+                            field_validations[i][j].rule_arg_count = 0;
+                        }
+                    }
+                }
+
+                /* Register in validation registry */
+                ValidationRegistry *reg = &vm->validation_registry;
+                if (reg->count < MAX_STRUCT_VALIDATIONS) {
+                    StructValidationInfo *info = &reg->validations[reg->count++];
+                    strncpy(info->type_name, type_name, 63);
+                    info->type_name[63] = '\0';
+                    info->field_count = field_count;
+                    info->struct_validations = struct_validations;
+                    info->struct_validation_count = struct_validation_count;
+                    info->field_validations = field_validations;
+                    info->field_validation_counts = field_validation_counts;
+                    info->field_names = field_names;
+                } else {
+                    /* Cleanup on overflow */
+                    for (int i = 0; i < struct_validation_count; i++) {
+                        free(struct_validations[i].rule_name);
+                    }
+                    free(struct_validations);
+                    for (int i = 0; i < field_count; i++) {
+                        free(field_names[i]);
+                        if (field_validations[i]) {
+                            for (int j = 0; j < field_validation_counts[i]; j++) {
+                                free(field_validations[i][j].rule_name);
+                            }
+                            free(field_validations[i]);
+                        }
+                    }
+                    free(field_validations);
+                    free(field_validation_counts);
+                    free(field_names);
+                }
+                free(type_name);
+                break;
+            }
+
             case BC_DISPATCH: {
                 ObjString *method_name = READ_CONSTANT().as.string;
                 uint8_t arg_count = READ_BYTE();
                 Value obj = PEEK(arg_count);
-                if (obj.type != VAL_STRUCT) {
-                    runtime_error(vm, "Cannot dispatch method on non-struct");
+
+                /* ─── Actor async dispatch state machine ─── */
+                if (obj.type == VAL_ACTOR) {
+                    ObjActor *actor = obj.as.actor;
+
+                    if (!t->waiting_actor_reply) {
+                        /* First pass: setup reply channel and send message */
+                        ObjChannel *reply_obj = (ObjChannel *)calloc(1, sizeof(ObjChannel));
+                        reply_obj->obj.type = VAL_CHANNEL;
+                        reply_obj->capacity = 1;
+                        reply_obj->buffer = (Value *)calloc(1, sizeof(Value));
+                        reply_obj->obj.next = vm->objects;
+                        vm->objects = (Obj *)reply_obj;
+
+                        Value reply_ch = val_channel(reply_obj);
+
+                        /* Build message tuple: (method_name, args_array, reply_ch) */
+                        ObjString *method_str = allocate_string(vm, method_name->chars, method_name->length);
+
+                        ObjArray *args_arr = (ObjArray *)calloc(1, sizeof(ObjArray));
+                        args_arr->obj.type = VAL_ARRAY;
+                        args_arr->count = arg_count;
+                        args_arr->elements = (Value *)malloc(arg_count * sizeof(Value));
+                        for (int i = 0; i < arg_count; i++)
+                            args_arr->elements[i] = t->stack[t->stack_top - arg_count + i];
+                        args_arr->obj.next = vm->objects;
+                        vm->objects = (Obj *)args_arr;
+
+                        ObjTuple *msg_tuple = new_tuple(3);
+                        msg_tuple->obj.next = vm->objects;
+                        vm->objects = (Obj *)msg_tuple;
+                        msg_tuple->elements[0] = val_string(method_str);
+                        msg_tuple->elements[1] = val_array(args_arr);
+                        msg_tuple->elements[2] = reply_ch;
+
+                        /* Push message to actor's inbox */
+                        if (!channel_try_send(actor->inbox.as.channel, val_tuple(msg_tuple))) {
+                            /* Inbox full — discard msg allocations (GC will collect them)
+                             * and retry from the top */
+                            t->yielded = true;
+                            t->frames[t->frame_count - 1].ip -= 3;
+                            break;
+                        }
+
+                        /* Now safe to set the reply state */
+                        t->actor_reply_ch = reply_ch;
+                        t->waiting_actor_reply = true;
+                    }
+
+                    /* Second (and subsequent) pass: try to receive reply */
+                    Value result;
+                    if (channel_try_receive(t->actor_reply_ch.as.channel, &result)) {
+                        /* Success! Clean up and push result */
+                        t->waiting_actor_reply = false;
+                        t->actor_reply_ch = val_nil();
+                        t->stack_top -= (arg_count + 1);
+                        PUSH(result);
+                    } else {
+                        /* Not ready yet — yield and retry BC_DISPATCH */
+                        t->yielded = true;
+                        t->frames[t->frame_count - 1].ip -= 3;
+                    }
+                    break;
+                }
+
+                /* ─── Normal dispatch for structs, modules, strings, arrays ─── */
+                const char *type_name = NULL;
+                if (obj.type == VAL_STRUCT) {
+                    type_name = obj.as.structure->type_name;
+                } else if (obj.type == VAL_MODULE) {
+                    type_name = obj.as.module->name;
+                } else if (obj.type == VAL_STRING) {
+                    type_name = "string";
+                } else if (obj.type == VAL_ARRAY) {
+                    type_name = "array";
+                } else {
+                    runtime_error(vm, "Cannot dispatch method on this type");
                     return false;
                 }
-                const char *type_name = obj.as.structure->type_name;
                 Value *func_val = vm_find_dispatch(vm, type_name, method_name->chars);
                 if (!func_val) {
                     runtime_error(vm, "No method '%s' for type '%s'", method_name->chars, type_name);
                     return false;
                 }
                 Value callee = *func_val;
-                /* Push the callee so BC_RETURN's cleanup works correctly */
                 PUSH(callee);
                 if (callee.type == VAL_NATIVE_FN) {
-                    int (*fn)(VM *) = (int (*)(VM *))callee.as.native_fn;
-                    fn(vm);
+                    /* Stack: [obj, args..., callee]. Pass self + all args. */
+                    uint8_t total = arg_count + 1;
+                    Value *all_args = &t->stack[t->stack_top - total - 1];
+                    NativeFn fn = (NativeFn)callee.as.native_fn;
+                    Value result = fn(vm, total, all_args);
+                    /* If the native function yielded (e.g. http.serve), restore the stack
+                       by popping the callee, so BC_DISPATCH can re-execute cleanly. */
+                    if (t->yielded) {
+                        t->stack_top--;
+                        break;
+                    }
+                    t->stack_top -= (total + 1);
+                    PUSH(result);
                 } else if (callee.type == VAL_FUNCTION) {
                     ObjFunction *fn = callee.as.function;
                     uint8_t total_args = arg_count + 1;
@@ -1918,15 +3357,14 @@ bool vm_run(VM *vm) {
                         runtime_error(vm, "Method '%s' expects %d arguments", method_name->chars, fn->arity);
                         return false;
                     }
-                    if (vm->frame_count >= FRAMES_MAX) {
+                    if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
                         return false;
                     }
-                    CallFrame *new_frame = &vm->frames[vm->frame_count++];
+                    CallFrame *new_frame = &t->frames[t->frame_count++];
                     new_frame->function = fn;
                     new_frame->ip = fn->code;
-                    /* self + extra_args are before callee, so adjust by -1 */
-                    new_frame->slots = &vm->stack[vm->stack_top - total_args - 1];
+                    new_frame->slots = &t->stack[t->stack_top - total_args - 1];
                 } else {
                     runtime_error(vm, "Method is not callable");
                     return false;
@@ -1974,14 +3412,14 @@ bool vm_run(VM *vm) {
                 Value v = PEEK(0);
                 if (v.type == VAL_NIL) {
                     (void)POP();
-                    CallFrame *frame = &vm->frames[vm->frame_count - 1];
+                    CallFrame *frame = &t->frames[t->frame_count - 1];
                     int arity = frame->function->arity;
-                    vm->frame_count--;
-                    if (vm->frame_count == 0) {
+                    t->frame_count--;
+                    if (t->frame_count == 0) {
                         PUSH(val_nil());
                         goto end_vm;
                     }
-                    vm->stack_top -= (arity + 1);
+                    t->stack_top -= (arity + 1);
                     PUSH(val_nil());
                 }
                 break;
@@ -1989,12 +3427,38 @@ bool vm_run(VM *vm) {
 
             case BC_THROW: {
                 Value err = POP();
-                if (vm->try_count > 0) {
-                    vm->try_count--;
-                    vm->stack_top = vm->try_stack[vm->try_count].stack_depth;
+
+                /* ─── @retry decorator: retry on throw ─── */
+                if (t->frame_count > 0) {
+                    ObjFunction *cur_fn = t->frames[t->frame_count - 1].function;
+                    if (cur_fn->metadata.type != VAL_NIL) {
+                        Value rv = metadata_get(cur_fn->metadata, "retry");
+                        if (rv.type == VAL_INT && rv.as.integer > 0) {
+                            int max_retries = (int)rv.as.integer - 1;
+                            if (cur_fn->metadata.type == VAL_ARRAY) {
+                                ObjArray *ma = cur_fn->metadata.as.array;
+                                for (int i = 0; i < ma->count; i += 2) {
+                                    if (ma->elements[i].type == VAL_STRING &&
+                                        strcmp(ma->elements[i].as.string->chars, "retry") == 0) {
+                                        ma->elements[i + 1] = val_int(max_retries);
+                                        break;
+                                    }
+                                }
+                            }
+                            t->frames[t->frame_count - 1].ip = cur_fn->code;
+                            t->is_throwing = false;
+                            break;
+                        }
+                    }
+                }
+
+                if (t->try_count > 0) {
+                    t->try_count--;
+                    t->stack_top = t->try_stack[t->try_count].stack_depth;
                     PUSH(err);
-                    frame->ip = vm->frames[vm->frame_count - 1].function->code +
-                                vm->try_stack[vm->try_count].catch_offset;
+                    t->frames[t->frame_count - 1].ip =
+                        t->frames[t->frame_count - 1].function->code +
+                        t->try_stack[t->try_count].catch_offset;
                 } else {
                     runtime_error(vm, "Unhandled exception");
                     return false;
@@ -2004,21 +3468,21 @@ bool vm_run(VM *vm) {
 
             case BC_TRY: {
                 uint16_t offset = READ_SHORT();
-                if (vm->try_count >= MAX_TRY_NESTING) {
+                if (t->try_count >= TASK_TRY_MAX) {
                     runtime_error(vm, "Too many nested try blocks");
                     return false;
                 }
-                CallFrame *active = &vm->frames[vm->frame_count - 1];
-                vm->try_stack[vm->try_count].catch_offset =
+                CallFrame *active = &t->frames[t->frame_count - 1];
+                t->try_stack[t->try_count].catch_offset =
                     (int)(active->ip - active->function->code) + offset;
-                vm->try_stack[vm->try_count].stack_depth = vm->stack_top;
-                vm->try_count++;
+                t->try_stack[t->try_count].stack_depth = t->stack_top;
+                t->try_count++;
                 break;
             }
 
             case BC_POP_TRY: {
-                if (vm->try_count > 0)
-                    vm->try_count--;
+                if (t->try_count > 0)
+                    t->try_count--;
                 break;
             }
 
@@ -2040,10 +3504,192 @@ bool vm_run(VM *vm) {
                         runtime_error(vm, "Struct has no field '%s'", name->chars);
                         return false;
                     }
+                } else if (obj.type == VAL_MODULE) {
+                    /* Module member access: look up in dispatch table */
+                    Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);
+                    if (func_val) {
+                        PUSH(*func_val);
+                    } else {
+                        runtime_error(vm, "Module '%s' has no member '%s'",
+                                     obj.as.module->name, name->chars);
+                        return false;
+                    }
+                } else if (obj.type == VAL_STRING) {
+                    /* String method access: look up in dispatch table */
+                    Value *func_val = vm_find_dispatch(vm, "string", name->chars);
+                    if (func_val) {
+                        PUSH(*func_val);
+                    } else {
+                        runtime_error(vm, "String has no method '%s'", name->chars);
+                        return false;
+                    }
+                } else if (obj.type == VAL_ARRAY) {
+                    /* Array method access: look up in dispatch table */
+                    Value *func_val = vm_find_dispatch(vm, "array", name->chars);
+                    if (func_val) {
+                        PUSH(*func_val);
+                    } else {
+                        runtime_error(vm, "Array has no method '%s'", name->chars);
+                        return false;
+                    }
                 } else {
                     runtime_error(vm, "Cannot access field on non-struct value");
                     return false;
                 }
+                break;
+            }
+
+            case BC_SET_MEMBER: {
+                ObjString *name = READ_CONSTANT().as.string;
+                Value val = POP();
+                Value obj = POP();
+                if (obj.type == VAL_STRUCT) {
+                    ObjStruct *s = obj.as.structure;
+                    int found = -1;
+                    for (int i = 0; i < s->field_count; i++) {
+                        if (strcmp(s->field_names[i], name->chars) == 0) {
+                            found = i;
+                            break;
+                        }
+                    }
+                    if (found >= 0) {
+                        s->fields[found] = val;
+                        PUSH(val);
+                    } else {
+                        runtime_error(vm, "Struct has no field '%s'", name->chars);
+                        return false;
+                    }
+                } else {
+                    runtime_error(vm, "Cannot set field on non-struct value");
+                    return false;
+                }
+                break;
+            }
+
+            case BC_FFI_CALL: {
+                uint8_t ffi_idx = READ_BYTE();
+                uint8_t arg_count = READ_BYTE();
+
+                if (ffi_idx >= vm->ffi_entry_count) {
+                    runtime_error(vm, "Invalid FFI call index");
+                    return false;
+                }
+                VMFFIEntry *entry = &vm->ffi_entries[ffi_idx];
+
+                if (arg_count != entry->param_count) {
+                    runtime_error(vm, "FFI: expected %d args, got %d",
+                                  entry->param_count, arg_count);
+                    return false;
+                }
+
+                /* Marshal arguments from Varian stack to libffi */
+                void *value_storage[MAX_FFI_PARAMS];
+                void *args[MAX_FFI_PARAMS];
+                int storage_used = 0;
+
+                for (int i = 0; i < arg_count; i++) {
+                    Value v = t->stack[t->stack_top - arg_count + i];
+                    switch (entry->param_kinds[i]) {
+                        case FFI_INT: {
+                            int32_t *p = (int32_t *)malloc(sizeof(int32_t));
+                            *p = (int32_t)v.as.integer;
+                            value_storage[storage_used++] = p;
+                            args[i] = p;
+                            break;
+                        }
+                        case FFI_DOUBLE: {
+                            double *p = (double *)malloc(sizeof(double));
+                            *p = v.as.floating;
+                            value_storage[storage_used++] = p;
+                            args[i] = p;
+                            break;
+                        }
+                        case FFI_FLOAT: {
+                            float *p = (float *)malloc(sizeof(float));
+                            *p = (float)v.as.floating;
+                            value_storage[storage_used++] = p;
+                            args[i] = p;
+                            break;
+                        }
+                        case FFI_PTR: {
+                            /* ffi_call expects args[i] to point TO the argument
+                             * value, so we need a slot containing the void*. */
+                            void **slot = (void **)malloc(sizeof(void *));
+                            if (v.type == VAL_INT) {
+                                *slot = (void *)(uintptr_t)v.as.integer;
+                            } else if (v.type == VAL_STRING) {
+                                /* CRITICAL: Copy the string to prevent C from
+                                 * mutating Varian's interned string data. */
+                                size_t slen = (size_t)v.as.string->length;
+                                char *copy = (char *)malloc(slen + 1);
+                                memcpy(copy, v.as.string->chars, slen);
+                                copy[slen] = '\0';
+                                value_storage[storage_used++] = copy;
+                                *slot = copy;
+                            } else {
+                                *slot = NULL;
+                            }
+                            value_storage[storage_used++] = slot;
+                            args[i] = slot;
+                            break;
+                        }
+                        case FFI_CHAR: {
+                            char *p = (char *)malloc(sizeof(char));
+                            *p = (char)v.as.integer;
+                            value_storage[storage_used++] = p;
+                            args[i] = p;
+                            break;
+                        }
+                        default:
+                            args[i] = NULL;
+                            break;
+                    }
+                }
+
+                /* Prepare return value buffer */
+                void *ret_val = NULL;
+                ffi_type *ret_ffi_type = ffi_type_from_kind(entry->return_kind);
+                bool has_return = (entry->return_kind != FFI_VOID);
+
+                if (has_return) {
+                    ret_val = calloc(1, ret_ffi_type->size);
+                }
+
+                /* Call via libffi */
+                ffi_call(&entry->cif, FFI_FN(entry->fn_ptr), ret_val, args);
+
+                /* Pop arguments from stack */
+                t->stack_top -= arg_count;
+
+                /* Push return value */
+                switch (entry->return_kind) {
+                    case FFI_VOID:
+                        PUSH(val_nil());
+                        break;
+                    case FFI_INT:
+                        PUSH(val_int(*(int32_t *)ret_val));
+                        break;
+                    case FFI_DOUBLE:
+                        PUSH(val_float(*(double *)ret_val));
+                        break;
+                    case FFI_FLOAT:
+                        PUSH(val_float(*(float *)ret_val));
+                        break;
+                    case FFI_PTR: {
+                        void *ptr_val = *(void **)ret_val;
+                        PUSH(val_int((int64_t)(uintptr_t)ptr_val));
+                        break;
+                    }
+                    case FFI_CHAR:
+                        PUSH(val_int(*(char *)ret_val));
+                        break;
+                }
+
+                /* Free temporary storage */
+                for (int i = 0; i < storage_used; i++)
+                    free(value_storage[i]);
+                if (ret_val) free(ret_val);
+
                 break;
             }
 
@@ -2058,20 +3704,20 @@ bool vm_run(VM *vm) {
                 uint8_t count = READ_BYTE();
                 int total_len = 0;
                 for (int i = 0; i < count; i++) {
-                    Value v = vm->stack[vm->stack_top - count + i];
+                    Value v = t->stack[t->stack_top - count + i];
                     if (v.type == VAL_STRING)
                         total_len += v.as.string->length;
                 }
                 char *chars = (char *)malloc(total_len + 1);
                 int pos = 0;
                 for (int i = 0; i < count; i++) {
-                    Value v = vm->stack[vm->stack_top - count + i];
+                    Value v = t->stack[t->stack_top - count + i];
                     if (v.type == VAL_STRING) {
                         memcpy(chars + pos, v.as.string->chars, v.as.string->length);
                         pos += v.as.string->length;
                     }
                 }
-                vm->stack_top -= count;
+                t->stack_top -= count;
                 chars[total_len] = '\0';
                 ObjString *result = allocate_string(vm, chars, total_len);
                 free(chars);
@@ -2121,6 +3767,8 @@ bool vm_run(VM *vm) {
             }
 
             case BC_HALT:
+                /* Mark task as dead so the scheduler knows to stop */
+                t->dead = true;
                 goto end_vm;
 
             default:
@@ -2147,7 +3795,15 @@ void vm_free(VM *vm) {
             case VAL_STRING: free(((ObjString *)obj)->chars); break;
             case VAL_ARRAY:  free(((ObjArray *)obj)->elements); break;
             case VAL_TUPLE:  free(((ObjTuple *)obj)->elements); break;
+            case VAL_MODULE: free(((ObjModule *)obj)->name); break;
+            case VAL_TASK:   break;
+            case VAL_CHANNEL: free(((ObjChannel *)obj)->buffer); break;
             case VAL_ENUM:   free(((ObjEnum *)obj)->values); break;
+            case VAL_ACTOR: {
+                ObjActor *a = (ObjActor *)obj;
+                free(a->type_name);
+                break;
+            }
             case VAL_STRUCT: {
                 ObjStruct *s = (ObjStruct *)obj;
                 for (int i = 0; i < s->field_count; i++) {
@@ -2178,4 +3834,12 @@ void vm_free(VM *vm) {
         obj = next;
     }
     vm->objects = NULL;
+
+    /* Free FFI entries */
+    free(vm->ffi_entries);
+    vm->ffi_entries = NULL;
+    vm->ffi_entry_count = 0;
+
+    /* Close all loaded FFI library handles */
+    ffi_close_all_libs();
 }

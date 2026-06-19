@@ -3,6 +3,7 @@
 
 #include "varian.h"
 #include "ast.h"
+#include "varian_ffi.h"
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -58,6 +59,7 @@ typedef enum {
     BC_TUPLE,
     BC_INDEX,
     BC_MEMBER,
+    BC_SET_MEMBER,
     BC_DISPATCH,
     BC_REGISTER_METHOD,
     BC_STRUCT,
@@ -69,6 +71,22 @@ typedef enum {
     BC_TRY,
     BC_POP_TRY,
 
+    /* FFI */
+    BC_FFI_CALL,
+
+    /* Compile-time execution */
+    BC_COMPTIME_EXEC,
+
+    /* Async */
+    BC_AWAIT,
+
+    /* Channels */
+    BC_CHAN_SEND,
+    BC_CHAN_RECEIVE,
+
+    /* Actor */
+    BC_ACTOR_INIT,
+
     /* Builtins */
     BC_PRINT,
     BC_STRING_CONCAT,
@@ -78,8 +96,12 @@ typedef enum {
     /* Long constant (16-bit index) */
     BC_CONSTANT_LONG,
 
+    /* Assertion */
+    BC_ASSERT,
+
     /* Special */
     BC_HALT,
+    BC_REGISTER_VALIDATIONS,
 } OpCode;
 
 /* ─── Value ─── */
@@ -95,6 +117,10 @@ typedef enum {
     VAL_NATIVE_FN,
     VAL_STRUCT,
     VAL_ENUM,
+    VAL_MODULE,
+    VAL_TASK,
+    VAL_CHANNEL,
+    VAL_ACTOR,
 } ValueType;
 
 typedef struct Obj Obj;
@@ -104,6 +130,10 @@ typedef struct ObjTuple ObjTuple;
 typedef struct ObjFunction ObjFunction;
 typedef struct ObjStruct ObjStruct;
 typedef struct ObjEnum ObjEnum;
+typedef struct ObjModule ObjModule;
+typedef struct ObjTask ObjTask;
+typedef struct ObjChannel ObjChannel;
+typedef struct ObjActor ObjActor;
 
 typedef struct {
     ValueType type;
@@ -118,6 +148,10 @@ typedef struct {
         void *native_fn;
         ObjStruct *structure;
         ObjEnum *enum_val;
+        ObjModule *module;
+        ObjTask *task_obj;
+        ObjChannel *channel;
+        ObjActor *actor;
     } as;
 } Value;
 
@@ -158,6 +192,7 @@ struct ObjFunction {
     int constant_count;
     int constant_capacity;
     int stack_size;  /* max stack size needed */
+    Value metadata;  /* VAL_ARRAY of [key, val, key, val, ...] or VAL_NIL */
     /* RLE line info */
     int *rle_lines;
     int *rle_counts;
@@ -197,12 +232,58 @@ Value val_tuple(ObjTuple *t);
 Value val_function(ObjFunction *f);
 Value val_native_fn(void *fn);
 Value val_struct(ObjStruct *s);
+Value val_module(ObjModule *m);
+Value val_task_obj(ObjTask *t);
+Value val_channel(ObjChannel *c);
+Value val_actor(ObjActor *a);
 
 ObjString *copy_string(const char *chars, int length);
 ObjString *take_string(char *chars, int length);
 ObjArray *new_array(void);
 ObjTuple *new_tuple(int count);
 ObjFunction *new_function(void);
+
+/* ─── Module ─── */
+struct ObjModule {
+    Obj obj;
+    char *name;
+};
+
+/* Forward declaration */
+typedef struct Task Task;
+
+/* ─── Task handle ─── */
+struct ObjTask {
+    Obj obj;
+    Task *task;  /* pointer to the scheduler's Task */
+};
+
+/* ─── Channel ─── */
+struct ObjChannel {
+    Obj obj;
+    Value *buffer;
+    int capacity;
+    int count;
+    int head;
+    int tail;
+    bool closed;
+};
+
+/* ─── Actor ─── */
+struct ObjActor {
+    Obj obj;
+    char *type_name;       /* e.g. "Counter" */
+    Value state;           /* the inner VAL_STRUCT holding field values */
+    Value inbox;           /* VAL_CHANNEL — messages arrive here */
+    Task *loop_task;       /* the background task running the actor loop */
+};
+
+/* Validation rule for struct fields */
+typedef struct {
+    char *rule_name;       /* e.g., "is_email", "min_len" */
+    Value *rule_args;      /* arguments to the validation function */
+    int rule_arg_count;
+} ValidationRule;
 
 /* ─── Struct ─── */
 struct ObjStruct {
@@ -211,6 +292,11 @@ struct ObjStruct {
     Value *fields;
     int field_count;
     char *type_name;  /* for method dispatch */
+    /* Validation metadata */
+    ValidationRule **field_validations;  /* parallel to field_names, array of ValidationRule* per field */
+    int *field_validation_counts;        /* number of validation rules per field */
+    ValidationRule *struct_validations;  /* struct-level validation rules */
+    int struct_validation_count;
 };
 
 ObjStruct *new_struct(int field_count);
@@ -224,11 +310,19 @@ struct ObjEnum {
 };
 
 ObjEnum *new_enum(int value_count);
+ObjModule *new_module(const char *name);
 Value val_enum(ObjEnum *e);
 
 void value_print(Value value);
 bool value_is_truthy(Value value);
 bool value_equal(Value value1, Value value2);
+
+/* ─── Test Registry ─── */
+#define MAX_TESTS 256
+typedef struct {
+    char *description;
+    ObjFunction *func;
+} TestRecord;
 
 /* ─── Compiler ─── */
 #define MAX_LOOP_NESTING 64
@@ -237,6 +331,7 @@ typedef struct {
     int loop_start;      /* instruction offset of loop start */
     int break_jumps[64]; /* offsets of break jump slots to patch */
     int break_count;
+    int scope_depth;     /* scope depth when loop started (for break/continue) */
 } LoopInfo;
 
 typedef struct {
@@ -254,15 +349,19 @@ typedef struct {
     bool in_function;
     bool had_error;
     char error_message[512];
+    /* FFI function tracking */
+    FFIDecl ffi_decls[MAX_FFI_ENTRIES];
+    int ffi_decl_count;
+    /* Test declarations (populated during compilation, consumed by VM) */
+    TestRecord tests[MAX_TESTS];
+    int test_count;
 } Compiler;
 
 void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *program);
 bool compiler_compile(Compiler *compiler);
 
-/* ─── VM State ─── */
-#define STACK_MAX 4096
-#define FRAMES_MAX 256
-#define MAX_TRY_NESTING 64
+/* ─── Frame and Try support types ─── */
+#define MAX_TRY_NESTING 16
 
 typedef struct {
     int catch_offset;
@@ -275,12 +374,70 @@ typedef struct {
     Value *slots;           /* base of this frame's stack slots */
 } CallFrame;
 
-typedef struct {
-    CallFrame frames[FRAMES_MAX];
-    int frame_count;
+/* ─── Task (execution context) ─── */
+#define TASK_STACK_SIZE 4096
+#define TASK_FRAMES_MAX 64
+#define TASK_TRY_MAX 16
 
-    Value stack[STACK_MAX];
-    int stack_top;
+struct Task {
+    Value  stack[TASK_STACK_SIZE];
+    int    stack_top;
+    CallFrame frames[TASK_FRAMES_MAX];
+    int    frame_count;
+    TryInfo try_stack[TASK_TRY_MAX];
+    int    try_count;
+    Value  throw_value;
+    bool   is_throwing;
+    Value  result;
+    int    id;
+    bool   dead;
+    bool   yielded;
+    bool   waiting_actor_reply;
+    Value  actor_reply_ch;
+    bool   is_actor_loop;
+    struct ObjActor *actor_ref;
+    bool   cache_on_return;
+    uint64_t cache_result_key;
+    int    http_listen_fd;   /* -1 = not an HTTP server, otherwise listen socket fd */
+    double wakeup_time;      /* 0 = not waiting, otherwise absolute time to wake */
+};
+
+/* ─── Actor Field Registry (populated at runtime) ─── */
+#define MAX_ACTOR_TYPES 64
+typedef struct {
+    char type_name[64];
+    int field_count;
+    char field_names[64][64];
+} ActorFieldInfo;
+
+/* ─── Validation Registry ─── */
+#define MAX_STRUCT_VALIDATIONS 128
+
+typedef struct {
+    char type_name[64];
+    ValidationRule *struct_validations;
+    int struct_validation_count;
+    ValidationRule **field_validations;
+    int *field_validation_counts;
+    char **field_names;
+    int field_count;
+} StructValidationInfo;
+
+typedef struct {
+    StructValidationInfo validations[MAX_STRUCT_VALIDATIONS];
+    int count;
+} ValidationRegistry;
+
+/* ─── VM State ─── */
+#define STACK_MAX 4096
+#define FRAMES_MAX 256
+
+typedef struct {
+    Task **tasks;
+    int    task_count;
+    int    task_capacity;
+    int    current_task_index;
+    Task  *current_task;      /* shortcut */
 
     ObjFunction *main_fn;  /* main script function (not in objects list) */
 
@@ -291,10 +448,6 @@ typedef struct {
 
     Compiler *compiler;
     bool had_error;
-    TryInfo try_stack[MAX_TRY_NESTING];
-    int try_count;
-    Value throw_value;
-    bool is_throwing;
     /* Method dispatch table: (type_name, method_name) → function Value */
     /* Method dispatch — FNV-1a hash table, open addressing */
     #define DISPATCH_TABLE_SIZE 512
@@ -313,14 +466,48 @@ typedef struct {
     int intern_capacity;
     int intern_count;
     size_t next_gc_threshold;
+    /* FFI registry */
+    VMFFIEntry *ffi_entries;
+    int ffi_entry_count;
+    /* Actor field registry */
+    ActorFieldInfo actor_fields[MAX_ACTOR_TYPES];
+    int actor_field_count;
+    /* Decorator cache: cache_map is a simple flat array of [key, val] pairs */
+    Value *cache_map;
+    int cache_map_count;
+    int cache_map_capacity;
+    /* Test registry (populated before vm_run) */
+    TestRecord tests[MAX_TESTS];
+    int test_count;
+    int test_fail_count;
+    /* Validation registry */
+    ValidationRegistry validation_registry;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);
 
-/* Run a chunk of bytecode */
-bool vm_run(VM *vm);
+/* Run a chunk of bytecode.  If run_tests is true, also execute registered tests.
+   Returns true if no errors occurred during main execution AND all tests passed. */
+bool vm_run(VM *vm, bool run_tests);
+
+/* Execute a task's bytecode synchronously (used by native functions). */
+bool task_run(VM *vm, Task *task);
 
 /* Free heap objects */
 void vm_free(VM *vm);
+
+/* Native function type: receives arg array, returns Value */
+typedef Value (*NativeFn)(VM *vm, int arg_count, Value *args);
+
+/* Allocation / task management (requires VM to be fully defined) */
+ObjString *allocate_string(VM *vm, const char *chars, int length);
+Task *task_new(VM *vm);
+
+/* Error reporting (used by lib_*.c) */
+void runtime_error(VM *vm, const char *format, ...);
+
+/* Module / dispatch registration (used by lib_*.c) */
+void define_global(VM *vm, ObjString *name, Value value);
+void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func);
 
 #endif /* VM_H */

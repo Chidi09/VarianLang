@@ -110,4 +110,26 @@ The final phase prepares Varian for deployment onto modern infrastructure like H
 
 ---
 
-Given that Varian is being built in C for maximum full-stack performance, are you planning to compile the AST directly to machine code via an LLVM backend, or are you designing a custom bytecode virtual machine for the initial runtime?
+## Appendix: The Varian Native Migration Strategy (Pillaging vs Building)
+
+While Varian's `python.run` bridge and C FFI allow for rapid bootstrapping of a backend ecosystem, the ultimate goal is a strong, native standard library. The following strategy outlines how to systematically replace heavy Python dependencies with native Varian features:
+
+### Phase 1: The Core Framework
+* **HTTP Servers (FastAPI/Uvicorn)** -> **`vn.http`**. Varian's native HTTP module (backed by C's mongoose/libuv via FFI) combined with built-in routing decorators (`@get("/api")`).
+* **Data Validation (Pydantic)** -> **Native Varian Structs**. Strict static/structural typing combined with the built-in `@validate` decorator enforces rules natively without external libraries.
+* **Rate Limiting (SlowAPI)** -> **Native Varian `@limit`**. Handled entirely in-memory using Varian Actors to concurrently track IP hits.
+
+### Phase 2: Database & Auth
+* **ORMs (SQLAlchemy/AsyncPG)** -> **`vn.db` (Native ORM via Comptime)**. Generate raw SQL strings at compile time using `comptime` and pass them to `libpq` (C FFI) at runtime for zero-overhead execution.
+* **Cryptography & Auth (PyJWT/Passlib/PyOTP)** -> **`vn.auth`**. Pillage `OpenSSL` via C FFI for raw hashing, but write the JWT signature verification and TOTP generation in 100% pure Varian code using native string/byte manipulation.
+
+### Phase 3: Background Jobs & Workers
+* **Task Queues (APScheduler/Celery/Redis)** -> **Varian Actors & Tasks**. Eliminate Redis and external worker processes. Run a background or cron job natively by simply spawning a Task (`task.spawn()`) or an Actor that runs an infinite loop with `task.sleep()`.
+
+### Phase 4: Integrations
+* **Templating (Jinja2)** -> **Varian `.vhtml`**. Built-in compiler support for server-side HTML rendering.
+* **HTTP Clients (Requests/Httpx)** -> **`vn.http.client`**. Wrap `libcurl` (via C FFI) in a pure Varian class for native `http.get()` calls.
+* **SDKs (Google/MSAL/Mailtrap)** -> **Pure Varian HTTP calls**. Use Varian's HTTP client to manage OAuth handshakes and SMTP natively, removing bloated vendor SDKs.
+
+### Phase 5: The Untouchables (Keep in Python via `python.run`)
+* **AI & Heavy Processing (Torch/Sentence-Transformers/Playwright)**. Do not rewrite PyTorch or Chromium in Varian. Use the Wrapper Generator (`vn wrap python:sentence_transformers`) to seamlessly proxy these heavy computational libraries over the Python bridge.

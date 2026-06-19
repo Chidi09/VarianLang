@@ -1,0 +1,40 @@
+// queue.vn - Background job queue and cron
+
+fn cron_worker(interval_ms, handler) {
+    while true {
+        task.sleep(interval_ms)
+        handler()
+    }
+}
+
+fn cron(interval_ms, handler) {
+    task.spawn(cron_worker, [interval_ms, handler])
+}
+
+struct WorkerPool {
+    ch: channel,
+    count: int,
+    workers: int
+}
+
+fn pool_worker(ch) {
+    while true {
+        let job = <- ch
+        job()
+    }
+}
+
+impl WorkerPool {
+    fn spawn(self, worker_count) {
+        self.ch = task.channel(1000)
+        self.count = worker_count
+        let i = 0
+        while i < worker_count {
+            task.spawn(pool_worker, [self.ch])
+            i = i + 1
+        }
+    }
+    fn submit(self, job_fn) {
+        self.ch <- job_fn
+    }
+}

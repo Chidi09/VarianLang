@@ -1,0 +1,17 @@
+actor Counter {
+    count: int = 0,
+    fn increment(self) {
+        print("increment called")
+    }
+    fn get(self) -> int {
+        return 42
+    }
+}
+
+let c = Counter.spawn()
+print("before increment")
+c.increment()
+print("after increment")
+let val = c.get()
+print("got value:")
+print(val)
