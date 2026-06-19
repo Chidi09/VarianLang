@@ -1,0 +1,9 @@
+test "lint_test" {
+    let x = 10;
+    if true {
+        let x = 20;
+        let z = 5;
+    }
+    return 0;
+    let y = 30;
+}

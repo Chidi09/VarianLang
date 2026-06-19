@@ -5,6 +5,7 @@
 #include "fmt.h"
 #include "test_runner.h"
 #include "pkg_manager.h"
+#include "lint.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,6 +272,23 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[1], "test") == 0) {
         const char *dir = (argc >= 3) ? argv[2] : ".";
         return test_run_dir(dir);
+    }
+
+    if (strcmp(argv[1], "lint") == 0) {
+        const char *path = ".";
+        const char *only_category = NULL;
+        const char *format = NULL;
+
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+                only_category = argv[++i];
+            } else if (strcmp(argv[i], "--format") == 0 && i + 1 < argc) {
+                format = argv[++i];
+            } else {
+                path = argv[i];
+            }
+        }
+        return run_lint(path, only_category, format);
     }
 
     if (strcmp(argv[1], "add") == 0) {
