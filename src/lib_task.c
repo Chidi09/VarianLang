@@ -5,13 +5,14 @@
 
 /* ─── task.spawn(self, fn, args) → VAL_TASK ─── */
 static Value lib_task_spawn(VM *vm, int arg_count, Value *args) {
-    /* args[0] = self (module), args[1] = function, args[2] = args array */
-    if (arg_count < 2 || args[1].type != VAL_FUNCTION) {
-        runtime_error(vm, "task.spawn() requires a function as first argument");
+    /* args[0] = self (module), args[1] = function/closure, args[2] = args array */
+    if (arg_count < 2 || (args[1].type != VAL_FUNCTION && args[1].type != VAL_CLOSURE)) {
+        runtime_error(vm, "task.spawn() requires a function or closure as first argument");
         return val_nil();
     }
 
-    ObjFunction *fn = args[1].as.function;
+    ObjClosure *closure = (args[1].type == VAL_CLOSURE) ? args[1].as.closure : NULL;
+    ObjFunction *fn = closure ? closure->function : args[1].as.function;
     int fn_arity = fn->arity;
 
     /* Extract args from third argument (array) */
@@ -41,9 +42,11 @@ static Value lib_task_spawn(VM *vm, int arg_count, Value *args) {
 
     CallFrame *cf = &new_t->frames[new_t->frame_count++];
     cf->function = fn;
+    cf->closure = closure;
     cf->ip = fn->code;
     /* slots points to the base of the args on the stack */
     cf->slots = new_t->stack;
+    cf->return_base = 0;
 
     /* Create the ObjTask wrapper (GC-tracked) */
     ObjTask *obj_task = (ObjTask *)calloc(1, sizeof(ObjTask));

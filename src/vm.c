@@ -1,4 +1,5 @@
 #include "vm.h"
+#include "json.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -2069,6 +2070,8 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->global_count = 0;
     vm->compiler = compiler;
     vm->had_error = false;
+    vm->suppress_error_print = false;
+    vm->last_error[0] = '\0';
     vm->main_fn = NULL;
     memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
     vm->gray_stack = NULL;
@@ -2131,9 +2134,11 @@ static bool vm_resolve_ffi(VM *vm) {
 void runtime_error(VM *vm, const char *format, ...) {
     va_list args;
     va_start(args, format);
-    vfprintf(stderr, format, args);
+    vsnprintf(vm->last_error, sizeof(vm->last_error), format, args);
     va_end(args);
-    fprintf(stderr, "\n");
+    if (!vm->suppress_error_print) {
+        fprintf(stderr, "%s\n", vm->last_error);
+    }
     Task *t = vm->current_task;
     if (t) {
         for (int i = t->frame_count - 1; i >= 0; i--) {
@@ -2151,7 +2156,9 @@ void runtime_error(VM *vm, const char *format, ...) {
                     if (offset < pos) { line = fn->rle_lines[j]; break; }
                 }
             }
-            fprintf(stderr, "[line %d] in script\n", line);
+            if (!vm->suppress_error_print) {
+                fprintf(stderr, "[line %d] in script\n", line);
+            }
         }
     }
     vm->had_error = true;
@@ -2209,6 +2216,87 @@ static Value native_throw(VM *vm, int arg_count, Value *args) {
     if (t) {
         t->throw_value = (arg_count > 0) ? args[0] : val_nil();
         t->is_throwing = true;
+    }
+    return val_nil();
+}
+
+static char *stringify_value(VM *vm, Value v) {
+    int len = 0;
+    char *s = json_encode(vm, v, &len);
+    if (!s) {
+        s = strdup("nil");
+    }
+    return s;
+}
+
+static Value native_assert_eq(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 2) {
+        runtime_error(vm, "assert_eq requires 2 arguments");
+        return val_nil();
+    }
+    if (!value_equal(args[0], args[1])) {
+        char *s1 = stringify_value(vm, args[0]);
+        char *s2 = stringify_value(vm, args[1]);
+        runtime_error(vm, "assert_eq failed: expected %s, got %s", s1, s2);
+        free(s1);
+        free(s2);
+    }
+    return val_nil();
+}
+
+static Value native_assert_ne(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 2) {
+        runtime_error(vm, "assert_ne requires 2 arguments");
+        return val_nil();
+    }
+    if (value_equal(args[0], args[1])) {
+        char *s1 = stringify_value(vm, args[0]);
+        char *s2 = stringify_value(vm, args[1]);
+        runtime_error(vm, "assert_ne failed: expected %s to not equal %s", s1, s2);
+        free(s1);
+        free(s2);
+    }
+    return val_nil();
+}
+
+static Value native_assert_throws(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || (args[0].type != VAL_FUNCTION && args[0].type != VAL_CLOSURE)) {
+        runtime_error(vm, "assert_throws requires a function or closure");
+        return val_nil();
+    }
+    Value callee = args[0];
+    ObjFunction *fn = (callee.type == VAL_CLOSURE) ? callee.as.closure->function : callee.as.function;
+
+    Task *new_t = task_new(vm);
+    if (!new_t) return val_nil();
+    new_t->frames[0].function = fn;
+    new_t->frames[0].closure = (callee.type == VAL_CLOSURE) ? callee.as.closure : NULL;
+    new_t->frames[0].ip = fn->code;
+    new_t->frames[0].slots = new_t->stack;
+    new_t->frames[0].return_base = 0;
+    new_t->frame_count = 1;
+
+    Task *prev = vm->current_task;
+    vm->current_task = new_t;
+    bool old_suppress = vm->suppress_error_print;
+    bool old_had_error = vm->had_error;
+    vm->suppress_error_print = true;
+    vm->had_error = false;
+
+    task_run(vm, new_t);
+
+    bool threw = vm->had_error || new_t->is_throwing || new_t->dead; // if it exited early due to error
+    vm->had_error = old_had_error;
+    vm->suppress_error_print = old_suppress;
+    vm->current_task = prev;
+
+    new_t->dead = true;
+
+    if (!threw) {
+        runtime_error(vm, "assert_throws failed: function did not throw an exception");
+    } else {
+        // Clear any error string set by the throws inside the function so it doesn't leak out
+        vm->last_error[0] = '\0';
     }
     return val_nil();
 }
@@ -2437,6 +2525,9 @@ bool vm_run(VM *vm, bool run_tests) {
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
     define_global(vm, copy_string("ffi_to_string", 13), val_native_fn((void *)native_ffi_to_string));
+    define_global(vm, copy_string("assert_eq", 9), val_native_fn((void *)native_assert_eq));
+    define_global(vm, copy_string("assert_ne", 9), val_native_fn((void *)native_assert_ne));
+    define_global(vm, copy_string("assert_throws", 13), val_native_fn((void *)native_assert_throws));
     extern Value native_json_encode(VM *vm, int arg_count, Value *args);
     extern Value native_json_decode(VM *vm, int arg_count, Value *args);
     define_global(vm, copy_string("json_encode", 11), val_native_fn((void *)native_json_encode));
@@ -2578,7 +2669,11 @@ bool vm_run(VM *vm, bool run_tests) {
 
             if (vm->had_error) {
                 printf("  \u274c FAIL: %s\n", tr->description);
+                if (vm->last_error[0] != '\0') {
+                    printf("     %s\n", vm->last_error);
+                }
                 vm->had_error = false; /* reset for next test */
+                vm->last_error[0] = '\0';
                 vm->test_fail_count++;
             } else {
                 printf("  \u2705 PASS: %s\n", tr->description);

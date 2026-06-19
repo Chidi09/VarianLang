@@ -477,6 +477,8 @@ typedef struct {
 
     Compiler *compiler;
     bool had_error;
+    bool suppress_error_print;
+    char last_error[512];
     /* Method dispatch table: (type_name, method_name) → function Value */
     /* Method dispatch — FNV-1a hash table, open addressing */
     #define DISPATCH_TABLE_SIZE 512

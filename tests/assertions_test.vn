@@ -1,0 +1,27 @@
+test "assert_eq success" {
+    assert_eq(42, 42)
+    assert_eq("hello", "hello")
+}
+
+test "assert_eq fail" {
+    assert_throws(| | {
+        assert_eq(42, 43)
+    })
+}
+
+test "assert_ne success" {
+    assert_ne(42, 43)
+    assert_ne("hello", "world")
+}
+
+test "assert_ne fail" {
+    assert_throws(| | {
+        assert_ne(42, 42)
+    })
+}
+
+test "assert_throws catch" {
+    assert_throws(| | {
+        throw("expected throw")
+    })
+}
