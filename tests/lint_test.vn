@@ -1,9 +1,50 @@
+struct Box {
+    password: string,
+    api_key: string
+}
+
 test "lint_test" {
+    // Correctness warnings (from A2)
     let x = 10;
     if true {
         let x = 20;
-        let z = 5;
     }
     return 0;
-    let y = 30;
+    let unreachable_val = 30;
+}
+
+// B1: Security secrets checking
+fn test_secrets() {
+    let my_password = "supersecretpassword123"; // security warning (too long)
+    let safe_password = "short"; // no warning
+
+    let api_key = "1234-5678-9012-3456"; // security warning
+
+    let credentials = Box {
+        password: "anotherverylongpassword", // security warning
+        api_key: "shortkey" // no warning
+    };
+
+    credentials.password = "yetanotherlongsecretpassword"; // security warning
+}
+
+// B1: Security string concat SQL
+fn test_sql_injection(conn) {
+    let table = "users";
+    let name = "Alice";
+    
+    // safe call
+    sqlite.query(conn, "SELECT * FROM users WHERE name = ?", [name]);
+
+    // unsafe string concatenation
+    sqlite.query(conn, "SELECT * FROM " + table + " WHERE name = '" + name + "'"); // security warning
+}
+
+// B1: Performance query in loop & SELECT without LIMIT
+fn test_perf_loop(conn) {
+    for x in [1, 2, 3] {
+        sqlite.query(conn, "SELECT * FROM users LIMIT 1"); // performance warning (query in loop)
+    }
+
+    let select_all = "SELECT * FROM users"; // performance warning (no LIMIT)
 }

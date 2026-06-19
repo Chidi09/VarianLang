@@ -266,6 +266,14 @@ AstNode *ast_member(Arena *arena, SourceLoc loc, AstNode *object, const char *me
     return node;
 }
 
+AstNode *ast_question_dot(Arena *arena, SourceLoc loc, AstNode *object, const char *member) {
+    AstNode *node = alloc_node(arena, NODE_QUESTION_DOT, loc);
+    node->member.object = object;
+    node->member.member = (char *)arena_alloc(arena, strlen(member) + 1);
+    strcpy(node->member.member, member);
+    return node;
+}
+
 AstNode *ast_int_literal(Arena *arena, SourceLoc loc, int64_t value) {
     AstNode *node = alloc_node(arena, NODE_INT_LITERAL, loc);
     node->literal.int_value = value;
@@ -673,6 +681,7 @@ static const char *binary_op_name(BinaryOp op) {
         case OP_BIT_XOR: return "^";
         case OP_SHL: return "<<";
         case OP_SHR: return ">>";
+        case OP_NIL_COALESCE: return "??";
     }
     return "?";
 }
@@ -820,6 +829,10 @@ void ast_print(AstNode *node, int indent) {
 
         case NODE_MEMBER:
             printf("(. %s)\n", node->member.member);
+            break;
+
+        case NODE_QUESTION_DOT:
+            printf("(?. %s)\n", node->member.member);
             break;
 
         case NODE_INT_LITERAL:

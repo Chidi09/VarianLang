@@ -49,6 +49,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_PIPE_PIPE: return "TOKEN_PIPE_PIPE";
         case TOKEN_AMPERSAND_AMPERSAND: return "TOKEN_AMPERSAND_AMPERSAND";
         case TOKEN_QUESTION_QUESTION: return "TOKEN_QUESTION_QUESTION";
+        case TOKEN_QUESTION_DOT: return "TOKEN_QUESTION_DOT";
         case TOKEN_DOUBLE_COLON: return "TOKEN_DOUBLE_COLON";
         case TOKEN_LEFT_ARROW: return "TOKEN_LEFT_ARROW";
         case TOKEN_IDENTIFIER: return "TOKEN_IDENTIFIER";
@@ -248,7 +249,7 @@ static bool token_starts_expr(TokenType type) {
         case TOKEN_EQUAL_EQUAL: case TOKEN_BANG_EQUAL:
         case TOKEN_AMPERSAND: case TOKEN_PIPE: case TOKEN_CARET:
         case TOKEN_AMPERSAND_AMPERSAND: case TOKEN_PIPE_PIPE:
-        case TOKEN_QUESTION: case TOKEN_QUESTION_QUESTION:
+        case TOKEN_QUESTION: case TOKEN_QUESTION_QUESTION: case TOKEN_QUESTION_DOT:
         case TOKEN_COMMA: case TOKEN_SEMICOLON: case TOKEN_COLON:
         case TOKEN_RETURN: case TOKEN_IF: case TOKEN_ELSE:
         case TOKEN_WHILE: case TOKEN_FOR: case TOKEN_LOOP:
@@ -569,11 +570,15 @@ Token lexer_next(Lexer *lexer) {
         case '%': return make_token(lexer, TOKEN_PERCENT);
         case '@': return make_token(lexer, TOKEN_AT);
         case '#': return make_token(lexer, TOKEN_HASH);
-        case '?': return make_token(lexer, TOKEN_QUESTION);
     }
 
     /* Multi-character tokens */
     switch (c) {
+        case '?':
+            if (match(lexer, '?')) return make_token(lexer, TOKEN_QUESTION_QUESTION);
+            if (match(lexer, '.')) return make_token(lexer, TOKEN_QUESTION_DOT);
+            return make_token(lexer, TOKEN_QUESTION);
+
         case ':':
             if (match(lexer, ':')) return make_token(lexer, TOKEN_DOUBLE_COLON);
             if (match(lexer, '=')) { /* := not in spec yet, treat as colon */

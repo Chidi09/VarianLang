@@ -77,6 +77,7 @@ typedef enum {
     NODE_CALL,
     NODE_INDEX,
     NODE_MEMBER,
+    NODE_QUESTION_DOT,
 
     /* Literals & References */
     NODE_INT_LITERAL,
@@ -139,6 +140,7 @@ typedef enum {
     OP_EQ, OP_NE, OP_LT, OP_GT, OP_LE, OP_GE,
     OP_AND, OP_OR,
     OP_BIT_AND, OP_BIT_OR, OP_BIT_XOR, OP_SHL, OP_SHR,
+    OP_NIL_COALESCE,
 } BinaryOp;
 
 /* Unary operators */
@@ -473,6 +475,7 @@ AstNode *ast_call(Arena *arena, SourceLoc loc, AstNode *callee,
                   AstNode **args, int arg_count);
 AstNode *ast_index(Arena *arena, SourceLoc loc, AstNode *object, AstNode *index);
 AstNode *ast_member(Arena *arena, SourceLoc loc, AstNode *object, const char *member);
+AstNode *ast_question_dot(Arena *arena, SourceLoc loc, AstNode *object, const char *member);
 AstNode *ast_int_literal(Arena *arena, SourceLoc loc, int64_t value);
 AstNode *ast_float_literal(Arena *arena, SourceLoc loc, double value);
 AstNode *ast_string_literal(Arena *arena, SourceLoc loc, const char *value);

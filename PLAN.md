@@ -133,3 +133,20 @@ While Varian's `python.run` bridge and C FFI allow for rapid bootstrapping of a 
 
 ### Phase 5: The Untouchables (Keep in Python via `python.run`)
 * **AI & Heavy Processing (Torch/Sentence-Transformers/Playwright)**. Do not rewrite PyTorch or Chromium in Varian. Use the Wrapper Generator (`vn wrap python:sentence_transformers`) to seamlessly proxy these heavy computational libraries over the Python bridge.
+
+---
+
+## Addendum: Critical Issues Found During Phase 3 (Zenith Implementation)
+
+Implementing the Zenith refactor (comptime ORM, instantiable App + radix router, `@validate` decorators) surfaced runtime bugs and ergonomic gaps that should be closed out before Phase 4 concurrency work builds further on top of them. Some are fixed; the rest are open and worth prioritizing ahead of new stdlib modules, since new code will otherwise keep working around them instead of on top of a solid runtime.
+
+**Fixed this pass:**
+* **Stack corruption on early `return` from inside a loop.** `BC_RETURN`/`BC_RETURN_N` popped a fixed `arity`-sized delta instead of resetting to the call's actual base, so any `return` from inside a nested `for`/`while` (a very common "search a list, return early" idiom) left stale locals on the stack and corrupted the *next* call. Fixed by recording an explicit `return_base` per `CallFrame` at the call site instead of re-deriving it from `arity`.
+* **`comptime` blocks couldn't call user-defined functions.** They were resolved in a startup pre-pass that ran before any of the script's own top-level functions existed. Fixed by evaluating `comptime` inline, in lexical position, during normal execution — this also let us delete the fragile bytecode-skipping pre-scanner entirely.
+* **`@validate` decorator arguments were dropped.** `@min_len(3)` never serialized the `3` into bytecode — only the rule name. Field-validation lookup was also positional instead of name-matched, so a struct literal with fields in a different order than the declaration would validate the wrong field. Both fixed.
+
+**Open — recommend fixing before Phase 4:**
+* **No closure capture of enclosing locals/parameters.** A lambda can see globals but not a containing function's `self` or parameters — there are no upvalues. Every comparable language (JS, Python, Ruby, even C++) gets this right; it's currently a real gap, not a strength, against the "best of every household name" goal. Zenith's `listen()`/middleware `next` had to be routed through a module-level "active app" pointer as a workaround instead of a clean closure — that workaround should be deletable once this lands.
+* **`arr[i] = x` index assignment crashes with heap corruption.** Found while testing the Zenith radix router and OpenAPI builder; worked around by never mutating an array by index (always rebuild via `.push()`/reassignment instead). This blocks a very ordinary mutation idiom and should be fixed at the VM level, not worked around indefinitely.
+* **Arrays and structs have inconsistent, undocumented mutation semantics.** Struct fields mutate in place through a shared reference; arrays are copy-on-write (`.push()` always returns a new array, never mutates the original). Both are reasonable designs on their own, but the asymmetry is currently undiscoverable except by testing it — needs either unification or an explicit callout in the language spec/docs.
+* **Reserved keywords produce unhelpful parser errors when used as identifiers.** E.g. naming a method `use` (reserved for module imports) fails with a generic "Expected method name" instead of "'use' is a reserved keyword." Worth a small diagnostics pass once the parser has a keyword table to check against.

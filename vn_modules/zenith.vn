@@ -9,13 +9,8 @@
 //   segment, so one tree handles all methods.
 // - The OpenAPI document is built as real structs/arrays and serialized
 //   once via json_encode, instead of hand-concatenated JSON strings.
-//
-// Caveat: this language's lambdas don't capture enclosing locals (no closure
-// upvalues over parameters), so the part of the framework that actually
-// answers HTTP requests (listen/middleware "next") has to go through one
-// active-app slot rather than a closure bound to `self`. Every other part of
-// an app — building routes, mounting middleware, introspecting docs — works
-// on fully independent ZenithApp instances.
+// - listen() and the middleware "next" chain capture `self`/`app` directly
+//   in real closures (value-copy upvalues) — no shared/global app slot.
 
 struct Response { status: int, body: string, content_type: string }
 struct Route { method: string, path: string, handler, summary: string }
@@ -178,9 +173,7 @@ impl ZenithApp {
     }
 
     // Synchronous request handling — usable directly in tests without a
-    // running socket: app.handle(fake_req). Scopes _active_app for the
-    // duration of the call so middleware's `next` resolves to this app even
-    // if handle() is called directly, nested, or interleaved across apps.
+    // running socket: app.handle(fake_req).
     fn handle(self, req) {
         let m = radix_lookup(self.root, req.method + req.path)
         if m == null {

@@ -46,6 +46,7 @@ typedef enum {
     TOKEN_PIPE_PIPE,                  /* || */
     TOKEN_AMPERSAND_AMPERSAND,       /* && */
     TOKEN_QUESTION_QUESTION,          /* ?? */
+    TOKEN_QUESTION_DOT,               /* ?. */
     TOKEN_DOUBLE_COLON,              /* :: */
     TOKEN_LEFT_ARROW,                /* <- */
 

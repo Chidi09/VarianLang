@@ -25,7 +25,7 @@ $(TARGET): $(OBJS)
 
 test: $(TARGET)
 	@echo "Running lexer/parser tests..."
-	@$(TARGET) examples/test.vn 2>&1 || true
+	@./$(TARGET) examples/test.vn 2>&1 || true
 
 run: $(TARGET)
 	@echo "Varian REPL (type 'exit' to quit)"

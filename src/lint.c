@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <stdarg.h>
@@ -25,6 +26,7 @@ struct LintScope {
 typedef struct {
     LintContext *ctx;
     LintScope *current_scope;
+    bool in_loop;
 } LintWalker;
 
 static void report_lint(LintContext *ctx, SourceLoc loc, const char *category, const char *fmt, ...) {
@@ -90,6 +92,60 @@ static void mark_used(LintScope *scope, const char *name) {
     }
 }
 
+static const char *lint_strcasestr(const char *haystack, const char *needle) {
+    if (!haystack || !needle) return NULL;
+    size_t needle_len = strlen(needle);
+    if (needle_len == 0) return haystack;
+    for (; *haystack; haystack++) {
+        if (strncasecmp(haystack, needle, needle_len) == 0) {
+            return haystack;
+        }
+    }
+    return NULL;
+}
+
+static bool is_string_concat_chain(AstNode *node) {
+    if (!node) return false;
+    if (node->kind == NODE_BINARY && node->binary.op == OP_ADD) {
+        return true;
+    }
+    return false;
+}
+
+static bool is_sql_function_name(const char *name) {
+    if (!name) return false;
+    return strcmp(name, "query") == 0 ||
+           strcmp(name, "select") == 0 ||
+           strcmp(name, "compile_select") == 0 ||
+           strcmp(name, "QueryBuilder") == 0;
+}
+
+static bool check_sql_call_unsafe(AstNode *callee, AstNode **args, int arg_count) {
+    bool is_sql_call = false;
+    if (callee->kind == NODE_IDENTIFIER) {
+        if (is_sql_function_name(callee->identifier.name)) {
+            is_sql_call = true;
+        }
+    } else if (callee->kind == NODE_MEMBER) {
+        if (is_sql_function_name(callee->member.member)) {
+            is_sql_call = true;
+        } else if (callee->member.object && callee->member.object->kind == NODE_IDENTIFIER) {
+            if (is_sql_function_name(callee->member.object->identifier.name)) {
+                is_sql_call = true;
+            }
+        }
+    }
+
+    if (is_sql_call) {
+        for (int i = 0; i < arg_count; i++) {
+            if (is_string_concat_chain(args[i])) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 static void lint_walk(AstNode *node, LintWalker *walker) {
     if (!node) return;
 
@@ -104,6 +160,18 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
         case NODE_LET_DECL: {
             // First walk initializer so it doesn't use the declared variable itself
             lint_walk(node->let_decl.initializer, walker);
+
+            if (node->let_decl.initializer && node->let_decl.initializer->kind == NODE_STRING_LITERAL) {
+                const char *str_val = node->let_decl.initializer->literal.string_value;
+                if (str_val && strlen(str_val) > 12) {
+                    for (int i = 0; i < node->let_decl.name_count; i++) {
+                        const char *name = node->let_decl.names[i];
+                        if (lint_strcasestr(name, "password") || lint_strcasestr(name, "api_key")) {
+                            report_lint(walker->ctx, node->loc, "security", "Hardcoded secret '%s' in let declaration", name);
+                        }
+                    }
+                }
+            }
 
             if (walker->current_scope) {
                 for (int i = 0; i < node->let_decl.name_count; i++) {
@@ -167,10 +235,14 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
             lint_walk(node->if_stmt.else_branch, walker);
             break;
 
-        case NODE_WHILE:
+        case NODE_WHILE: {
             lint_walk(node->while_stmt.condition, walker);
+            bool old_loop = walker->in_loop;
+            walker->in_loop = true;
             lint_walk(node->while_stmt.body, walker);
+            walker->in_loop = old_loop;
             break;
+        }
 
         case NODE_FOR: {
             lint_walk(node->for_stmt.iterable, walker);
@@ -187,14 +259,21 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
                 scope.bindings[idx].loc = node->loc;
             }
             walker->current_scope = &scope;
+            bool old_loop = walker->in_loop;
+            walker->in_loop = true;
             lint_walk(node->for_stmt.body, walker);
+            walker->in_loop = old_loop;
             walker->current_scope = scope.parent;
             break;
         }
 
-        case NODE_LOOP:
+        case NODE_LOOP: {
+            bool old_loop = walker->in_loop;
+            walker->in_loop = true;
             lint_walk(node->loop_stmt.body, walker);
+            walker->in_loop = old_loop;
             break;
+        }
 
         case NODE_RETURN:
             for (int i = 0; i < node->return_stmt.value_count; i++) {
@@ -202,10 +281,28 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
             }
             break;
 
-        case NODE_ASSIGN:
+        case NODE_ASSIGN: {
+            if (node->assign.value && node->assign.value->kind == NODE_STRING_LITERAL) {
+                const char *str_val = node->assign.value->literal.string_value;
+                if (str_val && strlen(str_val) > 12) {
+                    AstNode *target = node->assign.target;
+                    if (target->kind == NODE_IDENTIFIER) {
+                        const char *name = target->identifier.name;
+                        if (lint_strcasestr(name, "password") || lint_strcasestr(name, "api_key")) {
+                            report_lint(walker->ctx, node->loc, "security", "Hardcoded secret assignment to '%s'", name);
+                        }
+                    } else if (target->kind == NODE_MEMBER) {
+                        const char *name = target->member.member;
+                        if (lint_strcasestr(name, "password") || lint_strcasestr(name, "api_key")) {
+                            report_lint(walker->ctx, node->loc, "security", "Hardcoded secret assignment to field '%s'", name);
+                        }
+                    }
+                }
+            }
             lint_walk(node->assign.target, walker);
             lint_walk(node->assign.value, walker);
             break;
+        }
 
         case NODE_BINARY:
             lint_walk(node->binary.left, walker);
@@ -216,12 +313,22 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
             lint_walk(node->unary.operand, walker);
             break;
 
-        case NODE_CALL:
+        case NODE_CALL: {
+            if (check_sql_call_unsafe(node->call.callee, node->call.args, node->call.arg_count)) {
+                report_lint(walker->ctx, node->loc, "security", "String-concatenated SQL query detected");
+            }
+            if (walker->in_loop && node->call.callee->kind == NODE_MEMBER) {
+                const char *member = node->call.callee->member.member;
+                if (strcmp(member, "query") == 0 || strcmp(member, "cmd") == 0) {
+                    report_lint(walker->ctx, node->loc, "performance", "N+1 query pattern detected: query in loop");
+                }
+            }
             lint_walk(node->call.callee, walker);
             for (int i = 0; i < node->call.arg_count; i++) {
                 lint_walk(node->call.args[i], walker);
             }
             break;
+        }
 
         case NODE_INDEX:
             lint_walk(node->index.object, walker);
@@ -257,11 +364,34 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
             }
             break;
 
-        case NODE_STRUCT_LITERAL:
+        case NODE_STRUCT_LITERAL: {
+            for (int i = 0; i < node->struct_literal.field_count; i++) {
+                AstNode *val = node->struct_literal.field_values[i];
+                if (val && val->kind == NODE_STRING_LITERAL) {
+                    const char *str_val = val->literal.string_value;
+                    if (str_val && strlen(str_val) > 12) {
+                        const char *name = node->struct_literal.field_names[i];
+                        if (lint_strcasestr(name, "password") || lint_strcasestr(name, "api_key")) {
+                            report_lint(walker->ctx, node->loc, "security", "Hardcoded secret in struct field '%s'", name);
+                        }
+                    }
+                }
+            }
             for (int i = 0; i < node->struct_literal.field_count; i++) {
                 lint_walk(node->struct_literal.field_values[i], walker);
             }
             break;
+        }
+
+        case NODE_STRING_LITERAL: {
+            const char *val = node->literal.string_value;
+            if (val && lint_strcasestr(val, "select")) {
+                if (!lint_strcasestr(val, "limit")) {
+                    report_lint(walker->ctx, node->loc, "performance", "SQL query without LIMIT clause");
+                }
+            }
+            break;
+        }
 
         case NODE_FN_DECL: {
             LintScope scope;
@@ -333,6 +463,7 @@ static int lint_file(const char *path, LintContext *ctx) {
     LintWalker walker;
     walker.ctx = ctx;
     walker.current_scope = NULL;
+    walker.in_loop = false;
 
     LintScope top_scope;
     top_scope.parent = NULL;

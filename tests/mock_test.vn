@@ -1,0 +1,21 @@
+test "mock math.sqrt" {
+    // Original call
+    let val = math.sqrt(16);
+    assert_eq(val, 4.0);
+
+    // Intercept
+    let old_sqrt = mock.intercept("math", "sqrt", |x| {
+        return 99.0
+    });
+    
+    // Call intercepted
+    let mocked_val = math.sqrt(16);
+    assert_eq(mocked_val, 99.0);
+
+    // Restore
+    mock.restore("math", "sqrt", old_sqrt);
+
+    // Call restored
+    let restored_val = math.sqrt(16);
+    assert_eq(restored_val, 4.0);
+}

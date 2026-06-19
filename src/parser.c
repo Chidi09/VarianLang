@@ -22,6 +22,7 @@ static AstNode *parse_unary(Parser *parser);
 static AstNode *parse_call(Parser *parser);
 static AstNode *parse_primary(Parser *parser);
 static Type *parse_type(Parser *parser);
+static Type *parse_type_inner(Parser *parser);
 static AstNode *parse_struct_literal(Parser *parser, const char *type_name, SourceLoc loc);
 static AstNode *parse_enum_literal(Parser *parser, const char *enum_name, SourceLoc loc);
 
@@ -215,6 +216,12 @@ static Type *parse_primitive_type(Parser *parser) {
 }
 
 static Type *parse_type(Parser *parser) {
+    Type *t = parse_type_inner(parser);
+    match(parser, TOKEN_QUESTION);
+    return t;
+}
+
+static Type *parse_type_inner(Parser *parser) {
     /* Types:
      *   primitive: bool, int, float, string, byte, void
      *   named: identifier
@@ -1594,8 +1601,19 @@ static AstNode *parse_range(Parser *parser) {
     return expr;
 }
 
-static AstNode *parse_assignment(Parser *parser) {
+static AstNode *parse_nil_coalesce(Parser *parser) {
     AstNode *expr = parse_or(parser);
+
+    while (match(parser, TOKEN_QUESTION_QUESTION)) {
+        AstNode *right = parse_or(parser);
+        expr = ast_binary(parser->arena, current_loc(parser), OP_NIL_COALESCE, expr, right);
+    }
+
+    return expr;
+}
+
+static AstNode *parse_assignment(Parser *parser) {
+    AstNode *expr = parse_nil_coalesce(parser);
 
     if (match(parser, TOKEN_EQUAL)) {
         AstNode *value = parse_assignment(parser);
@@ -1881,6 +1899,15 @@ static AstNode *parse_call(Parser *parser) {
                 /* Field access */
                 expr = ast_member(parser->arena, current_loc(parser), expr, member);
             }
+        } else if (match(parser, TOKEN_QUESTION_DOT)) {
+            /* Safe navigation: expr?.member */
+            if (parser->current.type != TOKEN_IDENTIFIER) {
+                parser_error(parser, "Expected member name after '?.'");
+                break;
+            }
+            advance(parser);
+            char *member = token_str(parser, &parser->previous);
+            expr = ast_question_dot(parser->arena, current_loc(parser), expr, member);
         } else if (match(parser, TOKEN_QUESTION)) {
             /* Error propagation: expr? */
             expr = ast_propagate(parser->arena, current_loc(parser), expr);

@@ -12,7 +12,7 @@
 
 /* ─── Forward declarations ─── */
 static void compile_node(Compiler *compiler, AstNode *node);
-static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
+Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
 
 /* ─── Validation Registry ───
  * Population happens at runtime via BC_REGISTER_VALIDATIONS (emitted by
@@ -1032,8 +1032,24 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
                 case OP_BIT_XOR: emit_byte(compiler, BC_EQUAL); break; /* placeholder: XOR */
                 case OP_SHL:     emit_byte(compiler, BC_MUL); break;  /* placeholder */
                 case OP_SHR:     emit_byte(compiler, BC_DIV); break;  /* placeholder */
+                case OP_NIL_COALESCE: emit_byte(compiler, BC_NIL_COALESCE); break;
                 default: compiler_error(compiler, "Unknown binary operator"); break;
             }
+            break;
+        }
+
+        case NODE_QUESTION_DOT: {
+            compile_expression(compiler, node->member.object);
+            int nil_jump = emit_jump(compiler, BC_JUMP_IF_NIL);
+            ObjString *s = copy_string(node->member.member, (int)strlen(node->member.member));
+            emit_byte(compiler, BC_MEMBER);
+            int idx = chunk_add_constant(compiler->chunk, val_string(s));
+            emit_byte(compiler, (uint8_t)idx);
+            int end_jump = emit_jump(compiler, BC_JUMP);
+            patch_jump(compiler, nil_jump);
+            emit_byte(compiler, BC_POP);
+            emit_byte(compiler, BC_NIL);
+            patch_jump(compiler, end_jump);
             break;
         }
 
@@ -2313,7 +2329,7 @@ static Value native_ffi_to_string(VM *vm, int arg_count, Value *args) {
 }
 
 /* Forward declarations needed by actor functions */
-static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
+Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
 bool task_run(VM *vm, Task *task);
 
 /* ─── Channel helpers (used by actor system) ─── */
@@ -2470,7 +2486,13 @@ void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
         int idx = (hash + i) % DISPATCH_TABLE_SIZE;
-        if (!vm->dispatch_occupied[idx]) {
+        if (vm->dispatch_occupied[idx]) {
+            if (strcmp(vm->dispatch_type_names[idx], type_name) == 0 &&
+                strcmp(vm->dispatch_method_names[idx], method_name) == 0) {
+                vm->dispatch_functions[idx] = func;
+                return;
+            }
+        } else {
             strncpy(vm->dispatch_type_names[idx], type_name, 63);
             vm->dispatch_type_names[idx][63] = '\0';
             strncpy(vm->dispatch_method_names[idx], method_name, 63);
@@ -2482,7 +2504,7 @@ void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name
     }
 }
 
-static Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
+Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
     uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
@@ -2547,6 +2569,7 @@ bool vm_run(VM *vm, bool run_tests) {
         extern void lib_task_init(VM *vm);
         extern void lib_sqlite_init(VM *vm);
         extern void lib_redis_init(VM *vm);
+        extern void lib_mock_init(VM *vm);
         lib_math_init(vm);
         lib_io_init(vm);
         lib_string_init(vm);
@@ -2559,6 +2582,7 @@ bool vm_run(VM *vm, bool run_tests) {
         lib_task_init(vm);
         lib_sqlite_init(vm);
         lib_redis_init(vm);
+        lib_mock_init(vm);
     }
 
 #define BINARY_OP_NUM(op) \
@@ -3030,6 +3054,12 @@ bool task_run(VM *vm, Task *task) {
                 PUSH(val_bool(value_is_truthy(a) || value_is_truthy(b)));
                 break;
             }
+            case BC_NIL_COALESCE: {
+                Value b = POP();
+                Value a = POP();
+                PUSH(a.type == VAL_NIL ? b : a);
+                break;
+            }
 
             case BC_DEFINE_GLOBAL: {
                 ObjString *name = READ_CONSTANT().as.string;
@@ -3092,6 +3122,12 @@ bool task_run(VM *vm, Task *task) {
             case BC_JUMP_IF_FALSE: {
                 uint16_t offset = READ_SHORT();
                 if (!value_is_truthy(PEEK(0)))
+                    t->frames[t->frame_count - 1].ip += offset;
+                break;
+            }
+            case BC_JUMP_IF_NIL: {
+                uint16_t offset = READ_SHORT();
+                if (PEEK(0).type == VAL_NIL)
                     t->frames[t->frame_count - 1].ip += offset;
                 break;
             }

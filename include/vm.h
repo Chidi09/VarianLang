@@ -35,6 +35,7 @@ typedef enum {
     /* Logical */
     BC_AND,
     BC_OR,
+    BC_NIL_COALESCE,
 
     /* Variables */
     BC_DEFINE_GLOBAL,
@@ -46,6 +47,8 @@ typedef enum {
     /* Control flow */
     BC_JUMP,
     BC_JUMP_IF_FALSE,
+    BC_JUMP_IF_NIL,
+    BC_JUMP_IF_NOT_NIL,
     BC_LOOP,
 
     /* Functions */
@@ -540,5 +543,6 @@ void runtime_error(VM *vm, const char *format, ...);
 /* Module / dispatch registration (used by lib_*.c) */
 void define_global(VM *vm, ObjString *name, Value value);
 void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func);
+Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
 
 #endif /* VM_H */
