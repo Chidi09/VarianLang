@@ -1,0 +1,3 @@
+let x = 10
+let y = "hi"
+print(type(x), type(y))

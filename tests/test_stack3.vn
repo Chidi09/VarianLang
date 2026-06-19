@@ -1,0 +1,2 @@
+let str = ffi_to_string(0);
+print(str);

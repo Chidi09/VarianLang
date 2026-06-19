@@ -2592,6 +2592,7 @@ bool task_run(VM *vm, Task *task) {
                 tmp_task->frames[0].function = fn;
                 tmp_task->frames[0].ip = fn->code;
                 tmp_task->frames[0].slots = tmp_task->stack;
+                tmp_task->frames[0].return_base = 0;
                 tmp_task->frame_count = 1;
 
                 Task *prev = vm->current_task;
@@ -2955,6 +2956,9 @@ bool task_run(VM *vm, Task *task) {
                     new_frame->function = fn;
                     new_frame->ip = fn->code;
                     new_frame->slots = &t->stack[t->stack_top - arg_count];
+                    /* Stack: [..., callee, arg0, ..., argN-1]. Returning
+                     * must pop the callee too, one slot before the args. */
+                    new_frame->return_base = t->stack_top - arg_count - 1;
 
                 } else {
                     runtime_error(vm, "Can only call functions");
@@ -3341,6 +3345,10 @@ bool task_run(VM *vm, Task *task) {
                     new_frame->function = fn;
                     new_frame->ip = fn->code;
                     new_frame->slots = &t->stack[t->stack_top - total_args - 1];
+                    /* Stack: [obj, arg0, ..., argN-1, callee] — callee is
+                     * pushed *after* obj+args here (unlike BC_CALL), so the
+                     * reset point is exactly slots' index, not one before. */
+                    new_frame->return_base = t->stack_top - total_args - 1;
                 } else {
                     runtime_error(vm, "Method is not callable");
                     return false;
