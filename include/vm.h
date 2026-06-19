@@ -58,6 +58,7 @@ typedef enum {
     BC_ARRAY,
     BC_TUPLE,
     BC_INDEX,
+    BC_SET_INDEX,
     BC_MEMBER,
     BC_SET_MEMBER,
     BC_DISPATCH,

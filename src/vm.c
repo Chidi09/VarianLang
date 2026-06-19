@@ -1508,6 +1508,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                                            (int)strlen(node->assign.target->member.member));
                 int idx = chunk_add_constant(compiler->chunk, val_string(s));
                 emit_byte(compiler, (uint8_t)idx);
+            } else if (node->assign.target->kind == NODE_INDEX) {
+                compile_expression(compiler, node->assign.target->index.object);
+                compile_expression(compiler, node->assign.target->index.index);
+                compile_expression(compiler, node->assign.value);
+                emit_byte(compiler, BC_SET_INDEX);
             }
             break;
 
@@ -3075,6 +3080,40 @@ bool task_run(VM *vm, Task *task) {
                     PUSH(obj.as.array->elements[i]);
                 } else {
                     runtime_error(vm, "Indexing not supported for this type");
+                    return false;
+                }
+                break;
+            }
+
+            case BC_SET_INDEX: {
+                Value val = POP();
+                Value index = POP();
+                Value obj = POP();
+                if (obj.type == VAL_ARRAY && index.type == VAL_INT) {
+                    int i = (int)index.as.integer;
+                    if (i < 0) {
+                        runtime_error(vm, "Array index out of bounds");
+                        return false;
+                    }
+                    ObjArray *arr = obj.as.array;
+                    if (i >= arr->count) {
+                        if (i >= arr->capacity) {
+                            int old_cap = arr->capacity;
+                            arr->capacity = i + 1;
+                            if (arr->capacity < old_cap * 2) arr->capacity = old_cap * 2;
+                            if (arr->capacity < 8) arr->capacity = 8;
+                            arr->elements = realloc(arr->elements, sizeof(Value) * arr->capacity);
+                        }
+                        for (int j = arr->count; j <= i; j++) {
+                            arr->elements[j] = val_nil();
+                        }
+                        arr->count = i + 1;
+                    }
+                    arr->elements[i] = val;
+                    /* Assignment yields the assigned value */
+                    PUSH(val);
+                } else {
+                    runtime_error(vm, "Index assignment not supported for this type");
                     return false;
                 }
                 break;
