@@ -159,6 +159,30 @@ static Value lib_string_starts_with(VM *vm, int arg_count, Value *args) {
     return val_bool(strncmp(s->chars, prefix->chars, (size_t)prefix->length) == 0);
 }
 
+/* ─── string.index_of(needle) -- first occurrence's index, or -1 ─── */
+static Value lib_string_index_of(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+        return val_int(-1);
+    ObjString *s = args[0].as.string;
+    ObjString *needle = args[1].as.string;
+    if (needle->length == 0) return val_int(0);
+    const char *found = strstr(s->chars, needle->chars);
+    if (!found) return val_int(-1);
+    return val_int((int64_t)(found - s->chars));
+}
+
+/* ─── string.contains(needle) ─── */
+static Value lib_string_contains(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+        return val_bool(false);
+    ObjString *s = args[0].as.string;
+    ObjString *needle = args[1].as.string;
+    if (needle->length == 0) return val_bool(true);
+    return val_bool(strstr(s->chars, needle->chars) != NULL);
+}
+
 /* ─── string.replace(old, new) returns new string ─── */
 static Value lib_string_replace(VM *vm, int arg_count, Value *args) {
     if (arg_count < 3 || args[0].type != VAL_STRING ||
@@ -231,6 +255,8 @@ void lib_string_init(VM *vm) {
     vm_register_dispatch(vm, "string", "trim",         val_native_fn((void *)lib_string_trim));
     vm_register_dispatch(vm, "string", "split",        val_native_fn((void *)lib_string_split));
     vm_register_dispatch(vm, "string", "starts_with",  val_native_fn((void *)lib_string_starts_with));
+    vm_register_dispatch(vm, "string", "index_of",     val_native_fn((void *)lib_string_index_of));
+    vm_register_dispatch(vm, "string", "contains",     val_native_fn((void *)lib_string_contains));
     vm_register_dispatch(vm, "string", "replace",      val_native_fn((void *)lib_string_replace));
     vm_register_dispatch(vm, "string", "code_at",      val_native_fn((void *)lib_string_code_at));
     vm_register_dispatch(vm, "string", "from_codes",   val_native_fn((void *)lib_string_from_codes));

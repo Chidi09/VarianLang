@@ -31,15 +31,44 @@ fn cors(allow_origins, allow_methods, allow_headers) {
         }
 
         let resp = next(req)
-        
+
+        // Merge onto whatever headers an inner middleware/handler already
+        // set, rather than replacing them outright -- this used to
+        // silently discard e.g. csrf()'s Set-Cookie header whenever cors()
+        // was registered before it (middleware wraps outside-in by
+        // registration order, so an outer middleware's post-processing
+        // runs *after* an inner one's, on the way back out).
+        let existing_headers = _validate.get_field(resp, "headers")
+        let merged_headers = cors_headers
+        if existing_headers != null {
+            let keys = _validate.get_keys(existing_headers)
+            let vals = []
+            for i in 0..keys.len() {
+                vals = vals.push(_validate.get_field(existing_headers, keys[i]))
+            }
+            keys = keys.push("access_control_allow_origin").push("access_control_allow_methods").push("access_control_allow_headers")
+            vals = vals.push(origins_str).push(methods_str).push(headers_str)
+            merged_headers = http.create_struct(keys, vals)
+        }
+
         return http.create_struct(
             ["status", "body", "content_type", "headers"],
-            [resp.status, resp.body, resp.content_type, cors_headers]
+            [resp.status, resp.body, resp.content_type, merged_headers]
         )
     };
 }
 
-// ─── Rate Limiting Middleware ───
+// ─── Rate Limiting Middleware (in-memory, single-worker only) ───
+//
+// IMPORTANT: this tracks request counts in one Actor living inside one VM.
+// Zenith's clustering (app.listen_cluster(port, workers)) runs each worker
+// as a FULLY INDEPENDENT VM (its own heap, its own copy of every Actor) --
+// there is no shared memory between workers. That means a clustered server
+// using THIS middleware enforces max_reqs *per worker*, not per server: a
+// client distributed across N workers can make up to N * max_reqs requests
+// in one window before any single worker's limiter notices. For a
+// clustered deployment, use rate_limit_redis() below instead, which
+// coordinates across every worker through a shared Redis counter.
 actor RateLimiterActor {
     ips: array = [],
     tokens: array = [],
@@ -56,47 +85,34 @@ actor RateLimiterActor {
     }
 
     fn check_limit(self, ip) -> bool {
-        print("check_limit: entering, ip is " + ip)
         let now = time.now_ms()
         let idx = -1
-        print("check_limit: ips len is " + self.ips.len())
         for i in 0..self.ips.len() {
             if self.ips[i] == ip {
                 idx = i
                 break
             }
         }
-        print("check_limit: idx is " + idx)
 
         if idx == -1 {
-            print("check_limit: path idx == -1")
             self.ips = self.ips.push(ip)
             self.tokens = self.tokens.push(self.max_tokens - 1)
             self.last_updated = self.last_updated.push(now)
-            print("check_limit: return true from idx == -1")
             return true
         }
 
-        print("check_limit: path idx != -1")
         let elapsed = now - self.last_updated[idx]
-        print("check_limit: elapsed is " + elapsed)
         let regen = elapsed * self.max_tokens / self.window_ms
-        print("check_limit: regen is " + regen)
         let current_tokens = self.tokens[idx] + regen
-        print("check_limit: current_tokens is " + current_tokens)
         if current_tokens > self.max_tokens {
             current_tokens = self.max_tokens
         }
 
         if current_tokens >= 1 {
-            print("check_limit: mutating self.tokens...")
             self.tokens[idx] = current_tokens - 1
-            print("check_limit: mutating self.last_updated...")
             self.last_updated[idx] = now
-            print("check_limit: mutations complete, returning true")
             return true
         } else {
-            print("check_limit: limit exceeded, returning false")
             return false
         }
     }
@@ -108,8 +124,6 @@ fn rate_limit(max_reqs, window_ms) {
 
     return |req, next| {
         let client_ip = req.ip
-        print("rate_limit: req.ip is " + client_ip)
-        print("rate_limit: limiter is " + limiter)
         if !limiter.check_limit(client_ip) {
             return http.create_struct(
                 ["status", "body", "content_type"],
@@ -120,24 +134,111 @@ fn rate_limit(max_reqs, window_ms) {
     };
 }
 
-// ─── CSRF Protection Middleware ───
-fn csrf() {
+// ─── Rate Limiting Middleware (Redis-backed, cluster-safe) ───
+//
+// Fixed-window counter: INCR a per-IP, per-window key and EXPIRE it once.
+// Every worker (in-process or clustered) hits the same Redis instance, so
+// the limit is enforced across the whole server, not per worker. Simpler
+// than the in-memory token bucket above (bursts right at a window boundary
+// can momentarily allow close to 2x max_reqs, a known fixed-window
+// trade-off) but correctness under clustering matters more here than
+// burst-smoothing precision.
+fn rate_limit_redis(redis_conn, max_reqs, window_seconds) {
     return |req, next| {
-        print("csrf: entering, method is " + req.method)
-        if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
-            return next(req)
+        let window = time.now_ms() / (window_seconds * 1000)
+        let key = "shield:ratelimit:" + req.ip + ":" + window
+
+        let count = redis.cmd(redis_conn, "INCR", [key])
+        if count == 1 {
+            redis.cmd(redis_conn, "EXPIRE", [key, window_seconds])
         }
-        
-        print("csrf: req.headers is " + req.headers)
-        let token = req.headers?.x_csrf_token
-        print("csrf: token is " + token)
-        if token == null || token == "" {
+
+        if count > max_reqs {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [429, "Too Many Requests", "text/plain"]
+            )
+        }
+        return next(req)
+    };
+}
+
+// ─── CSRF Protection Middleware (signed double-submit cookie) ───
+//
+// On a safe method (GET/HEAD/OPTIONS), issues a random csrf_token cookie
+// if the client doesn't already have one. On a state-changing method,
+// requires the x-csrf-token header to match the csrf_token cookie value
+// exactly (constant-time compare). This defeats both classic CSRF vectors:
+// a cross-origin <form> submission can't set a custom header at all, and
+// a cross-origin script can't read the victim's cookie (browser same-
+// origin policy) to forge a matching header value -- it can only cause
+// the cookie to be *sent* automatically, never *read* its contents.
+//
+// Varian functions have no default/optional parameters (a missing
+// argument is a hard arity error, not a null), so this stays zero-arg to
+// match every existing caller -- the cookie is issued without the Secure
+// attribute. Serving exclusively over HTTPS in production and want it?
+// Add "; Secure" to cookie_attrs below directly, or fork this function.
+fn csrf() {
+    let cookie_attrs = "Path=/; SameSite=Lax"
+
+    return |req, next| {
+        // NOTE: req.headers?.cookie is NOT safe here -- ?. only guards
+        // against req.headers itself being nil; req.headers is a struct
+        // built from whatever headers this specific client actually sent,
+        // so a request with no Cookie header at all has a valid headers
+        // struct that simply has no "cookie" field, and a plain .cookie
+        // access on it throws ("Struct has no field 'cookie'") rather than
+        // returning nil. _validate.get_field tolerates a missing field.
+        let cookie_header = _validate.get_field(req.headers, "cookie")
+        let existing_token = _extract_cookie(cookie_header, "csrf_token")
+
+        if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
+            let resp = next(req)
+            if existing_token != null {
+                return resp
+            }
+            // Issue a fresh token for this client; merge onto whatever
+            // headers the handler itself already set. resp may be a plain
+            // Response{...} literal with no "headers" field at all -- a
+            // bare `resp.headers` would throw ("Struct has no field
+            // 'headers'") rather than return nil, so this has to go
+            // through the same nil-tolerant accessor session_middleware
+            // and friends already use elsewhere in this codebase.
+            let new_token = auth.generate_token(32)
+            let set_cookie_val = "csrf_token=" + new_token + "; " + cookie_attrs
+            let resp_headers = _validate.get_field(resp, "headers")
+            if resp_headers == null {
+                resp_headers = http.create_struct(["set_cookie"], [set_cookie_val])
+            } else {
+                let keys = _validate.get_keys(resp_headers).push("set_cookie")
+                let vals = []
+                for i in 0..(keys.len() - 1) {
+                    vals = vals.push(_validate.get_field(resp_headers, keys[i]))
+                }
+                vals = vals.push(set_cookie_val)
+                resp_headers = http.create_struct(keys, vals)
+            }
+            return http.create_struct(
+                ["status", "body", "content_type", "headers"],
+                [resp.status, resp.body, resp.content_type, resp_headers]
+            )
+        }
+
+        let header_token = _validate.get_field(req.headers, "x_csrf_token")
+        if existing_token == null || header_token == null || header_token == "" {
             return http.create_struct(
                 ["status", "body", "content_type"],
                 [403, "Forbidden: Missing CSRF Token", "text/plain"]
             )
         }
-        
+        if !auth.constant_time_eq(existing_token, header_token) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: Invalid CSRF Token", "text/plain"]
+            )
+        }
+
         return next(req)
     };
 }

@@ -7,6 +7,7 @@
 #include <openssl/hmac.h>
 #include <openssl/evp.h>
 #include <openssl/rand.h>
+#include <openssl/crypto.h>
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
@@ -252,7 +253,10 @@ static Value lib_auth_hash_password(VM *vm, int arg_count, Value *args) {
     unsigned char salt[16];
     RAND_bytes(salt, sizeof(salt));
 
-    unsigned int iterations = 10000;
+    /* OWASP's current (2023+) minimum guidance for PBKDF2-HMAC-SHA256 is
+     * 600,000 iterations -- 10,000 (the old NIST-2010-era figure) is far
+     * too cheap to brute-force on modern GPU hardware. */
+    unsigned int iterations = 600000;
     unsigned char hash[32];
 
     PKCS5_PBKDF2_HMAC(password, password_len, salt, sizeof(salt), iterations, EVP_sha256(), sizeof(hash), hash);
@@ -300,8 +304,51 @@ static Value lib_auth_verify_password(VM *vm, int arg_count, Value *args) {
     char computed_hex[65];
     for (int i = 0; i < 32; i++) snprintf(computed_hex + i * 2, 3, "%02x", computed_hash[i]);
 
-    bool match = (strcmp(computed_hex, hash_hex) == 0);
+    /* Constant-time comparison -- a length-dependent-only-by-construction
+     * strcmp() here would leak how many leading hex characters match via
+     * timing, letting an attacker incrementally guess the hash. Both
+     * buffers are the same fixed 64-byte hex length regardless of input,
+     * so CRYPTO_memcmp's constant-time guarantee applies cleanly. */
+    bool match = (CRYPTO_memcmp(computed_hex, hash_hex, 64) == 0);
     return val_bool(match);
+}
+
+/* auth.generate_token(num_bytes) -- a CSPRNG-backed random token, hex-
+ * encoded. Used for CSRF tokens, session IDs, password-reset tokens, etc.:
+ * anywhere a script needs an unguessable opaque value. */
+static Value lib_auth_generate_token(VM *vm, int arg_count, Value *args) {
+    int base = get_arg_base(arg_count, args);
+    int num_bytes = 32;
+    if (arg_count > base && args[base].type == VAL_INT) {
+        num_bytes = (int)args[base].as.integer;
+    }
+    if (num_bytes < 1) num_bytes = 1;
+    if (num_bytes > 128) num_bytes = 128; /* sane cap; nothing here needs more */
+
+    unsigned char buf[128];
+    if (RAND_bytes(buf, num_bytes) != 1) {
+        runtime_error(vm, "auth.generate_token(): RAND_bytes() failed");
+        return val_nil();
+    }
+    char hex[257];
+    for (int i = 0; i < num_bytes; i++) snprintf(hex + i * 2, 3, "%02x", buf[i]);
+    return val_string(allocate_string(vm, hex, num_bytes * 2));
+}
+
+/* auth.constant_time_eq(a, b) -- timing-safe string comparison. For
+ * CSRF/session tokens: a naive == short-circuits on the first mismatched
+ * byte (or differing length), leaking how much of a guess is correct. */
+static Value lib_auth_constant_time_eq(VM *vm, int arg_count, Value *args) {
+    int base = get_arg_base(arg_count, args);
+    if (arg_count < base + 2 || args[base].type != VAL_STRING || args[base + 1].type != VAL_STRING) {
+        runtime_error(vm, "auth.constant_time_eq() requires two strings");
+        return val_bool(false);
+    }
+    ObjString *a = args[base].as.string;
+    ObjString *b = args[base + 1].as.string;
+    if (a->length != b->length) return val_bool(false);
+    if (a->length == 0) return val_bool(true);
+    return val_bool(CRYPTO_memcmp(a->chars, b->chars, (size_t)a->length) == 0);
 }
 
 static const char B64_ALPHABET[] =
@@ -347,5 +394,7 @@ void lib_auth_init(VM *vm) {
     vm_register_dispatch(vm, "auth", "verify_jwt",      val_native_fn((void *)lib_auth_verify_jwt));
     vm_register_dispatch(vm, "auth", "hash_password",   val_native_fn((void *)lib_auth_hash_password));
     vm_register_dispatch(vm, "auth", "verify_password", val_native_fn((void *)lib_auth_verify_password));
+    vm_register_dispatch(vm, "auth", "generate_token",  val_native_fn((void *)lib_auth_generate_token));
+    vm_register_dispatch(vm, "auth", "constant_time_eq", val_native_fn((void *)lib_auth_constant_time_eq));
     vm_register_dispatch(vm, "auth", "sha1_base64",     val_native_fn((void *)lib_auth_sha1_base64));
 }

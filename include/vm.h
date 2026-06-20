@@ -66,6 +66,11 @@ typedef enum {
     BC_INDEX,
     BC_SET_INDEX,
     BC_MEMBER,
+    BC_MEMBER_SAFE, /* expr?.member -- returns nil instead of erroring when
+                      * the field/method simply doesn't exist, not just
+                      * when expr itself is nil (BC_JUMP_IF_NIL already
+                      * handles that half; this handles "exists but this
+                      * specific field/method isn't on it"). */
     BC_SET_MEMBER,
     BC_DISPATCH,
     BC_REGISTER_METHOD,

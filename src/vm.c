@@ -7,6 +7,8 @@
 #include <stdarg.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 
 
@@ -1185,7 +1187,7 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
             compile_expression(compiler, node->member.object);
             int nil_jump = emit_jump(compiler, BC_JUMP_IF_NIL);
             ObjString *s = copy_string(node->member.member, (int)strlen(node->member.member));
-            emit_byte(compiler, BC_MEMBER);
+            emit_byte(compiler, BC_MEMBER_SAFE);
             int idx = chunk_add_constant(compiler->chunk, val_string(s));
             emit_short(compiler, (uint16_t)idx);
             int end_jump = emit_jump(compiler, BC_JUMP);
@@ -2401,6 +2403,23 @@ static Value native_test_enable_arena(VM *vm, int arg_count, Value *args) {
     return val_nil();
 }
 
+/* Test-only: simulates exactly what the round-robin scheduler's end-of-pass
+ * reap does to a recycled Task (see vm_run's "Push to free-list" comment) --
+ * resets arena_offset to 0 so the NEXT arena allocation overwrites the same
+ * bytes a previous request's arena-backed objects used to occupy, then
+ * re-enables the arena for further allocations. Lets a single-task test
+ * script exercise the real "does a promoted reference survive a recycle"
+ * scenario without needing a full http.serve() round-robin pass. */
+static Value native_test_recycle_arena(VM *vm, int arg_count, Value *args) {
+    (void)arg_count; (void)args;
+    Task *t = vm->current_task;
+    if (t && t->arena_base) {
+        t->arena_offset = 0;
+        t->use_arena = true;
+    }
+    return val_nil();
+}
+
 static Value native_print(VM *vm, int arg_count, Value *args) {
     (void)vm;
     for (int i = 0; i < arg_count; i++) {
@@ -2739,6 +2758,7 @@ bool vm_run(VM *vm, bool run_tests) {
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
     define_global(vm, copy_string("__test_enable_arena", 19), val_native_fn((void *)native_test_enable_arena));
+    define_global(vm, copy_string("__test_recycle_arena", 20), val_native_fn((void *)native_test_recycle_arena));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
     define_global(vm, copy_string("ffi_to_string", 13), val_native_fn((void *)native_ffi_to_string));
     define_global(vm, copy_string("assert_eq", 9), val_native_fn((void *)native_assert_eq));
@@ -3042,8 +3062,17 @@ bool task_run(VM *vm, Task *task) {
             continue;
         }
             static void *dispatch_table[256];
-    static bool dispatch_table_initialized = false;
-    if (!dispatch_table_initialized) {
+    static _Atomic bool dispatch_table_initialized = false;
+    static pthread_mutex_t dispatch_table_lock = PTHREAD_MUTEX_INITIALIZER;
+    /* dispatch_table is one process-wide instance (static), but task_run()
+     * is now called from multiple cluster worker threads (each with its
+     * own VM, sharing this one C function) -- lock-guarded double-checked
+     * init makes this race-free regardless of thread spawn ordering,
+     * rather than relying on it happening to be safe in practice. The
+     * atomic flag keeps the fast (already-initialized) path lock-free. */
+    if (!atomic_load_explicit(&dispatch_table_initialized, memory_order_acquire)) {
+    pthread_mutex_lock(&dispatch_table_lock);
+    if (!atomic_load_explicit(&dispatch_table_initialized, memory_order_relaxed)) {
         for (int idx = 0; idx < 256; idx++) {
             dispatch_table[idx] = &&L_BC_DEFAULT;
         }
@@ -3088,6 +3117,7 @@ bool task_run(VM *vm, Task *task) {
         dispatch_table[BC_INDEX] = &&L_BC_INDEX;
         dispatch_table[BC_SET_INDEX] = &&L_BC_SET_INDEX;
         dispatch_table[BC_MEMBER] = &&L_BC_MEMBER;
+        dispatch_table[BC_MEMBER_SAFE] = &&L_BC_MEMBER_SAFE;
         dispatch_table[BC_SET_MEMBER] = &&L_BC_SET_MEMBER;
         dispatch_table[BC_DISPATCH] = &&L_BC_DISPATCH;
         dispatch_table[BC_REGISTER_METHOD] = &&L_BC_REGISTER_METHOD;
@@ -3113,7 +3143,9 @@ bool task_run(VM *vm, Task *task) {
         dispatch_table[BC_ASSERT] = &&L_BC_ASSERT;
         dispatch_table[BC_HALT] = &&L_BC_HALT;
         dispatch_table[BC_REGISTER_VALIDATIONS] = &&L_BC_REGISTER_VALIDATIONS;
-        dispatch_table_initialized = true;
+        atomic_store_explicit(&dispatch_table_initialized, true, memory_order_release);
+    }
+    pthread_mutex_unlock(&dispatch_table_lock);
     }
 
 #define DISPATCH() \
@@ -4376,6 +4408,64 @@ L_BC_LOOP_TOP:
                         return false;
                     }
                 } else {
+                    runtime_error(vm, "Cannot access field on non-struct value");
+                    return false;
+                }
+                DISPATCH();
+            }
+
+            L_BC_MEMBER_SAFE:
+            {
+                /* expr?.member -- BC_JUMP_IF_NIL already short-circuited the
+                 * case where expr itself is nil; this handles the other half
+                 * of "safe navigation": expr is a real, valid value, it
+                 * just doesn't have this particular field/method. Every
+                 * branch below mirrors L_BC_MEMBER exactly except pushing
+                 * nil instead of calling runtime_error() -- that's the
+                 * entire difference. Keep the two in sync if either changes. */
+                ObjString *name = READ_CONSTANT().as.string;
+                Value obj = POP();
+                if (obj.type == VAL_STRUCT) {
+                    ObjStruct *s = obj.as.structure;
+                    int found = -1;
+                    uint32_t name_hash = hash_string(name->chars, name->length);
+                    for (int ci = 0; ci < s->field_cache_count; ci++) {
+                        if (s->field_cache[ci].hash == name_hash) {
+                            found = s->field_cache[ci].index;
+                            break;
+                        }
+                    }
+                    if (found < 0) {
+                        for (int i = 0; i < s->field_count; i++) {
+                            if (strcmp(s->field_names[i], name->chars) == 0) {
+                                found = i;
+                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
+                                    s->field_cache[s->field_cache_count].hash = name_hash;
+                                    s->field_cache[s->field_cache_count].index = i;
+                                    s->field_cache_count++;
+                                }
+                                break;
+                            }
+                        }
+                    }
+                    if (found >= 0) {
+                        PUSH(s->fields[found]);
+                    } else {
+                        PUSH(val_nil());
+                    }
+                } else if (obj.type == VAL_MODULE) {
+                    Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);
+                    PUSH(func_val ? *func_val : val_nil());
+                } else if (obj.type == VAL_STRING) {
+                    Value *func_val = vm_find_dispatch(vm, "string", name->chars);
+                    PUSH(func_val ? *func_val : val_nil());
+                } else if (obj.type == VAL_ARRAY) {
+                    Value *func_val = vm_find_dispatch(vm, "array", name->chars);
+                    PUSH(func_val ? *func_val : val_nil());
+                } else {
+                    /* A genuinely unsupported type for member access at all
+                     * (e.g. ?. on an int) is still a real bug worth
+                     * surfacing, not a "maybe absent" case -- not silenced. */
                     runtime_error(vm, "Cannot access field on non-struct value");
                     return false;
                 }

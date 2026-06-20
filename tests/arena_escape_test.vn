@@ -15,11 +15,20 @@ fn make_and_store(key) {
 make_and_store("a")
 make_and_store("b")
 
-// Simulate many task recycles happening between the store and the read,
-// the way many HTTP requests would cycle the same pooled Task in production.
+// Force exactly what the scheduler's end-of-pass reap does to a recycled
+// Task: reset the arena offset back to 0 so the NEXT allocation overwrites
+// the same bytes the structs above used to occupy. If escape_promote()
+// failed to copy cache_a/cache_b out of the arena when they were stored
+// into these globals, this is the point where they'd start reading back
+// garbage or another struct's data entirely.
+__test_recycle_arena()
+
 let i = 0
-while (i < 50) {
-    let throwaway = Response { status: 200, body: "throwaway " + i, content_type: "text/plain", _keep_open: false }
+while (i < 200) {
+    // Deliberately the same shape/size as the structs above, and a body
+    // long enough to physically overwrite "cached-a"/"cached-b" if cache_a/
+    // cache_b still pointed into the arena instead of a heap copy.
+    let overwrite = Response { status: 999, body: "OVERWRITTEN-OVERWRITTEN-OVERWRITTEN-" + i, content_type: "junk", _keep_open: false }
     i = i + 1
 }
 

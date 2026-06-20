@@ -656,7 +656,7 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
             if (op == BC_CONSTANT || op == BC_CONSTANT_LONG || op == BC_DEFINE_GLOBAL ||
                 op == BC_GET_GLOBAL || op == BC_SET_GLOBAL || op == BC_JUMP ||
                 op == BC_JUMP_IF_FALSE || op == BC_JUMP_IF_NOT_NIL || op == BC_JUMP_IF_NIL || op == BC_LOOP ||
-                op == BC_MAKE_FUNCTION || op == BC_TRY || op == BC_MEMBER || op == BC_SET_MEMBER) {
+                op == BC_MAKE_FUNCTION || op == BC_TRY || op == BC_MEMBER || op == BC_MEMBER_SAFE || op == BC_SET_MEMBER) {
                 size = 3;
             } else if (op == BC_GET_LOCAL || op == BC_SET_LOCAL || op == BC_CALL ||
                        op == BC_RETURN_N || op == BC_GET_UPVALUE || op == BC_SET_UPVALUE ||
@@ -1054,6 +1054,56 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "                if (func_val) { PUSH(*func_val); } else { runtime_error(vm, \"Module '%%s' has no member '%%s'\", obj.as.module->name, name->chars); }\n");
                     fprintf(out, "            } else {\n");
                     fprintf(out, "                runtime_error(vm, \"Member access on non-object type\");\n");
+                    fprintf(out, "            }\n");
+                    fprintf(out, "        }\n");
+                    offset += 3;
+                    break;
+                }
+                case BC_MEMBER_SAFE: {
+                    /* expr?.member -- mirrors BC_MEMBER above except every
+                     * "not found" case pushes nil instead of calling
+                     * runtime_error(). Must stay in sync with L_BC_MEMBER_SAFE
+                     * in src/vm.c's interpreter -- this is what makes AOT-
+                     * compiled code's ?. behave identically to interpreted. */
+                    uint16_t idx = (fn->code[offset + 1] << 8) | fn->code[offset + 2];
+                    fprintf(out, "        {\n");
+                    fprintf(out, "            ObjString *name = frame->function->constants[%d].as.string;\n", idx);
+                    fprintf(out, "            Value obj = POP();\n");
+                    fprintf(out, "            if (obj.type == VAL_STRUCT) {\n");
+                    fprintf(out, "                ObjStruct *s = obj.as.structure;\n");
+                    fprintf(out, "                int found = -1;\n");
+                    fprintf(out, "                uint32_t name_hash = hash_string(name->chars, name->length);\n");
+                    fprintf(out, "                for (int ci = 0; ci < s->field_cache_count; ci++) {\n");
+                    fprintf(out, "                    if (s->field_cache[ci].hash == name_hash) {\n");
+                    fprintf(out, "                        found = s->field_cache[ci].index;\n");
+                    fprintf(out, "                        break;\n");
+                    fprintf(out, "                    }\n");
+                    fprintf(out, "                }\n");
+                    fprintf(out, "                if (found < 0) {\n");
+                    fprintf(out, "                    for (int i = 0; i < s->field_count; i++) {\n");
+                    fprintf(out, "                        if (strcmp(s->field_names[i], name->chars) == 0) {\n");
+                    fprintf(out, "                            found = i;\n");
+                    fprintf(out, "                            if (s->field_cache_count < STRUCT_CACHE_SIZE) {\n");
+                    fprintf(out, "                                s->field_cache[s->field_cache_count].hash = name_hash;\n");
+                    fprintf(out, "                                s->field_cache[s->field_cache_count].index = i;\n");
+                    fprintf(out, "                                s->field_cache_count++;\n");
+                    fprintf(out, "                            }\n");
+                    fprintf(out, "                            break;\n");
+                    fprintf(out, "                        }\n");
+                    fprintf(out, "                    }\n");
+                    fprintf(out, "                }\n");
+                    fprintf(out, "                if (found >= 0) { PUSH(s->fields[found]); } else { PUSH(val_nil()); }\n");
+                    fprintf(out, "            } else if (obj.type == VAL_MODULE) {\n");
+                    fprintf(out, "                Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);\n");
+                    fprintf(out, "                PUSH(func_val ? *func_val : val_nil());\n");
+                    fprintf(out, "            } else if (obj.type == VAL_STRING) {\n");
+                    fprintf(out, "                Value *func_val = vm_find_dispatch(vm, \"string\", name->chars);\n");
+                    fprintf(out, "                PUSH(func_val ? *func_val : val_nil());\n");
+                    fprintf(out, "            } else if (obj.type == VAL_ARRAY) {\n");
+                    fprintf(out, "                Value *func_val = vm_find_dispatch(vm, \"array\", name->chars);\n");
+                    fprintf(out, "                PUSH(func_val ? *func_val : val_nil());\n");
+                    fprintf(out, "            } else {\n");
+                    fprintf(out, "                runtime_error(vm, \"Cannot access field on non-struct value\");\n");
                     fprintf(out, "            }\n");
                     fprintf(out, "        }\n");
                     offset += 3;

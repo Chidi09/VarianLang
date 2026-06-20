@@ -5,8 +5,11 @@ let app = new_app()
 // 1. Add CORS middleware
 app.add_middleware(cors(["http://localhost:3000"], ["GET", "POST"], ["Content-Type", "X-CSRF-Token"]))
 
+// Rate limit budget is deliberately generous here so the CSRF assertions
+// below (4 requests) aren't confounded by also hitting the rate limit --
+// rate limiting gets its own focused, tight-budget check at the end.
 let global_limiter = RateLimiterActor.spawn()
-global_limiter.init(3, 10000)
+global_limiter.init(10, 10000)
 
 app.add_middleware(|req, next| {
     let client_ip = req.ip
@@ -27,47 +30,96 @@ app.get("/", |req| {
 }, "Root")
 
 app.post("/mutate", |req| {
-    print("handler: entering /mutate")
     return Response { status: 200, body: "Mutated", content_type: "text/plain" }
 }, "Mutate")
 
 // ─── Test CORS ───
 print("--- Testing CORS ---")
-// Test OPTIONS preflight
 let options_req = http.test_request("OPTIONS", "/", "", null)
 let options_resp = app.handle(options_req)
-print("OPTIONS Status: " + options_resp.status)
-print("CORS Allow Origin: " + options_resp.headers.access_control_allow_origin)
+assert_eq(options_resp.status, 204)
+assert_eq(options_resp.headers.access_control_allow_origin, "http://localhost:3000")
+print("CORS preflight: ok")
 
-// Test GET response CORS headers
+// GET response: also picks up a fresh CSRF cookie (csrf() issues one on
+// any safe-method request that doesn't already have one) -- a real client
+// needs this to make any subsequent POST/PUT/DELETE pass CSRF. This also
+// exercises that cors() no longer clobbers a Set-Cookie header an inner
+// middleware (csrf()) already added.
 let get_req = http.test_request("GET", "/", "", null)
 let get_resp = app.handle(get_req)
-print("GET Status: " + get_resp.status)
-print("GET CORS Header: " + get_resp.headers.access_control_allow_origin)
+assert_eq(get_resp.status, 200)
+assert_eq(get_resp.headers.access_control_allow_origin, "http://localhost:3000")
+let set_cookie = get_resp.headers.set_cookie
+print("CORS + CSRF cookie issued (and not clobbered): ok")
 
 // ─── Testing CSRF ───
+// The real attack this protects against: a forged x-csrf-token header
+// with no matching cookie must NEVER be enough to pass.
 print("--- Testing CSRF ---")
-// POST without CSRF token
+
+// POST without any CSRF token at all -> rejected.
 let post_req1 = http.test_request("POST", "/mutate", "", null)
 let post_resp1 = app.handle(post_req1)
-print("POST No Token Status: " + post_resp1.status)
+assert_eq(post_resp1.status, 403)
+print("POST with no token: correctly rejected")
 
-// POST with CSRF token
-print("Creating csrf_headers...")
-let csrf_headers = http.create_struct(["x_csrf_token"], ["my_secret_token"])
-print("Creating post_req2...")
-let post_req2 = http.test_request("POST", "/mutate", "", csrf_headers)
-print("Handling post_req2...")
+// POST with a forged header but no matching cookie -> still rejected.
+let forged_headers = http.create_struct(["x_csrf_token"], ["attacker-guessed-value"])
+let post_req2 = http.test_request("POST", "/mutate", "", forged_headers)
 let post_resp2 = app.handle(post_req2)
-print("POST With Token Status: " + post_resp2.status)
+assert_eq(post_resp2.status, 403)
+print("POST with forged header, no cookie: correctly rejected")
 
-// ─── Testing Rate Limiting ───
+// POST with the actual issued cookie value echoed back in the header ->
+// allowed. set_cookie looks like "csrf_token=<token>; Path=/; SameSite=Lax".
+let first_part = set_cookie.split(";")[0]
+let real_token = first_part.split("=")[1]
+let valid_headers = http.create_struct(
+    ["cookie", "x_csrf_token"],
+    ["csrf_token=" + real_token, real_token]
+)
+let post_req3 = http.test_request("POST", "/mutate", "", valid_headers)
+let post_resp3 = app.handle(post_req3)
+assert_eq(post_resp3.status, 200)
+assert_eq(post_resp3.body, "Mutated")
+print("POST with matching cookie+header: correctly allowed")
+
+// POST with a cookie present but a header that doesn't match it -> rejected.
+let mismatched_headers = http.create_struct(
+    ["cookie", "x_csrf_token"],
+    ["csrf_token=" + real_token, "totally-different-value"]
+)
+let post_req4 = http.test_request("POST", "/mutate", "", mismatched_headers)
+let post_resp4 = app.handle(post_req4)
+assert_eq(post_resp4.status, 403)
+print("POST with mismatched token: correctly rejected")
+
+// ─── Testing Rate Limiting (separate app, tight budget) ───
 print("--- Testing Rate Limiting ---")
-// We have made:
-// 1. GET / (1/3)
-// 2. POST /mutate (no token, blocked by CSRF but consumes rate limit rate) (2/3)
-// 3. POST /mutate (token, allowed, 3/3)
-// Next request should hit 429
-let get_req2 = http.test_request("GET", "/", "", null)
-let get_resp2 = app.handle(get_req2)
-print("GET 4th Request Status: " + get_resp2.status)
+let app2 = new_app()
+app2.get("/", |req| {
+    return Response { status: 200, body: "ok", content_type: "text/plain" }
+}, "r")
+let tight_limiter = RateLimiterActor.spawn()
+tight_limiter.init(3, 10000)
+app2.add_middleware(|req, next| {
+    if !tight_limiter.check_limit(req.ip) {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [429, "Too Many Requests", "text/plain"]
+        )
+    }
+    return next(req)
+})
+let r1 = app2.handle(http.test_request("GET", "/", "", null))
+let r2 = app2.handle(http.test_request("GET", "/", "", null))
+let r3 = app2.handle(http.test_request("GET", "/", "", null))
+let r4 = app2.handle(http.test_request("GET", "/", "", null))
+assert_eq(r1.status, 200)
+assert_eq(r2.status, 200)
+assert_eq(r3.status, 200)
+assert_eq(r4.status, 429)
+print("Rate limit: first 3 allowed, 4th correctly throttled")
+
+print("shield_test passed")
