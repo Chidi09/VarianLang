@@ -144,6 +144,11 @@ static KeywordEntry keywords[] = {
     {"true",   TOKEN_TRUE},
     {"false",  TOKEN_FALSE},
     {"null",   TOKEN_NULL},
+    /* Word-form logical operators -- aliases for && || ! so conditions can
+     * read `a and b`, `x or y`, `not done`. Same tokens, same precedence. */
+    {"and",    TOKEN_AMPERSAND_AMPERSAND},
+    {"or",     TOKEN_PIPE_PIPE},
+    {"not",    TOKEN_BANG},
     {"bool",   TOKEN_TYPE_BOOL},
     {"int",    TOKEN_TYPE_INT},
     {"float",  TOKEN_TYPE_FLOAT},

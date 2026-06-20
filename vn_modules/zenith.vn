@@ -12,7 +12,7 @@
 // - listen() and the middleware "next" chain capture `self`/`app` directly
 //   in real closures (value-copy upvalues) — no shared/global app slot.
 
-struct Response { status: int, body: string, content_type: string, _keep_open: bool }
+struct Response { status: int, body: string, content_type: string, _keep_open: bool, headers }
 struct Route { method: string, path: string, handler, summary: string }
 struct OpenApiInfo { title: string, version: string }
 struct PathGroup { path_key: string, methods: array, ops: array }
@@ -422,6 +422,20 @@ impl ZenithApp {
         self._add_route("DELETE", path, handler, summary)
     }
 
+    fn patch(self, path, handler, summary) {
+        self._add_route("PATCH", path, handler, summary)
+    }
+
+    fn options(self, path, handler, summary) {
+        self._add_route("OPTIONS", path, handler, summary)
+    }
+
+    // HEAD is routed like GET but the response body is dropped by the client;
+    // we register it as its own method so an app can answer HEAD explicitly.
+    fn head(self, path, handler, summary) {
+        self._add_route("HEAD", path, handler, summary)
+    }
+
     fn add_middleware(self, handler) {
         self.middlewares = self.middlewares.push(handler)
     }
@@ -463,10 +477,11 @@ impl ZenithApp {
         let headers = _get_req_field(req, "headers", null)
         let ip = _get_req_field(req, "ip", "127.0.0.1")
         let socket_fd = _get_req_field(req, "socket_fd", -1)
+        let query = _get_req_field(req, "query", "")
 
         let req2 = http.create_struct(
-            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd"],
-            [req.method, req.path, body, json, params, 0, handler, headers, ip, socket_fd]
+            ["method", "path", "query", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd"],
+            [req.method, req.path, query, body, json, params, 0, handler, headers, ip, socket_fd]
         )
         return _run_middleware(self, req2)
     }
@@ -635,4 +650,486 @@ fn _swagger_handler(req) {
     html = html + "</script>"
     html = html + "</body></html>"
     return Response { status: 200, body: html, content_type: "text/html" }
+}
+
+// ============================================================================
+//  Request helpers — query strings, form bodies, cookies
+//
+//  Collections here are plain structs built with http.create_struct(): read a
+//  field with _validate.get_field(s, key) (returns null when absent) and list
+//  keys with _validate.get_keys(s). The query()/form()/cookie() accessors wrap
+//  that so handler code never touches _validate directly.
+// ============================================================================
+
+fn _hex_nibble(c) {
+    if c >= 48 and c <= 57 { return c - 48 }      // '0'..'9'
+    if c >= 97 and c <= 102 { return c - 87 }     // 'a'..'f'
+    if c >= 65 and c <= 70 { return c - 55 }      // 'A'..'F'
+    return -1
+}
+
+// Percent-decode a URL-encoded component ("%20" -> space, "+" -> space).
+// Invalid/short escapes are passed through literally rather than dropped.
+fn url_decode(s) {
+    if s == null { return "" }
+    let out = []
+    let n = s.len()
+    let i = 0
+    while i < n {
+        let c = s.code_at(i)
+        if c == 37 and i + 2 < n {                 // '%'
+            let hi = _hex_nibble(s.code_at(i + 1))
+            let lo = _hex_nibble(s.code_at(i + 2))
+            if hi >= 0 and lo >= 0 {
+                out = out.push(hi * 16 + lo)
+                i = i + 3
+            } else {
+                out = out.push(c)
+                i = i + 1
+            }
+        } else if c == 43 {                        // '+'
+            out = out.push(32)
+            i = i + 1
+        } else {
+            out = out.push(c)
+            i = i + 1
+        }
+    }
+    return "".from_codes(out)
+}
+
+// Parse "a=1&b=two&flag" into a struct {a:"1", b:"two", flag:""}, decoding
+// both keys and values. Empty segments (e.g. trailing "&") are skipped.
+fn parse_pairs(s) {
+    let keys = []
+    let vals = []
+    if s == null or s == "" {
+        return http.create_struct(keys, vals)
+    }
+    let pairs = s.split("&")
+    for i in 0..pairs.len() {
+        let p = pairs[i]
+        if p == "" { continue }
+        let eq = p.index_of("=")
+        if eq < 0 {
+            keys = keys.push(url_decode(p))
+            vals = vals.push("")
+        } else {
+            keys = keys.push(url_decode(p.substring(0, eq)))
+            vals = vals.push(url_decode(p.substring(eq + 1, p.len())))
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+
+// All query-string parameters as a struct.
+fn query_params(req) {
+    return parse_pairs(_get_req_field(req, "query", ""))
+}
+
+// A single query parameter, or `default` when absent.
+fn query(req, key, default) {
+    let v = _validate.get_field(query_params(req), key)
+    if v == null { return default }
+    return v
+}
+
+// All application/x-www-form-urlencoded body fields as a struct.
+fn form_params(req) {
+    return parse_pairs(_get_req_field(req, "body", ""))
+}
+
+// A single form field, or `default` when absent.
+fn form(req, key, default) {
+    let v = _validate.get_field(form_params(req), key)
+    if v == null { return default }
+    return v
+}
+
+// ── Cookies ────────────────────────────────────────────────────────────────
+
+// Parse the inbound Cookie header ("a=1; b=2") into a struct.
+fn cookies(req) {
+    let keys = []
+    let vals = []
+    let headers = _get_req_field(req, "headers", null)
+    let raw = null
+    if headers != null {
+        raw = _validate.get_field(headers, "cookie")
+    }
+    if raw == null or raw == "" {
+        return http.create_struct(keys, vals)
+    }
+    let parts = raw.split(";")
+    for i in 0..parts.len() {
+        let p = _sanitize.trim(parts[i])
+        if p == "" { continue }
+        let eq = p.index_of("=")
+        if eq < 0 { continue }
+        keys = keys.push(p.substring(0, eq))
+        vals = vals.push(url_decode(p.substring(eq + 1, p.len())))
+    }
+    return http.create_struct(keys, vals)
+}
+
+// A single inbound cookie value, or `default` when absent.
+fn cookie(req, name, default) {
+    let v = _validate.get_field(cookies(req), name)
+    if v == null { return default }
+    return v
+}
+
+// ============================================================================
+//  Response helpers — headers, cookies, redirects
+//
+//  A Response carries an optional `headers` struct; the C response writer turns
+//  each field "X_Foo" into the header "X-Foo". Field names are unique, so at
+//  most one value per header name (one Set-Cookie per response).
+// ============================================================================
+
+// Return a copy of `resp` with header `name: value` set. `name` may use either
+// dashes or underscores ("X-Frame-Options" / "X_Frame_Options").
+fn with_header(resp, name, value) {
+    let field = name.replace("-", "_")
+    let keys = [field]
+    let vals = [value]
+    let existing = _get_req_field(resp, "headers", null)
+    if existing != null {
+        let ekeys = _validate.get_keys(existing)
+        let nk = []
+        let nv = []
+        for i in 0..ekeys.len() {
+            if ekeys[i] != field {
+                nk = nk.push(ekeys[i])
+                nv = nv.push(_validate.get_field(existing, ekeys[i]))
+            }
+        }
+        nk = nk.push(field)
+        nv = nv.push(value)
+        keys = nk
+        vals = nv
+    }
+    let hdrs = http.create_struct(keys, vals)
+    return Response {
+        status: _get_req_field(resp, "status", 200),
+        body: _get_req_field(resp, "body", ""),
+        content_type: _get_req_field(resp, "content_type", "text/plain"),
+        _keep_open: false,
+        headers: hdrs
+    }
+}
+
+// Build a "Set-Cookie" header value. `opts` is an optional struct understanding
+// max_age (int seconds), path, domain, http_only (bool), secure (bool) and
+// same_site ("Strict"/"Lax"/"None"). Sensible secure defaults: when no opts are
+// given the cookie is HttpOnly + SameSite=Lax + Path=/.
+fn build_cookie(name, value, opts) {
+    let s = name + "=" + value
+    let path = "/"
+    let http_only = true
+    let secure = false
+    let same_site = "Lax"
+    let max_age = -1
+    let domain = null
+    if opts != null {
+        let p = _validate.get_field(opts, "path")
+        if p != null { path = p }
+        let h = _validate.get_field(opts, "http_only")
+        if h != null { http_only = h }
+        let sc = _validate.get_field(opts, "secure")
+        if sc != null { secure = sc }
+        let ss = _validate.get_field(opts, "same_site")
+        if ss != null { same_site = ss }
+        let ma = _validate.get_field(opts, "max_age")
+        if ma != null { max_age = ma }
+        let dm = _validate.get_field(opts, "domain")
+        if dm != null { domain = dm }
+    }
+    s = s + "; Path=" + path
+    if domain != null { s = s + "; Domain=" + domain }
+    if max_age >= 0 { s = s + "; Max-Age=" + max_age }
+    if same_site != null { s = s + "; SameSite=" + same_site }
+    if http_only { s = s + "; HttpOnly" }
+    if secure { s = s + "; Secure" }
+    return s
+}
+
+// Return a copy of `resp` with a Set-Cookie header for (name, value, opts).
+fn set_cookie(resp, name, value, opts) {
+    return with_header(resp, "Set-Cookie", build_cookie(name, value, opts))
+}
+
+// Expire a cookie immediately on the client.
+fn clear_cookie(resp, name) {
+    return with_header(resp, "Set-Cookie", name + "=; Path=/; Max-Age=0")
+}
+
+// 302 redirect to `url`.
+fn redirect(url) {
+    return redirect_with(url, 302)
+}
+
+// Redirect to `url` with an explicit status (301/302/303/307/308).
+fn redirect_with(url, status) {
+    return Response {
+        status: status,
+        body: "",
+        content_type: "text/html",
+        _keep_open: false,
+        headers: http.create_struct(["Location"], [url])
+    }
+}
+
+// JSON response helper: serialize `value` and set the JSON content type.
+fn json_response(value, status) {
+    return Response {
+        status: status,
+        body: json_encode(value),
+        content_type: "application/json",
+        _keep_open: false
+    }
+}
+
+// ============================================================================
+//  Sessions — stateless, signed with JWT (HMAC-SHA256)
+//
+//  The whole session payload lives in a signed cookie, so there is no
+//  server-side store to keep in sync across cluster workers. Keep payloads
+//  small and never put secrets in them: the value is signed (tamper-proof) but
+//  NOT encrypted, so it is readable by the client. `secret` must be the same
+//  across restarts/workers or existing sessions stop verifying.
+// ============================================================================
+
+// Sign `data` (a struct) into a session token.
+fn session_sign(data, secret) {
+    return auth.sign_jwt(data, secret)
+}
+
+// Read and verify the session from the "session" cookie. Returns the decoded
+// payload struct, or null when missing/invalid/tampered.
+fn session_get(req, secret) {
+    let token = cookie(req, "session", null)
+    if token == null { return null }
+    return auth.verify_jwt(token, secret)
+}
+
+// Return a copy of `resp` that sets a signed session cookie carrying `data`.
+fn session_set(resp, data, secret, opts) {
+    let token = session_sign(data, secret)
+    return set_cookie(resp, "session", token, opts)
+}
+
+// Log out: clear the session cookie.
+fn session_clear(resp) {
+    return clear_cookie(resp, "session")
+}
+
+// ============================================================================
+//  Templating — render(template, ctx)
+//
+//  Supports, with arbitrary nesting:
+//    <%= expr %>   interpolate, HTML-escaped (safe default)
+//    <%- expr %>   interpolate, raw (no escaping)
+//    <% if expr %> ... <% else %> ... <% endif %>
+//    <% for x in items %> ... <% endfor %>
+//  `expr` is a dotted path resolved against the context ("user.name"); inside a
+//  for-loop the loop variable shadows the outer context. `ctx` is a struct
+//  (use http.create_struct). Escaping-by-default makes the common case safe.
+//
+//  Delimiters are brace-free on purpose: Varian string literals already do
+//  {expr} interpolation, so "<% %>" is what survives intact in an inline
+//  template literal as well as one read from a file.
+// ============================================================================
+
+// Resolve a dotted path like "user.name" against a context struct.
+fn _tpl_lookup(ctx, path) {
+    if ctx == null { return null }
+    let segs = path.split(".")
+    let cur = ctx
+    for i in 0..segs.len() {
+        if cur == null { return null }
+        cur = _validate.get_field(cur, segs[i])
+    }
+    return cur
+}
+
+fn _tpl_truthy(v) {
+    if v == null { return false }
+    if v == false { return false }
+    if v == "" { return false }
+    if v == 0 { return false }
+    return true
+}
+
+// Shallow-copy `ctx` and override/add a single key — used to bind loop vars.
+fn _tpl_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+
+// index_of starting at `from` (the builtin index_of always searches from 0).
+fn _substr_index(s, needle, from) {
+    if from >= s.len() { return -1 }
+    let sub = s.substring(from, s.len())
+    let idx = sub.index_of(needle)
+    if idx < 0 { return -1 }
+    return from + idx
+}
+
+// Find the next "<%" tag opener at or after `from`; returns its index or -1.
+// (Brace-free delimiters are deliberate: Varian string literals use {expr}
+//  interpolation, so any "{" inside an inline template literal would be eaten
+//  by the lexer before render() ever ran. "<%" survives in both inline string
+//  literals and templates loaded from files.)
+fn _tpl_next_tag(tpl, from) {
+    let i = from
+    let n = tpl.len()
+    while i < n - 1 {
+        if tpl.code_at(i) == 60 and tpl.code_at(i + 1) == 37 {  // '<' '%'
+            return i
+        }
+        i = i + 1
+    }
+    return -1
+}
+
+// Render the template region tpl[pos..stop) against ctx, returning a struct
+// {out, pos, tag}. Recurses for nested if/for blocks. When `stop_tags` is
+// non-null, rendering halts at the first "<% <kw> %>" whose keyword is in the
+// list and reports that keyword back via "tag" so the caller (if/for) knows
+// whether it hit else/endif/endfor.
+//   <%= expr %>   interpolate, HTML-escaped
+//   <%- expr %>   interpolate, raw
+//   <% if/for/else/endif/endfor %>   control flow
+fn _tpl_render_region(tpl, pos, stop, ctx, stop_tags) {
+    let out = ""
+    let i = pos
+    while i < stop {
+        let tag = _tpl_next_tag(tpl, i)
+        if tag < 0 or tag >= stop {
+            out = out + tpl.substring(i, stop)
+            i = stop
+        } else {
+            out = out + tpl.substring(i, tag)
+            let close = _substr_index(tpl, "%>", tag + 2)
+            let marker = tpl.code_at(tag + 2)
+            if marker == 61 or marker == 45 {       // '=' escaped, '-' raw
+                let expr = _sanitize.trim(tpl.substring(tag + 3, close))
+                let looked = _tpl_lookup(ctx, expr)
+                let val = ""
+                if looked != null { val = "" + looked }
+                if marker == 45 {
+                    out = out + val
+                } else {
+                    out = out + _sanitize.escape_html(val)
+                }
+                i = close + 2
+            } else {                                // control-flow statement
+                let directive = _sanitize.trim(tpl.substring(tag + 2, close))
+                let after = close + 2
+                if _tpl_is_stop(directive, stop_tags) {
+                    return http.create_struct(["out", "pos", "tag"], [out, after, _tpl_keyword(directive)])
+                }
+                if directive.starts_with("if ") {
+                    let res = _tpl_do_if(tpl, after, stop, ctx, _sanitize.trim(directive.substring(3, directive.len())))
+                    out = out + _validate.get_field(res, "out")
+                    i = _validate.get_field(res, "pos")
+                } else if directive.starts_with("for ") {
+                    let res = _tpl_do_for(tpl, after, stop, ctx, _sanitize.trim(directive.substring(4, directive.len())))
+                    out = out + _validate.get_field(res, "out")
+                    i = _validate.get_field(res, "pos")
+                } else {
+                    // Unknown directive: emit nothing, skip it.
+                    i = after
+                }
+            }
+        }
+    }
+    return http.create_struct(["out", "pos", "tag"], [out, i, ""])
+}
+
+fn _tpl_keyword(directive) {
+    let sp = directive.index_of(" ")
+    if sp < 0 { return directive }
+    return directive.substring(0, sp)
+}
+
+fn _tpl_is_stop(directive, stop_tags) {
+    if stop_tags == null { return false }
+    let kw = _tpl_keyword(directive)
+    for i in 0..stop_tags.len() {
+        if stop_tags[i] == kw { return true }
+    }
+    return false
+}
+
+// Handle {% if expr %} body [{% else %} body] {% endif %}
+fn _tpl_do_if(tpl, pos, stop, ctx, expr) {
+    let truthy = _tpl_truthy(_tpl_lookup(ctx, expr))
+    let first = _tpl_render_region(tpl, pos, stop, ctx, ["else", "endif"])
+    let stopped = _validate.get_field(first, "tag")
+    let out = ""
+    if truthy {
+        out = _validate.get_field(first, "out")
+    }
+    let cur = _validate.get_field(first, "pos")
+    if stopped == "else" {
+        let second = _tpl_render_region(tpl, cur, stop, ctx, ["endif"])
+        if truthy == false {
+            out = _validate.get_field(second, "out")
+        }
+        cur = _validate.get_field(second, "pos")
+    }
+    return http.create_struct(["out", "pos"], [out, cur])
+}
+
+// Handle {% for x in items %} body {% endfor %}
+fn _tpl_do_for(tpl, pos, stop, ctx, header) {
+    // header is "x in items"
+    let inpos = header.index_of(" in ")
+    let var_name = _sanitize.trim(header.substring(0, inpos))
+    let list_expr = _sanitize.trim(header.substring(inpos + 4, header.len()))
+    let items = _tpl_lookup(ctx, list_expr)
+    let out = ""
+    let body_end = pos
+    if items != null {
+        for j in 0..items.len() {
+            let child = _tpl_bind(ctx, var_name, items[j])
+            let res = _tpl_render_region(tpl, pos, stop, child, ["endfor"])
+            out = out + _validate.get_field(res, "out")
+            body_end = _validate.get_field(res, "pos")
+        }
+    }
+    if body_end == pos {
+        // Empty list: still consume the body up to {% endfor %} once.
+        let res = _tpl_render_region(tpl, pos, stop, ctx, ["endfor"])
+        body_end = _validate.get_field(res, "pos")
+    }
+    return http.create_struct(["out", "pos"], [out, body_end])
+}
+
+// Render a template string against a context struct.
+fn render(template, ctx) {
+    let res = _tpl_render_region(template, 0, template.len(), ctx, null)
+    return _validate.get_field(res, "out")
+}
+
+// Convenience: a 200 text/html response from a rendered template.
+fn render_response(template, ctx) {
+    return Response {
+        status: 200,
+        body: render(template, ctx),
+        content_type: "text/html",
+        _keep_open: false
+    }
 }

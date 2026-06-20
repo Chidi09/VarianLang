@@ -330,9 +330,10 @@ static ReqFrameStatus try_frame_request(ConnBuffer *cb, int *out_total_len) {
  * ═══════════════════════════════════════════ */
 
 static Value make_request(VM *vm, const char *method, const char *path,
-                           Value body_val, Value json_val, Value params_val,
-                           Value headers_val, const char *ip_str, int client_fd) {
-    int total = 8;
+                           const char *query, Value body_val, Value json_val,
+                           Value params_val, Value headers_val,
+                           const char *ip_str, int client_fd) {
+    int total = 9;
     ObjStruct *req = new_struct(vm, total, false);
 
     req->field_names[0] = strdup("method");
@@ -358,6 +359,9 @@ static Value make_request(VM *vm, const char *method, const char *path,
 
     req->field_names[7] = strdup("socket_fd");
     req->fields[7] = val_int(client_fd);
+
+    req->field_names[8] = strdup("query");
+    req->fields[8] = val_string(allocate_string(vm, query ? query : "", query ? (int)strlen(query) : 0));
 
     return val_struct(req);
 }
@@ -899,6 +903,20 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
     if (path_len >= sizeof(path)) path_len = sizeof(path) - 1;
     memcpy(path, path_ptr, path_len); path[path_len] = '\0';
 
+    /* Split the query string off the request target so routing matches on
+     * the path alone (otherwise "/search?q=x" never matches route "/search").
+     * The raw query string is exposed to handlers as req.query. */
+    char query[2048];
+    query[0] = '\0';
+    char *qmark = strchr(path, '?');
+    if (qmark) {
+        size_t qlen = strlen(qmark + 1);
+        if (qlen >= sizeof(query)) qlen = sizeof(query) - 1;
+        memcpy(query, qmark + 1, qlen);
+        query[qlen] = '\0';
+        *qmark = '\0';  /* terminate path at '?' */
+    }
+
     bool keep_alive = determine_keep_alive_phr(request_count, minor_version, phr_headers, num_phr_headers);
     Value headers_val = parse_all_headers_phr(vm, phr_headers, num_phr_headers);
 
@@ -993,7 +1011,7 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
                 }
                 params_val = val_struct(ps);
             }
-            Value req_val = make_request(vm, method, path, body_val, json_val, params_val, headers_val, ip_str, client_fd);
+            Value req_val = make_request(vm, method, path, query, body_val, json_val, params_val, headers_val, ip_str, client_fd);
             result = call_handler(vm, route_handler, req_val, client_fd, ssl, &deferred);
             free_request(vm, req_val);
         } else {
@@ -1009,7 +1027,7 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
             return keep_alive;
         }
     } else {
-        Value req_val = make_request(vm, method, path, body_val, json_val, val_nil(), headers_val, ip_str, client_fd);
+        Value req_val = make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, ip_str, client_fd);
         result = call_handler(vm, handler_or_routes_val, req_val, client_fd, ssl, &deferred);
         free_request(vm, req_val);
     }
@@ -1885,14 +1903,25 @@ static Value lib_http_test_request(VM *vm, int arg_count, Value *args) {
         return val_nil();
     }
     const char *method = args[base].as.string->chars;
-    const char *path = args[base + 1].as.string->chars;
+    const char *raw_path = args[base + 1].as.string->chars;
     Value body_val = (arg_count > base + 2) ? args[base + 2] : val_nil();
     Value headers_val = (arg_count > base + 3) ? args[base + 3] : val_nil();
     Value json_val = val_nil();
     if (body_val.type == VAL_STRING) {
         json_val = json_decode(vm, body_val.as.string->chars);
     }
-    return make_request(vm, method, path, body_val, json_val, val_nil(), headers_val, "127.0.0.1", -1);
+    /* Mirror handle_connection(): split the query string off the path so
+     * test requests route exactly like live ones and expose req.query. */
+    char path[2048];
+    char query[2048];
+    query[0] = '\0';
+    snprintf(path, sizeof(path), "%s", raw_path);
+    char *qmark = strchr(path, '?');
+    if (qmark) {
+        snprintf(query, sizeof(query), "%s", qmark + 1);
+        *qmark = '\0';
+    }
+    return make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, "127.0.0.1", -1);
 }
 
 /* ─── http.write_socket(fd, data) ─── */
