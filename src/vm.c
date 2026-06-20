@@ -2148,10 +2148,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             int catch_pos = compiler->chunk->count;
             emit_byte(compiler, 0xFF);
             emit_byte(compiler, 0xFF);
+            emit_byte(compiler, (uint8_t)compiler->local_count);
             compile_node(compiler, node->try_stmt.try_body);
             emit_byte(compiler, BC_POP_TRY);
             int end_jump = emit_jump(compiler, BC_JUMP);
-            int offset = compiler->chunk->count - catch_pos - 2;
+            int offset = compiler->chunk->count - catch_pos - 3;
             compiler->chunk->code[catch_pos] = (offset >> 8) & 0xFF;
             compiler->chunk->code[catch_pos + 1] = offset & 0xFF;
             if (node->try_stmt.catch_body) {
@@ -2266,6 +2267,8 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->main_fn = NULL;
     vm->io_activity_this_tick = false;
     vm->free_tasks = NULL;
+    vm->source = NULL;
+    vm->source_name = NULL;
     memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
     vm->gray_stack = NULL;
     vm->gray_capacity = 0;
@@ -2358,6 +2361,17 @@ void runtime_error(VM *vm, const char *format, ...) {
             }
             if (!vm->suppress_error_print) {
                 fprintf(stderr, "[line %d] in script\n", line);
+                if (vm->source && line >= 1) {
+                    const char *p = vm->source;
+                    int cur = 1;
+                    while (cur < line && *p) {
+                        if (*p == '\n') cur++;
+                        p++;
+                    }
+                    const char *end = p;
+                    while (*end && *end != '\n') end++;
+                    fprintf(stderr, "    %.*s\n", (int)(end - p), p);
+                }
             }
         }
     }
@@ -3093,6 +3107,22 @@ static uint64_t cache_key_hash(ObjFunction *fn, int arg_count, Value *args) {
     return h;
 }
 
+static bool handle_vm_exception(VM *vm, const char *msg) {
+    Task *t = vm->current_task;
+    if (t && t->try_count > 0) {
+        t->try_count--;
+        int target_frame = t->try_stack[t->try_count].frame_index;
+        t->frame_count = target_frame + 1;
+        t->stack_top = t->try_stack[t->try_count].stack_depth;
+        t->stack[t->stack_top++] = val_string(copy_string(msg, (int)strlen(msg)));
+        t->frames[target_frame].ip =
+            t->frames[target_frame].function->code +
+            t->try_stack[t->try_count].catch_offset;
+        return true;
+    }
+    return false;
+}
+
 bool task_run(VM *vm, Task *task) {
     Task * const t = task;
     (void)vm;
@@ -3435,12 +3465,24 @@ L_BC_LOOP_TOP:
                 Value b = POP();
                 Value a = POP();
                 if (a.type == VAL_INT && b.type == VAL_INT) {
-                    if (b.as.integer == 0) { runtime_error(vm, "Division by zero"); return false; }
+                    if (b.as.integer == 0) {
+                        if (handle_vm_exception(vm, "Division by zero")) {
+                            DISPATCH();
+                        }
+                        runtime_error(vm, "Division by zero");
+                        return false;
+                    }
                     PUSH(val_int(a.as.integer / b.as.integer));
                 } else {
                     double bv = (b.type == VAL_FLOAT) ? b.as.floating : (double)b.as.integer;
                     double av = (a.type == VAL_FLOAT) ? a.as.floating : (double)a.as.integer;
-                    if (bv == 0.0) { runtime_error(vm, "Division by zero"); return false; }
+                    if (bv == 0.0) {
+                        if (handle_vm_exception(vm, "Division by zero")) {
+                            DISPATCH();
+                        }
+                        runtime_error(vm, "Division by zero");
+                        return false;
+                    }
                     PUSH(val_float(av / bv));
                 }
                 DISPATCH();
@@ -3449,7 +3491,13 @@ L_BC_LOOP_TOP:
             {
                 int64_t b = POP().as.integer;
                 int64_t a = POP().as.integer;
-                if (b == 0) { runtime_error(vm, "Division by zero"); return false; }
+                if (b == 0) {
+                    if (handle_vm_exception(vm, "Division by zero")) {
+                        DISPATCH();
+                    }
+                    runtime_error(vm, "Division by zero");
+                    return false;
+                }
                 PUSH(val_int(a % b));
                 DISPATCH();
             }
@@ -4389,6 +4437,7 @@ L_BC_LOOP_TOP:
             L_BC_TRY:
             {
                 uint16_t offset = READ_SHORT();
+                uint8_t local_count = READ_BYTE();
                 if (t->try_count >= TASK_TRY_MAX) {
                     runtime_error(vm, "Too many nested try blocks");
                     return false;
@@ -4396,7 +4445,8 @@ L_BC_LOOP_TOP:
                 CallFrame *active = &t->frames[t->frame_count - 1];
                 t->try_stack[t->try_count].catch_offset =
                     (int)(active->ip - active->function->code) + offset;
-                t->try_stack[t->try_count].stack_depth = t->stack_top;
+                t->try_stack[t->try_count].stack_depth =
+                    (int)(active->slots - t->stack) + local_count;
                 t->try_stack[t->try_count].frame_index = t->frame_count - 1;
                 t->try_count++;
                 DISPATCH();

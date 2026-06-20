@@ -592,6 +592,8 @@ typedef struct VM {
      * Linked list of dead Task structs ready for reuse, avoiding calloc/free
      * churn on every request handler invocation. */
     Task *free_tasks;
+    const char *source;
+    const char *source_name;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);

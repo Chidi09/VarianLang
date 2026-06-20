@@ -2253,6 +2253,60 @@ static AstNode *parse_primary(Parser *parser) {
         return arr;
     }
 
+    /* Object literal:  { name: "Ada", "age": 30, active: true }
+     *
+     * A brace in *expression* position (after `=`, `return`, a call argument,
+     * etc.) builds an anonymous object. Statement-position braces are already
+     * taken as blocks by parse_statement before we ever get here, so there is
+     * no ambiguity. Keys may be written as a bare identifier (name) or as a
+     * string literal ("age") -- the string form is what lets keys contain
+     * characters an identifier can't. Each value is any expression.
+     *
+     * It desugars to the same anonymous struct the rest of the language already
+     * uses: type name "Object", these field names, these values. That means an
+     * object literal is a normal value everywhere -- json_encode() serializes
+     * it, `obj.name` reads a field, you can return it, nest it, pass it around --
+     * with no separate "map" type or special rules to learn. */
+    if (match(parser, TOKEN_LBRACE)) {
+        char *field_names[64];
+        AstNode *field_values[64];
+        int field_count = 0;
+
+        while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+            if (field_count >= 64) {
+                parser_error(parser, "Object literal has too many fields (max 64)");
+                break;
+            }
+
+            char *key;
+            if (parser->current.type == TOKEN_STRING) {
+                advance(parser);
+                key = strdup(parser->previous.value); /* "age" -> age */
+            } else if (parser->current.type == TOKEN_IDENTIFIER) {
+                advance(parser);
+                key = token_strdup(&parser->previous); /* name -> name */
+            } else {
+                parser_error(parser, "Expected a field name (identifier or \"string\") in object literal");
+                break;
+            }
+
+            consume(parser, TOKEN_COLON, "Expected ':' after object field name");
+            field_names[field_count] = key;
+            field_values[field_count] = parse_expr(parser);
+            field_count++;
+
+            if (!match(parser, TOKEN_COMMA))
+                break;
+        }
+        consume(parser, TOKEN_RBRACE, "Expected '}' to close object literal");
+
+        AstNode *obj = ast_struct_literal(parser->arena, loc, "Object",
+                                          field_names, field_values, field_count);
+        for (int i = 0; i < field_count; i++)
+            free(field_names[i]);
+        return obj;
+    }
+
     /* Lambda expression */
     if (match(parser, TOKEN_PIPE)) {
         /* |params| expr - closure */

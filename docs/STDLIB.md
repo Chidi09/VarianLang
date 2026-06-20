@@ -191,3 +191,32 @@ let managed = ffi_to_string(raw)  // convert a returned char* into a managed Var
 shared library symbol via `libffi`. Supported FFI parameter/return types: `c_int`,
 `c_double`, `c_float`, `c_char`, `ptr`. Use the global `ffi_to_string(ptr)` to convert a
 returned `char*` into a real Varian string when a C function hands back text.
+
+## `errors` — error diagnostics and hints
+
+The `errors` module is a native module that helps turn any raw error string or error struct into developer-friendly diagnostic category and actionable hints.
+
+```varian
+// Match standard runtime error messages:
+let err = "Undefined variable 'foo'"
+print(errors.explain(err))
+// Prints:
+// x UndefinedName
+//   what: Undefined variable 'foo'
+//   fix:  Declare it first with `let name = ...`, or check the spelling/scope.
+
+print(errors.kind(err))                 // "UndefinedName"
+print(errors.is(err, "UndefinedName"))  // true
+
+// Make your own custom error structure:
+let my_err = errors.make("PaymentFailed", "card declined", "ask the user to try another card")
+print(my_err.kind)     // "PaymentFailed"
+print(my_err.message)  // "card declined"
+print(my_err.hint)     // "ask the user to try another card"
+```
+
+- `errors.explain(err)`: returns a multi-line friendly summary of the error.
+- `errors.kind(err)`: returns a short category name (e.g. `UndefinedName`, `NoSuchField`, `DivByZero`, `IndexOutOfBounds`, `TypeMismatch`, `WrongArgCount`, etc.).
+- `errors.is(err, kind_string)`: returns `true` if `err`'s kind matches `kind_string`.
+- `errors.make(kind, message, hint)`: returns a structured Error struct containing `kind`, `message`, and `hint`.
+

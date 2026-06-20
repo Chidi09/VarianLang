@@ -1,0 +1,13 @@
+test "zenith global error handler" {
+    let app = new_app()
+    app.get("/boom", |req| {
+        let x = 1 / 0
+        return Response { status: 200, body: "x", content_type: "text/plain" }
+    }, "boom", null)
+    app.on_error(|err, req| {
+        return Response { status: 500, body: "handled: " + err.kind, content_type: "text/plain" }
+    })
+    let resp = app.handle(http.create_struct(["method", "path"], ["GET", "/boom"]))
+    assert_eq(resp.status, 500)
+    assert_eq(resp.body, "handled: DivByZero")
+}

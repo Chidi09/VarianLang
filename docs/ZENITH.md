@@ -134,6 +134,27 @@ instances don't interfere with each other.
 headers)`, `csrf()`, and `rate_limit(max_reqs, window_ms)` /
 `rate_limit_redis(conn, max_reqs, window_seconds)`. Add them with `app.add_middleware(...)`.
 
+## Global Error Handler
+
+You can define a global error handler callback on the application using `app.on_error(|err, req| { ... })`. Any uncaught error during middleware execution or inside route handlers will be caught and passed to the callback. This lets you construct custom error pages, format JSON API error responses, and log exceptions systematically.
+
+```varian
+app.on_error(|err, req| {
+    // err is a structured error containing kind, message, and hint.
+    return Response {
+        status: 500,
+        body: json_encode({
+            error: "An unexpected error occurred",
+            kind: err.kind,
+            message: err.message
+        }),
+        content_type: "application/json"
+    }
+})
+```
+
+If no custom error handler is registered, Zenith falls back to a default clean JSON 500 response (`{"error": "Internal Server Error", "kind": "..."}`) to prevent leaking framework/VM internals.
+
 ## Request & response helpers
 
 Reading from the request (all take sensible defaults and URL-decode for you):

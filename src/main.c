@@ -255,6 +255,8 @@ static int run_source(const char *source, const char *filename) {
 
     VM vm;
     vm_init(&vm, &compiler);
+    vm.source = source;
+    vm.source_name = filename;
 
     if (!vm_run(&vm, false)) {
         fprintf(stderr, "Runtime error.\n");

@@ -193,6 +193,42 @@ print(u.display_name())
 Struct fields can be declared without a type at all (`handler,` with no `: Type`) —
 useful for fields meant to hold functions/closures or genuinely dynamic values.
 
+### Object literals (anonymous structs)
+
+When you just need an ad-hoc bag of fields — a JSON response, a config blob, a row of
+data — you don't have to declare a `struct` first. Write the fields directly inside
+braces:
+
+```varian
+let user = { name: "Ada", age: 30, active: true }
+
+print(user.name)            // Ada      — read fields with dot access
+print(json_encode(user))    // {"name":"Ada","age":30,"active":true}
+```
+
+Keys are normally bare identifiers (`name:`). Quote a key when it isn't a valid
+identifier — for example when it contains a space or a dash:
+
+```varian
+let row = { "first name": "Ada", "is-admin": false }
+```
+
+A value can be any expression, so objects nest and combine with arrays freely, and an
+object is a normal value everywhere — return it, pass it to a function, store it:
+
+```varian
+fn ok(data) {
+    return { status: "ok", count: data.len(), items: data }
+}
+print(json_encode(ok([1, 2, 3])))   // {"status":"ok","count":3,"items":[1,2,3]}
+```
+
+An object literal is exactly a struct with no declared name (its type is reported as
+`Object`), so everything that works on structs — dot access, `json_encode`, being passed
+around — works on it identically. The only thing you give up versus a named `struct` is
+the declaration: there's no fixed field list and no `@`-validation. Reach for a named
+`struct` when you want those guarantees; reach for `{ ... }` when you just want the data.
+
 ### Field validation decorators
 
 ```varian
