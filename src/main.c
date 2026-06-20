@@ -19,6 +19,7 @@
 /* Set before vm_run() for "vn <file>"/"vn run <file>" so lib_http.c's
  * cluster worker threads can independently re-load the same script. */
 const char *g_varian_script_path = NULL;
+static int g_prelude_line_count = 0;
 
 #ifndef VARIAN_VERSION
 #define VARIAN_VERSION "0.1.0"
@@ -129,9 +130,17 @@ char *read_file_with_modules(const char *path) {
     if (!main_source) return NULL;
 
     char *prelude = read_directory_sources("vn_modules");
-    if (!prelude) return main_source;
+    if (!prelude) {
+        g_prelude_line_count = 0;
+        return main_source;
+    }
 
     size_t prelude_len = strlen(prelude);
+    g_prelude_line_count = 1; // Since we append a newline below
+    for (size_t i = 0; i < prelude_len; i++) {
+        if (prelude[i] == '\n') g_prelude_line_count++;
+    }
+
     size_t main_len = strlen(main_source);
     char *combined = (char *)malloc(prelude_len + 1 + main_len + 1);
     if (!combined) { free(prelude); return main_source; }
@@ -142,6 +151,19 @@ char *read_file_with_modules(const char *path) {
     free(prelude);
     free(main_source);
     return combined;
+}
+
+/* Print "  <line text>\n     ^\n" for a 1-based (line, col) into stderr. */
+static void print_source_caret(const char *source, int line, int col) {
+    if (line < 1 || !source) return;
+    const char *p = source;
+    int cur = 1;
+    while (cur < line && *p) { if (*p == '\n') cur++; p++; }
+    const char *end = p;
+    while (*end && *end != '\n') end++;
+    fprintf(stderr, "  %.*s\n  ", (int)(end - p), p);
+    for (int i = 1; i < col && i < 200; i++) fputc(' ', stderr);
+    fprintf(stderr, "^\n");
 }
 
 /* ─── Run source string ─── */
@@ -155,7 +177,28 @@ static int run_source(const char *source, const char *filename) {
 
     AstNode *program = parser_parse(&parser);
     if (parser.had_error) {
-        fprintf(stderr, "Parse error: %s\n", parser_get_error(&parser));
+        const char *msg = parser_get_error(&parser);
+        int line = 0, col = 0;
+        int adjusted_line = 0;
+        if (sscanf(msg, "[%d:%d]", &line, &col) == 2) {
+            adjusted_line = line - g_prelude_line_count;
+            if (adjusted_line <= 0) adjusted_line = line; // fallback
+            fprintf(stderr, "Parse error in %s:%d:%d\n", filename ? filename : "<script>", adjusted_line, col);
+        } else {
+            fprintf(stderr, "Parse error: %s\n", msg);
+        }
+        if (line > 0) print_source_caret(source, line, col);
+        
+        if (adjusted_line > 0 && adjusted_line != line) {
+            const char *p = strchr(msg, ']');
+            if (p) {
+                fprintf(stderr, "  [%d:%d]%s\n", adjusted_line, col, p + 1);
+            } else {
+                fprintf(stderr, "  %s\n", msg);
+            }
+        } else {
+            fprintf(stderr, "  %s\n", msg);
+        }
         arena_destroy(arena);
         return 1;
     }
