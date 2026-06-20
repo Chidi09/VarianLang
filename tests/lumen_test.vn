@@ -1,0 +1,37 @@
+// Lumen Milestone 1 — server-side renderer. Templates are defined at top level
+// using brace escapes (\{ \}), which the lexer now supports; in real apps they
+// live in .lumen files read from disk. They are kept out of the test bodies so
+// the brace characters don't interfere with test-block parsing.
+
+let T_ESC = "<p>\{\{ name \}\}</p>"
+let T_RAW = "<p>\{\{! body \}\}</p>"
+let T_IF = "\{\{#if admin\}\}A\{\{else\}\}B\{\{/if\}\}"
+let T_EACH = "\{\{#each xs as x\}\}[\{\{ x \}\}]\{\{/each\}\}"
+let T_CLICK = "<button @click=\"go\">x</button>"
+
+test "escapes interpolation by default (XSS-safe)" {
+    assert_eq(lumen_render(T_ESC, { name: "<b>x</b>" }), "<p>&lt;b&gt;x&lt;/b&gt;</p>")
+}
+
+test "raw interpolation is unescaped" {
+    assert_eq(lumen_render(T_RAW, { body: "<i>ok</i>" }), "<p><i>ok</i></p>")
+}
+
+test "if / else branches" {
+    assert_eq(lumen_render(T_IF, { admin: true }), "A")
+    assert_eq(lumen_render(T_IF, { admin: false }), "B")
+}
+
+test "each loop binds the item" {
+    assert_eq(lumen_render(T_EACH, { xs: ["a", "b", "c"] }), "[a][b][c]")
+}
+
+test "event bindings become data-lumen-* hooks" {
+    assert_eq(lumen_render(T_CLICK, { name: "" }), "<button data-lumen-click=\"go\">x</button>")
+}
+
+test "render_response yields a 200 text/html response" {
+    let resp = lumen_render_response(T_ESC, { name: "ok" })
+    assert_eq(resp.status, 200)
+    assert_eq(resp.content_type, "text/html")
+}

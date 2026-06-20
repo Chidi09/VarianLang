@@ -2383,6 +2383,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
             "write_socket", "close_socket", "read_socket", "code_at", "from_codes",
             "sha1_base64", "hash_password", "verify_password",
             "bit_and", "bit_or", "bit_xor", "index_of", "contains",
+            "read", "write", "close"
         };
         int n = sizeof(builtin_methods) / sizeof(builtin_methods[0]);
         for (int i = 0; i < n && i < 256; i++) {

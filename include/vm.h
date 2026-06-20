@@ -594,6 +594,8 @@ typedef struct VM {
     Task *free_tasks;
     const char *source;
     const char *source_name;
+    int prelude_line_count; /* vn_modules prelude lines prepended before user code;
+                             * subtracted from runtime-error line numbers. */
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);

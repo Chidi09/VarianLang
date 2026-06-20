@@ -275,6 +275,25 @@ ordinary runtime call if the shape genuinely depends on a runtime value (e.g. an
 admin-configurable field list). `comptime` is purely an optimization for the common case
 where it doesn't.
 
+## Lumen — server-driven live components
+
+[Lumen](planning/LUMEN_PLAN.md) is the frontend framework built on top of Zenith. A Lumen
+component renders HTML on the **server** (via Zenith routes), and a tiny embedded JS
+runtime forwards browser events over a **WebSocket** so the server re-renders and morphs
+the DOM — no page reload, no client-side state, no Varian in the browser.
+
+```
+lumen_component(state_fn, render_fn, handler_names, handler_fns)
+lumen_mount(app, path, component)
+```
+
+- `GET <path>` serves the initial HTML (rendered + shell with client script).
+- `GET <path>/live` upgrades to a WebSocket.
+- Events flow as JSON: `{"t":"event","h":"<handler>","v":"<value>"}` up,
+  `{"t":"html","html":"<HTML>"}` down.
+
+See `examples/lumen_counter.vn` and `tests/lumen_live_test.vn`.
+
 ## Things intentionally *not* built as native C modules ("Untouchables")
 
 Cloud SDKs (S3/R2/GCS, etc.) are not getting dedicated native modules — the existing

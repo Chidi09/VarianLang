@@ -1,0 +1,17 @@
+// examples/lumen_counter.vn — Lumen M2 interactive counter
+// Run:   ./vn run examples/lumen_counter.vn
+// Open:  http://localhost:8090
+
+let counter = lumen_component(
+    | | { return { count: 0 } },
+    |s| { return lumen_render("<div><p>Count: \{\{ count \}\}</p>" +
+                              "<button @click=\"inc\">+</button>" +
+                              "<button @click=\"dec\">-</button></div>", s) },
+    ["inc", "dec"],
+    [ |s, v| { s.count = s.count + 1; return s },
+      |s, v| { s.count = s.count - 1; return s } ]
+)
+
+let app = new_app()
+lumen_mount(app, "/", counter)
+app.listen(8090)

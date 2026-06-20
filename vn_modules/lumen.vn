@@ -1,0 +1,286 @@
+// lumen.vn — Lumen, the Varian frontend framework (server-driven live).
+//
+// A Lumen component renders to HTML on the SERVER (on top of Zenith). Event
+// bindings like @click are compiled to `data-lumen-*` hook attributes; a tiny
+// client runtime forwards those events over a WebSocket, the server re-renders
+// the component and patches the DOM. Logic is written in Varian — Lumen is to
+// Varian what JSX is to TypeScript.
+//
+// This file is MILESTONE 1: the server-side renderer for Lumen's `{{ }}` markup
+// syntax, plus the @event -> data-lumen-* rewrite that the (future) live client
+// will hook into. The live WebSocket/DOM-diff layer and `.lumen` single-file
+// component compilation are later milestones.
+//
+// Markup:
+//   {{ expr }}                     interpolate, HTML-escaped (safe by default)
+//   {{! expr }}                    interpolate, raw / unescaped (trusted only)
+//   {{#if expr}} .. {{else}} .. {{/if}}
+//   {{#each items as item}} .. {{/each}}
+//   @click="handler"               -> data-lumen-click="handler"  (live hook)
+//
+// `expr` is resolved against the context struct (dotted paths supported), using
+// the same lookup/truthy/bind helpers Zenith's template engine already uses.
+
+// ─── small string helper: replace every `find` with `repl` ───
+fn _lumen_replace(s, find, repl) {
+    let out = ""
+    let i = 0
+    let n = s.len()
+    let flen = find.len()
+    while i < n {
+        let hit = _substr_index(s, find, i)
+        if hit < 0 {
+            out = out + s.substring(i, n)
+            i = n
+        } else {
+            out = out + s.substring(i, hit) + repl
+            i = hit + flen
+        }
+    }
+    return out
+}
+
+// Rewrite @event="..." attribute bindings into data-lumen-event="..." hooks.
+// The live client runtime listens for these and forwards the event server-side.
+fn _lumen_bind_events(html) {
+    let events = ["click", "input", "change", "submit", "keydown", "keyup", "blur", "focus", "mouseover", "mouseout"]
+    let out = html
+    for i in 0..events.len() {
+        out = _lumen_replace(out, "@" + events[i] + "=\"", "data-lumen-" + events[i] + "=\"")
+    }
+    return out
+}
+
+// Is `token` (e.g. "else", "/if", "/each") one of the tokens we should halt at?
+fn _lumen_is_stop(token, stop_tags) {
+    if stop_tags == null { return false }
+    for i in 0..stop_tags.len() {
+        if stop_tags[i] == token { return true }
+    }
+    return false
+}
+
+// Render tpl[pos..stop) against ctx. Halts at the first {{else}}/{{/if}}/{{/each}}
+// whose token is in stop_tags, reporting it back via "tag". Returns {out,pos,tag}.
+fn _lumen_render_region(tpl, pos, stop, ctx, stop_tags) {
+    // Varian treats `{` as interpolation in strings, so the delimiters are
+    // written with brace escapes: "\{\{" is the literal two-char open marker.
+    let OPEN = "\{\{"
+    let CLOSE = "\}\}"
+    let out = ""
+    let i = pos
+    while i < stop {
+        let tag = _substr_index(tpl, OPEN, i)
+        if tag < 0 or tag >= stop {
+            out = out + tpl.substring(i, stop)
+            i = stop
+        } else {
+            out = out + tpl.substring(i, tag)
+            let close = _substr_index(tpl, CLOSE, tag + 2)
+            if close < 0 or close >= stop {
+                // No closing braces — emit the rest verbatim.
+                out = out + tpl.substring(tag, stop)
+                i = stop
+            } else {
+                let marker = tpl.code_at(tag + 2)
+                if marker == 33 {                 // '!' raw interpolation
+                    let expr = _sanitize.trim(tpl.substring(tag + 3, close))
+                    let looked = _tpl_lookup(ctx, expr)
+                    let val = ""
+                    if looked != null { val = "" + looked }
+                    out = out + val
+                    i = close + 2
+                } else if marker == 35 {           // '#' block: if / each
+                    let directive = _sanitize.trim(tpl.substring(tag + 3, close))
+                    let after = close + 2
+                    if directive.starts_with("if ") {
+                        let res = _lumen_do_if(tpl, after, stop, ctx, _sanitize.trim(directive.substring(3, directive.len())))
+                        out = out + _validate.get_field(res, "out")
+                        i = _validate.get_field(res, "pos")
+                    } else if directive.starts_with("each ") {
+                        let res = _lumen_do_each(tpl, after, stop, ctx, _sanitize.trim(directive.substring(5, directive.len())))
+                        out = out + _validate.get_field(res, "out")
+                        i = _validate.get_field(res, "pos")
+                    } else {
+                        i = after
+                    }
+                } else if marker == 47 {           // '/' closing token: /if, /each
+                    let token = "/" + _sanitize.trim(tpl.substring(tag + 3, close))
+                    if _lumen_is_stop(token, stop_tags) {
+                        return http.create_struct(["out", "pos", "tag"], [out, close + 2, token])
+                    }
+                    i = close + 2
+                } else {
+                    let inner = _sanitize.trim(tpl.substring(tag + 2, close))
+                    if inner == "else" and _lumen_is_stop("else", stop_tags) {
+                        return http.create_struct(["out", "pos", "tag"], [out, close + 2, "else"])
+                    }
+                    // {{ expr }} — escaped interpolation (safe by default)
+                    let looked = _tpl_lookup(ctx, inner)
+                    let val = ""
+                    if looked != null { val = "" + looked }
+                    out = out + _sanitize.escape_html(val)
+                    i = close + 2
+                }
+            }
+        }
+    }
+    return http.create_struct(["out", "pos", "tag"], [out, i, ""])
+}
+
+// {{#if expr}} body [{{else}} body] {{/if}}
+fn _lumen_do_if(tpl, pos, stop, ctx, expr) {
+    let truthy = _tpl_truthy(_tpl_lookup(ctx, expr))
+    let first = _lumen_render_region(tpl, pos, stop, ctx, ["else", "/if"])
+    let stopped = _validate.get_field(first, "tag")
+    let out = ""
+    if truthy { out = _validate.get_field(first, "out") }
+    let cur = _validate.get_field(first, "pos")
+    if stopped == "else" {
+        let second = _lumen_render_region(tpl, cur, stop, ctx, ["/if"])
+        if truthy == false { out = _validate.get_field(second, "out") }
+        cur = _validate.get_field(second, "pos")
+    }
+    return http.create_struct(["out", "pos"], [out, cur])
+}
+
+// {{#each items as item}} body {{/each}}
+fn _lumen_do_each(tpl, pos, stop, ctx, header) {
+    let aspos = header.index_of(" as ")
+    let list_expr = _sanitize.trim(header.substring(0, aspos))
+    let var_name = _sanitize.trim(header.substring(aspos + 4, header.len()))
+    let items = _tpl_lookup(ctx, list_expr)
+    let out = ""
+    let body_end = pos
+    if items != null {
+        for j in 0..items.len() {
+            let child = _tpl_bind(ctx, var_name, items[j])
+            let res = _lumen_render_region(tpl, pos, stop, child, ["/each"])
+            out = out + _validate.get_field(res, "out")
+            body_end = _validate.get_field(res, "pos")
+        }
+    }
+    if body_end == pos {
+        // Empty list: consume the body once so we land past {{/each}}.
+        let res = _lumen_render_region(tpl, pos, stop, ctx, ["/each"])
+        body_end = _validate.get_field(res, "pos")
+    }
+    return http.create_struct(["out", "pos"], [out, body_end])
+}
+
+// ─── Public API (Milestone 1) ───
+
+// Render a Lumen template string against a context struct -> HTML string.
+fn lumen_render(template, ctx) {
+    let res = _lumen_render_region(template, 0, template.len(), ctx, null)
+    return _lumen_bind_events(_validate.get_field(res, "out"))
+}
+
+// Convenience: a 200 text/html Response from a rendered Lumen template.
+// Built with http.create_struct (not a `Response { }` literal) so this module
+// doesn't depend on zenith.vn's struct declarations being parsed first — the
+// vn_modules prelude order isn't guaranteed, and struct literals resolve their
+// type at parse time while function calls resolve at runtime.
+fn lumen_render_response(template, ctx) {
+    return http.create_struct(
+        ["status", "body", "content_type"],
+        [200, lumen_render(template, ctx), "text/html"]
+    )
+}
+
+// ─── Lumen M2 — live layer (server-driven interactivity) ───
+//
+// Build a component struct from its three plain-Varian pieces:
+//   state_fn()        -> initial state
+//   render_fn(state)  -> rendered HTML string (calls lumen_render internally)
+//   handler_names/handler_fns  -> parallel arrays mapping handler name -> fn
+//
+// Returns a struct with http.create_struct (no parse-order dependency).
+
+fn lumen_component(state_fn, render_fn, handler_names, handler_fns) {
+    return http.create_struct(
+        ["state_fn", "render_fn", "handler_names", "handler_fns"],
+        [state_fn, render_fn, handler_names, handler_fns]
+    )
+}
+
+// Resolve a handler by name against the registered set ONLY.  Returns null if
+// the name isn't registered — the caller must then silently ignore the event.
+// This is the security gate: never dispatch an arbitrary name from the wire.
+fn _lumen_handler(component, name) {
+    let names = component.handler_names
+    for i in 0..names.len() {
+        if names[i] == name { return component.handler_fns[i] }
+    }
+    return null
+}
+
+// Mount a live component on a Zenith app.
+//   GET <path>       → initial HTML page (full shell)
+//   GET <path>/live  → WebSocket upgrade → live loop
+//
+// Uses radix_insert directly instead of app.get() because zenith.vn's impl
+// methods aren't visible when this module is compiled (prelude order).
+fn lumen_mount(app, path, component) {
+    let ws_path = path + "/live"
+    let page = |req| {
+        let state = (component.state_fn)()
+        let inner = (component.render_fn)(state)
+        let html = _lumen_shell(inner, ws_path)
+        return http.create_struct(["status","body","content_type"], [200, html, "text/html"])
+    }
+    let live = |req| {
+        let ws = upgrade_websocket(req)
+        if ws == null {
+            return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
+        }
+        _lumen_live_loop(ws, component)
+        return http.create_struct(["status","body","content_type","_keep_open"], [101, "", "", true])
+    }
+    radix_insert(app.root, "GET" + path, page, "Lumen page")
+    radix_insert(app.root, "GET" + ws_path, live, "Lumen live socket")
+}
+
+// Per-connection event loop.
+// ws.read() is NON-BLOCKING (returns "" on EAGAIN, null on close).
+// The loop yields via task.yield() when no message is available so the
+// cooperative scheduler can service other connections.
+fn _lumen_live_loop(ws, component) {
+    let state = (component.state_fn)()
+    let alive = true
+    while alive {
+        let msg = ws.read()
+        if msg == null {
+            alive = false
+        } else if msg != "" {
+            let ev = json_decode(msg)
+            let kind = _validate.get_field(ev, "t")
+            if kind == "event" {
+                let hname = _validate.get_field(ev, "h")
+                let value = _validate.get_field(ev, "v")
+                let handler = _lumen_handler(component, hname)
+                if handler != null {
+                    state = handler(state, value)
+                    let html = (component.render_fn)(state)
+                    ws.write(json_encode({ t: "html", html: html }))
+                }
+            }
+        } else {
+            task.yield()
+        }
+    }
+}
+
+// Wrap the rendered component in the live shell (data-lumen-root + client).
+fn _lumen_shell(inner, ws_path) {
+    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>" +
+           "<div data-lumen-root>" + inner + "</div>" +
+           "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + _lumen_client_js() + "</script>" +
+           "</body></html>"
+}
+
+// Embedded client JavaScript as a Varian string.
+// Every brace is escaped as \{/\} so Varian's {expr} interpolation doesn't eat it.
+fn _lumen_client_js() {
+    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,EV=['click','input','change','submit','keydown','keyup','blur','focus'];function c()\{w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='html')morph(r,m.html)\};w.onclose=function()\{setTimeout(c,1000)\}\}EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\}))\},true)\});function morph(a,h)\{var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild)\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}c()\})();"
+}

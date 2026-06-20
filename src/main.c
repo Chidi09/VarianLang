@@ -257,6 +257,7 @@ static int run_source(const char *source, const char *filename) {
     vm_init(&vm, &compiler);
     vm.source = source;
     vm.source_name = filename;
+    vm.prelude_line_count = g_prelude_line_count;
 
     if (!vm_run(&vm, false)) {
         fprintf(stderr, "Runtime error.\n");

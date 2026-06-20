@@ -1,0 +1,64 @@
+// Lumen M2 — server-side dispatch test (no WebSocket needed).
+// Templates are at top level so test-body brace scanning doesn't trip.
+let T_COUNTER = "<div><p>Count: \{\{ count \}\}</p>" +
+                "<button @click=\"inc\">+</button>" +
+                "<button @click=\"dec\">-</button></div>"
+let T_XSS = "<p>\{\{ msg \}\}</p>"
+
+test "known handler updates state and re-render reflects it" {
+    let c = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render(T_COUNTER, s) },
+        ["inc", "dec"],
+        [ |s, v| { s.count = s.count + 1; return s },
+          |s, v| { s.count = s.count - 1; return s } ]
+    )
+    let state = (c.state_fn)()
+    let h = _lumen_handler(c, "inc")
+    assert_ne(h, null)
+    state = h(state, null)
+    let html = (c.render_fn)(state)
+    assert_eq(html, "<div><p>Count: 1</p><button data-lumen-click=\"inc\">+</button><button data-lumen-click=\"dec\">-</button></div>")
+}
+
+test "unknown handler name is silently ignored" {
+    let c = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render(T_COUNTER, s) },
+        ["inc"],
+        [ |s, v| { s.count = s.count + 1; return s } ]
+    )
+    let h = _lumen_handler(c, "nonexistent")
+    assert_eq(h, null)
+}
+
+test "escaping still holds after handler re-render" {
+    let comp = lumen_component(
+        | | { return { msg: "hello" } },
+        |s| { return lumen_render(T_XSS, s) },
+        ["set"],
+        [ |s, v| { s.msg = v; return s } ]
+    )
+    let state = (comp.state_fn)()
+    let h = _lumen_handler(comp, "set")
+    assert_ne(h, null)
+    state = h(state, "<script>alert(1)</script>")
+    let html = (comp.render_fn)(state)
+    assert_eq(html, "<p>&lt;script&gt;alert(1)&lt;/script&gt;</p>")
+}
+
+test "lumen_mount registers page and live routes" {
+    let c = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render(T_COUNTER, s) },
+        ["inc"],
+        [ |s, v| { s.count = s.count + 1; return s } ]
+    )
+    let app = new_app()
+    lumen_mount(app, "/test", c)
+    let page_resp = app.handle(http.test_request("GET", "/test", ""))
+    assert_eq(page_resp.status, 200)
+    assert_eq(page_resp.content_type, "text/html")
+    let live_resp = app.handle(http.test_request("GET", "/test/live", ""))
+    assert_eq(live_resp.status, 400)
+}

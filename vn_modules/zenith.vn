@@ -507,6 +507,7 @@ impl ZenithApp {
         try {
             return _run_middleware(self, req2)
         } catch e {
+            print("CRASHED:", e)
             let info = errors.make(errors.kind(e), "" + e, "")
             if self.error_handler != null {
                 return self.error_handler(info, req)

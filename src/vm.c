@@ -2269,6 +2269,7 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->free_tasks = NULL;
     vm->source = NULL;
     vm->source_name = NULL;
+    vm->prelude_line_count = 0;
     memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
     vm->gray_stack = NULL;
     vm->gray_capacity = 0;
@@ -2360,7 +2361,13 @@ void runtime_error(VM *vm, const char *format, ...) {
                 }
             }
             if (!vm->suppress_error_print) {
-                fprintf(stderr, "[line %d] in script\n", line);
+                /* Show the user's own line number: the runtime line is relative
+                 * to the combined (prelude + user) source, so subtract the
+                 * prelude length. Non-positive => error is inside a prelude
+                 * module, so keep the raw number. */
+                int disp_line = line - vm->prelude_line_count;
+                if (disp_line <= 0) disp_line = line;
+                fprintf(stderr, "[line %d] in script\n", disp_line);
                 if (vm->source && line >= 1) {
                     const char *p = vm->source;
                     int cur = 1;
@@ -2770,7 +2777,12 @@ bool vm_run(VM *vm, bool run_tests) {
         init_task->frames[0].function = vm->main_fn;
         init_task->frames[0].closure = NULL;
         init_task->frames[0].ip = vm->main_fn->code;
-        init_task->frames[0].slots = NULL;
+        /* Must be the stack base, not NULL: the try/catch unwinder computes a
+         * catch's restore depth as (frame->slots - stack) + local_count, so a
+         * NULL slots base makes that arithmetic garbage and corrupts the stack
+         * on any top-level `try`/`catch` (segfault). Every other frame-0 setup
+         * uses the stack base; this one was the lone exception. */
+        init_task->frames[0].slots = init_task->stack;
         init_task->frames[0].return_base = 0;
         init_task->frame_count = 1;
         vm_register_task(vm, init_task);
@@ -3110,6 +3122,10 @@ static uint64_t cache_key_hash(ObjFunction *fn, int arg_count, Value *args) {
 static bool handle_vm_exception(VM *vm, const char *msg) {
     Task *t = vm->current_task;
     if (t && t->try_count > 0) {
+        /* An error can be raised mid-call after the @cache "intercept the next
+         * return" flag was armed; unwinding past that return would otherwise
+         * leave it set and corrupt the next cached call. Clear it on unwind. */
+        t->cache_on_return = false;
         t->try_count--;
         int target_frame = t->try_stack[t->try_count].frame_index;
         t->frame_count = target_frame + 1;
@@ -3239,6 +3255,21 @@ bool task_run(VM *vm, Task *task) {
         } \
         instruction = READ_BYTE(); \
         goto *dispatch_table[instruction]; \
+    } while (0)
+
+/* Raise a runtime error from inside the dispatch loop. If a try block is active
+ * on the current task, the error becomes a catchable exception (unwinds to the
+ * catch with the message string) and execution continues; otherwise it prints
+ * the friendly fatal error + traceback and exits task_run. This makes ordinary
+ * language errors (bad index, missing field, wrong arg count, type mismatch)
+ * catchable by `try/catch` and Zenith's `app.on_error`, not just `throw`. Use
+ * ONLY inside task_run — it expands to DISPATCH()/return. */
+#define RAISE(...) do { \
+        char _raise_buf[512]; \
+        snprintf(_raise_buf, sizeof(_raise_buf), __VA_ARGS__); \
+        if (handle_vm_exception(vm, _raise_buf)) DISPATCH(); \
+        runtime_error(vm, "%s", _raise_buf); \
+        return false; \
     } while (0)
 
 L_BC_LOOP_TOP:
@@ -3507,7 +3538,7 @@ L_BC_LOOP_TOP:
                 Value v = POP();
                 if (v.type == VAL_INT) PUSH(val_int(-v.as.integer));
                 else if (v.type == VAL_FLOAT) PUSH(val_float(-v.as.floating));
-                else { runtime_error(vm, "Operand must be a number"); return false; }
+                else { RAISE("Operand must be a number"); }
                 DISPATCH();
             }
             L_BC_NOT:
@@ -3763,8 +3794,7 @@ L_BC_LOOP_TOP:
                     }
 
                     if (fn->arity != arg_count) {
-                        runtime_error(vm, "Expected %d arguments but got %d", fn->arity, arg_count);
-                        return false;
+                        RAISE("Expected %d arguments but got %d", fn->arity, arg_count);
                     }
                     if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
@@ -3784,8 +3814,7 @@ L_BC_LOOP_TOP:
                     ObjFunction *fn = closure->function;
 
                     if (fn->arity != arg_count) {
-                        runtime_error(vm, "Expected %d arguments but got %d", fn->arity, arg_count);
-                        return false;
+                        RAISE("Expected %d arguments but got %d", fn->arity, arg_count);
                     }
                     if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
@@ -3799,8 +3828,7 @@ L_BC_LOOP_TOP:
                     new_frame->return_base = t->stack_top - arg_count - 1;
 
                 } else {
-                    runtime_error(vm, "Can only call functions");
-                    return false;
+                    RAISE("Can only call functions");
                 }
                 DISPATCH();
             }
@@ -3914,13 +3942,11 @@ L_BC_LOOP_TOP:
                 if (obj.type == VAL_ARRAY && index.type == VAL_INT) {
                     int i = (int)index.as.integer;
                     if (i < 0 || i >= obj.as.array->count) {
-                        runtime_error(vm, "Array index out of bounds");
-                        return false;
+                        RAISE("Array index out of bounds");
                     }
                     PUSH(obj.as.array->elements[i]);
                 } else {
-                    runtime_error(vm, "Indexing not supported for this type");
-                    return false;
+                    RAISE("Indexing not supported for this type");
                 }
                 DISPATCH();
             }
@@ -3933,8 +3959,7 @@ L_BC_LOOP_TOP:
                 if (obj.type == VAL_ARRAY && index.type == VAL_INT) {
                     int i = (int)index.as.integer;
                     if (i < 0) {
-                        runtime_error(vm, "Array index out of bounds");
-                        return false;
+                        RAISE("Array index out of bounds");
                     }
                     ObjArray *arr = obj.as.array;
                     if (i >= arr->count) {
@@ -3954,8 +3979,7 @@ L_BC_LOOP_TOP:
                     /* Assignment yields the assigned value */
                     PUSH(val);
                 } else {
-                    runtime_error(vm, "Index assignment not supported for this type");
-                    return false;
+                    RAISE("Index assignment not supported for this type");
                 }
                 DISPATCH();
             }
@@ -4195,8 +4219,7 @@ L_BC_LOOP_TOP:
                 } else if (obj.type == VAL_ARRAY) {
                     type_name = "array";
                 } else {
-                    runtime_error(vm, "Cannot dispatch method on this type");
-                    return false;
+                    RAISE("Cannot dispatch method on this type");
                 }
                 Value *func_val = vm_find_dispatch(vm, type_name, method_name->chars);
 
@@ -4230,9 +4253,8 @@ L_BC_LOOP_TOP:
                         if (field_callee.type == VAL_FUNCTION) {
                             ObjFunction *fn = field_callee.as.function;
                             if (fn->arity != arg_count) {
-                                runtime_error(vm, "Function '%s' expects %d arguments but got %d",
+                                RAISE("Function '%s' expects %d arguments but got %d",
                                               method_name->chars, fn->arity, arg_count);
-                                return false;
                             }
                             if (t->frame_count >= TASK_FRAMES_MAX) {
                                 runtime_error(vm, "Stack overflow");
@@ -4248,9 +4270,8 @@ L_BC_LOOP_TOP:
                             ObjClosure *closure = field_callee.as.closure;
                             ObjFunction *fn = closure->function;
                             if (fn->arity != arg_count) {
-                                runtime_error(vm, "Function '%s' expects %d arguments but got %d",
+                                RAISE("Function '%s' expects %d arguments but got %d",
                                               method_name->chars, fn->arity, arg_count);
-                                return false;
                             }
                             if (t->frame_count >= TASK_FRAMES_MAX) {
                                 runtime_error(vm, "Stack overflow");
@@ -4268,9 +4289,8 @@ L_BC_LOOP_TOP:
                 }
 
                 if (!func_val) {
-                    runtime_error(vm, "No method '%s' for type '%s'", method_name->chars,
+                    RAISE("No method '%s' for type '%s'", method_name->chars,
                                   type_name ? type_name : "(anonymous struct)");
-                    return false;
                 }
                 Value callee = *func_val;
                 PUSH(callee);
@@ -4292,8 +4312,7 @@ L_BC_LOOP_TOP:
                     ObjFunction *fn = callee.as.function;
                     uint8_t total_args = arg_count + 1;
                     if (fn->arity != total_args) {
-                        runtime_error(vm, "Method '%s' expects %d arguments", method_name->chars, fn->arity);
-                        return false;
+                        RAISE("Method '%s' expects %d arguments", method_name->chars, fn->arity);
                     }
                     if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
@@ -4313,8 +4332,7 @@ L_BC_LOOP_TOP:
                     ObjFunction *fn = closure->function;
                     uint8_t total_args = arg_count + 1;
                     if (fn->arity != total_args) {
-                        runtime_error(vm, "Method '%s' expects %d arguments", method_name->chars, fn->arity);
-                        return false;
+                        RAISE("Method '%s' expects %d arguments", method_name->chars, fn->arity);
                     }
                     if (t->frame_count >= TASK_FRAMES_MAX) {
                         runtime_error(vm, "Stack overflow");
@@ -4327,8 +4345,7 @@ L_BC_LOOP_TOP:
                     new_frame->slots = &t->stack[t->stack_top - total_args - 1];
                     new_frame->return_base = t->stack_top - total_args - 1;
                 } else {
-                    runtime_error(vm, "Method is not callable");
-                    return false;
+                    RAISE("Method is not callable");
                 }
                 DISPATCH();
             }
@@ -4491,8 +4508,7 @@ L_BC_LOOP_TOP:
                     if (found >= 0) {
                         PUSH(s->fields[found]);
                     } else {
-                        runtime_error(vm, "Struct has no field '%s'", name->chars);
-                        return false;
+                        RAISE("Struct has no field '%s'", name->chars);
                     }
                 } else if (obj.type == VAL_MODULE) {
                     /* Module member access: look up in dispatch table */
@@ -4500,9 +4516,8 @@ L_BC_LOOP_TOP:
                     if (func_val) {
                         PUSH(*func_val);
                     } else {
-                        runtime_error(vm, "Module '%s' has no member '%s'",
+                        RAISE("Module '%s' has no member '%s'",
                                      obj.as.module->name, name->chars);
-                        return false;
                     }
                 } else if (obj.type == VAL_STRING) {
                     /* String method access: look up in dispatch table */
@@ -4510,8 +4525,7 @@ L_BC_LOOP_TOP:
                     if (func_val) {
                         PUSH(*func_val);
                     } else {
-                        runtime_error(vm, "String has no method '%s'", name->chars);
-                        return false;
+                        RAISE("String has no method '%s'", name->chars);
                     }
                 } else if (obj.type == VAL_ARRAY) {
                     /* Array method access: look up in dispatch table */
@@ -4519,12 +4533,10 @@ L_BC_LOOP_TOP:
                     if (func_val) {
                         PUSH(*func_val);
                     } else {
-                        runtime_error(vm, "Array has no method '%s'", name->chars);
-                        return false;
+                        RAISE("Array has no method '%s'", name->chars);
                     }
                 } else {
-                    runtime_error(vm, "Cannot access field on non-struct value");
-                    return false;
+                    RAISE("Cannot access field on non-struct value");
                 }
                 DISPATCH();
             }
@@ -4581,8 +4593,7 @@ L_BC_LOOP_TOP:
                     /* A genuinely unsupported type for member access at all
                      * (e.g. ?. on an int) is still a real bug worth
                      * surfacing, not a "maybe absent" case -- not silenced. */
-                    runtime_error(vm, "Cannot access field on non-struct value");
-                    return false;
+                    RAISE("Cannot access field on non-struct value");
                 }
                 DISPATCH();
             }
@@ -4620,12 +4631,10 @@ L_BC_LOOP_TOP:
                         s->fields[found] = val;
                         PUSH(val);
                     } else {
-                        runtime_error(vm, "Struct has no field '%s'", name->chars);
-                        return false;
+                        RAISE("Struct has no field '%s'", name->chars);
                     }
                 } else {
-                    runtime_error(vm, "Cannot set field on non-struct value");
-                    return false;
+                    RAISE("Cannot set field on non-struct value");
                 }
                 DISPATCH();
             }
@@ -4806,8 +4815,7 @@ L_BC_LOOP_TOP:
                     free(chars);
                     PUSH(val_string(result));
                 } else {
-                    runtime_error(vm, "String concatenation requires strings");
-                    return false;
+                    RAISE("String concatenation requires strings");
                 }
                 DISPATCH();
             }

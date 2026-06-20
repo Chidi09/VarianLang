@@ -1,0 +1,58 @@
+// Regression + behavior coverage for try/catch and catchable runtime errors.
+// Guards the segfault regression (main script frame stack base) AND that
+// ordinary language errors (not just throw) are catchable.
+
+test "top-level throw is caught (segfault regression)" {
+    let got = ""
+    try { throw("boom") } catch e { got = e }
+    assert_eq(got, "boom")
+}
+
+test "throw across a function call is caught" {
+    fn f() { throw("inner") }
+    let got = ""
+    try { f() } catch e { got = e }
+    assert_eq(got, "inner")
+}
+
+test "division by zero is catchable" {
+    let got = ""
+    try { let x = 1 / 0 } catch e { got = e }
+    assert_eq(got, "Division by zero")
+}
+
+test "array index out of bounds is catchable" {
+    let a = [1, 2]
+    let got = ""
+    try { let x = a[99] } catch e { got = e }
+    assert_eq(got, "Array index out of bounds")
+}
+
+test "missing struct field is catchable" {
+    struct P { x: int }
+    let p = P { x: 1 }
+    let got = ""
+    try { let y = p.y } catch e { got = e }
+    assert_eq(got, "Struct has no field 'y'")
+}
+
+test "wrong argument count is catchable" {
+    fn g(a, b) { return a + b }
+    let got = ""
+    try { g(1) } catch e { got = e }
+    assert_eq(got, "Expected 2 arguments but got 1")
+}
+
+test "execution continues normally after a caught error" {
+    let a = [1]
+    let sum = 0
+    try { sum = a[5] } catch e { sum = 42 }
+    assert_eq(sum, 42)
+}
+
+test "errors module classifies a caught message" {
+    let a = [1]
+    let kind = ""
+    try { let x = a[9] } catch e { kind = errors.kind(e) }
+    assert_eq(kind, "IndexOutOfBounds")
+}

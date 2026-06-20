@@ -1,0 +1,40 @@
+// tests/lumen_roundtrip_test.vn
+
+let T_COUNTER = "<div><p>Count: \{\{ count \}\}</p><button @click=\"inc\">+</button></div>"
+
+test "lumen live round trip mock" {
+    let c = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render(T_COUNTER, s) },
+        ["inc"],
+        [ |s, v| { s.count = s.count + 1; return s } ]
+    )
+
+    let result = { msg: "" }
+    let read_state = { count: 0 }
+    
+    let mock_ws = http.create_struct(
+        ["read", "write"],
+        [
+            | | {
+                // First call: return the 'inc' event JSON string
+                if read_state.count == 0 {
+                    read_state.count = 1
+                    return "{" + "\"t\":\"event\",\"h\":\"inc\",\"v\":null" + "}"
+                }
+                // Second call: return null to break the alive loop
+                return null
+            },
+            |msg| {
+                result.msg = msg
+            }
+        ]
+    )
+
+    _lumen_live_loop(mock_ws, c)
+
+    // The component state should have updated and rendered
+    // The server should have written back a {"t":"html","html":"..."}
+    assert_ne(result.msg, "")
+    assert_eq(result.msg, "{" + "\"t\":\"html\",\"html\":\"<div><p>Count: 1</p><button data-lumen-click=\\\"inc\\\">+</button></div>\"" + "}")
+}
