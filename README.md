@@ -34,16 +34,97 @@ print(c.get())
   <img src="docs/zenith_logo.png" alt="Zenith Logo" width="300" />
 </p>
 
-Varian includes `Zenith`, a blazing-fast, non-blocking HTTP web framework powered by native POSIX sockets, `io_uring` for zero-copy I/O, per-request zero-GC arena allocators, and AOT (Ahead-of-Time) compilation. It is deeply integrated into Varian's task scheduler.
+Varian includes **Zenith**, a hyper-optimized, non-blocking HTTP web framework built directly into the language runtime. We engineered Zenith to compete directly with the fastest Rust and Go servers, bypassing the traditional bottlenecks of dynamic languages.
+
+#### 🚀 Zero-Overhead Architecture
+Zenith fundamentally reimagines how a high-level language handles network traffic:
+- **`io_uring` & `writev`**: Bypasses traditional blocking syscalls with Linux's ultra-fast asynchronous I/O and scatter/gather response serialization.
+- **Per-Request Arena Allocators**: Memory for each request is allocated in a single contiguous chunk. When the request ends, the memory is instantly reclaimed by resetting a pointer—resulting in **Zero Garbage Collection overhead** during the request lifecycle.
+- **AOT Transpilation**: Zenith server code can be natively transpiled to C. This bypasses the bytecode interpreter entirely, allowing the web framework to execute at raw machine speeds while retaining Varian's high-level ergonomics.
+- **Shared-Nothing Multi-Threading**: Using `SO_REUSEPORT`, Zenith boots independent VM instances across multiple cores. No Global Interpreter Lock (GIL), no lock contention—just pure linear scaling.
+
+#### 🛠️ Expressive & Ergonomic
+Despite its native-level performance, Zenith feels as intuitive as frameworks like Express or FastAPI.
 
 ```varian
 let app = new_app()
 
-app.get("/", |req| {
-    return Response { status: 200, body: "Hello from Zenith!", content_type: "text/plain" }
-}, "Root endpoint")
+// Middleware
+app.use(|req| {
+    print("Incoming request: " + req.method + " " + req.path)
+    return null
+})
 
+// Path Parameters & JSON
+app.get("/users/:id", |req| {
+    let user_id = req.params["id"]
+    return Response { 
+        status: 200, 
+        body: json_encode({ "user": user_id, "status": "active" }), 
+        content_type: "application/json" 
+    }
+}, "Get User")
+
+// Cluster mode automatically binds across cores
 app.listen(3000)
+```
+
+#### 🛡️ Enterprise-Ready Security
+Zenith ships with high-performance native security modules built directly in C:
+- **Zero-Allocation CORS & CSRF:** Fully compliant, automatically injected headers with no string-allocation overhead.
+- **Token Bucket Rate Limiting:** Millisecond-precision rate limiters powered by the native scheduler.
+
+#### ⚡ Zero-Cost Comptime ORM
+Zenith includes a query builder designed for Varian's `comptime` engine. The structure of your SQL queries (tables, selected fields, operator shapes) is resolved at compile-time and baked directly into the program as static strings. You get the safety and ergonomics of an ORM with the raw runtime performance of hand-written SQL.
+
+```varian
+let compiled = comptime {
+    select("users")
+        .fields(["id", "name", "email"])
+        .where("id", "=")
+        .limit(10)
+        .build()
+}
+// At runtime, compiled.sql is just a static string: 
+// "SELECT id, name, email FROM users WHERE id = ? LIMIT 10"
+
+let conn = sqlite.connect("database.db")
+let bound = bind(compiled, [user_id])
+let rows = run_sqlite(bound, conn)
+```
+
+#### 📚 Instant OpenAPI Docs
+Forget maintaining separate API documentation. Zenith auto-generates a Swagger UI and OpenAPI JSON specs from your routes and runtime structs in a single line.
+```varian
+app.enable_docs("/docs")
+```
+
+#### 🔀 Advanced Radix Routing & Testing
+- **Radix Trie Routing**: Routes are stored in a highly optimized segment trie. Lookup costs one trie descent per path segment rather than an O(N) scan.
+- **Socket-Free Testing**: Run full route, middleware, and handler pipelines synchronously without ever opening a real HTTP port. Perfect for blisteringly fast unit tests.
+```varian
+// No network stack involved!
+let resp = app.handle(fake_req("GET", "/api/users/2"))
+```
+
+#### 🔌 Real-Time & Streaming
+Zenith supports real-time communication out of the box with zero external dependencies.
+- **WebSockets**: Easily upgrade connections and send/receive masked payloads natively.
+- **Server-Sent Events (SSE)**: Simple API for streaming fast updates to clients.
+```varian
+app.get("/ws", |req| {
+    let ws = upgrade_websocket(req)
+    ws.write("Connected!")
+    return Response { _keep_open: true }
+}, "WebSocket upgrade")
+```
+
+#### 🔒 Static Serving & TLS
+- **Static Mounts**: Serve static directories with built-in path-traversal protection and automatic MIME type resolution.
+- **Native HTTPS**: Pass your SSL certificates directly to the cluster to handle HTTPS internally.
+```varian
+app.serve_static("/assets", "public/assets")
+app.listen_tls_cluster(443, "cert.pem", "key.pem", 8)
 ```
 
 ### 🛠️ The High-Fidelity Toolchain
