@@ -5,7 +5,7 @@ A blazing fast, concurrent, systems-level programming language built from scratc
 ## The Cheat Code Architecture
 Varian doesn't force you to rewrite the world. It comes built-in with a zero-overhead **C FFI** and a fully integrated **Python Bridge**. You can import and use any Python package (like NumPy or PyTorch) seamlessly as if it were written in Varian.
 
-```varian
+```swift
 fn array(args) {
     return python.run("numpy", "array", [args])
 }
@@ -16,7 +16,7 @@ fn array(args) {
 ### ⚡ Thread-Safe Concurrency (Actors & Channels)
 Say goodbye to mutex locks and race conditions. Varian uses a cooperative spin-yield scheduler and the Actor model to run thousands of lightweight tasks concurrently.
 
-```varian
+```swift
 actor Counter {
     count: int = 0,
     fn increment(self) { self.count = self.count + 1 }
@@ -28,7 +28,7 @@ c.increment()
 print(c.get())
 ```
 
-### 🌐 The Zenith Web Framework
+### he Zenith Web Framework
 
 <p align="center">
   <img src="docs/zenith_logo.png" alt="Zenith Logo" width="300" />
@@ -36,7 +36,7 @@ print(c.get())
 
 Varian includes **Zenith**, a hyper-optimized, non-blocking HTTP web framework built directly into the language runtime. We engineered Zenith to compete directly with the fastest Rust and Go servers, bypassing the traditional bottlenecks of dynamic languages.
 
-#### 🚀 Zero-Overhead Architecture
+#### 🦁 Zero-Overhead Architecture
 Zenith fundamentally reimagines how a high-level language handles network traffic:
 - **`io_uring` & `writev`**: Bypasses traditional blocking syscalls with Linux's ultra-fast asynchronous I/O and scatter/gather response serialization.
 - **Per-Request Arena Allocators**: Memory for each request is allocated in a single contiguous chunk. When the request ends, the memory is instantly reclaimed by resetting a pointer—resulting in **Zero Garbage Collection overhead** during the request lifecycle.
@@ -46,7 +46,7 @@ Zenith fundamentally reimagines how a high-level language handles network traffi
 #### 🛠️ Expressive & Ergonomic
 Despite its native-level performance, Zenith feels as intuitive as frameworks like Express or FastAPI.
 
-```varian
+```swift
 let app = new_app()
 
 // Middleware
@@ -77,7 +77,7 @@ Zenith ships with high-performance native security modules built directly in C:
 #### ⚡ Zero-Cost Comptime ORM
 Zenith includes a query builder designed for Varian's `comptime` engine. The structure of your SQL queries (tables, selected fields, operator shapes) is resolved at compile-time and baked directly into the program as static strings. You get the safety and ergonomics of an ORM with the raw runtime performance of hand-written SQL.
 
-```varian
+```swift
 let compiled = comptime {
     select("users")
         .fields(["id", "name", "email"])
@@ -95,14 +95,14 @@ let rows = run_sqlite(bound, conn)
 
 #### 📚 Instant OpenAPI Docs
 Forget maintaining separate API documentation. Zenith auto-generates a Swagger UI and OpenAPI JSON specs from your routes and runtime structs in a single line.
-```varian
+```swift
 app.enable_docs("/docs")
 ```
 
 #### 🔀 Advanced Radix Routing & Testing
 - **Radix Trie Routing**: Routes are stored in a highly optimized segment trie. Lookup costs one trie descent per path segment rather than an O(N) scan.
 - **Socket-Free Testing**: Run full route, middleware, and handler pipelines synchronously without ever opening a real HTTP port. Perfect for blisteringly fast unit tests.
-```varian
+```swift
 // No network stack involved!
 let resp = app.handle(fake_req("GET", "/api/users/2"))
 ```
@@ -111,7 +111,7 @@ let resp = app.handle(fake_req("GET", "/api/users/2"))
 Zenith supports real-time communication out of the box with zero external dependencies.
 - **WebSockets**: Easily upgrade connections and send/receive masked payloads natively.
 - **Server-Sent Events (SSE)**: Simple API for streaming fast updates to clients.
-```varian
+```swift
 app.get("/ws", |req| {
     let ws = upgrade_websocket(req)
     ws.write("Connected!")
@@ -122,7 +122,7 @@ app.get("/ws", |req| {
 #### 🔒 Static Serving & TLS
 - **Static Mounts**: Serve static directories with built-in path-traversal protection and automatic MIME type resolution.
 - **Native HTTPS**: Pass your SSL certificates directly to the cluster to handle HTTPS internally.
-```varian
+```swift
 app.serve_static("/assets", "public/assets")
 app.listen_tls_cluster(443, "cert.pem", "key.pem", 8)
 ```
@@ -135,7 +135,7 @@ Varian isn't just a compiler; it's a complete ecosystem.
 
 ### 🎯 Native Metadata Decorators
 Fastest-in-class native memoization and retry mechanics evaluated natively by the VM in C.
-```varian
+```swift
 @cache
 @retry(3)
 fn fetch_data() { ... }
