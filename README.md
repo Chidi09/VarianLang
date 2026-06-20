@@ -1,4 +1,8 @@
-# Varian 🚀
+<p align="center">
+  <img src="docs/assets/varian-logo.png" alt="Varian — Built for Performance" width="560" />
+</p>
+
+<h1 align="center">Varian</h1>
 
 A blazing fast, concurrent, systems-level programming language built from scratch in C with a custom bytecode VM. Varian combines the speed of C, the concurrency model of Go (Actors & Channels), and the ecosystem of Python into a single, cohesive developer experience.
 
@@ -225,9 +229,11 @@ Value compute(Value x) {
 
 *   [`docs/LANGUAGE.md`](docs/LANGUAGE.md) — core language reference (types, functions/closures, structs, generics, enums, traits, error handling, decorators, comptime, FFI)
 *   [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) — tasks, channels, actors
-*   [`docs/STDLIB.md`](docs/STDLIB.md) — native modules (`math`, `string`, `sqlite`, `http`, `auth`, `validate`, `json_encode`/`decode`, the Python bridge, FFI)
+*   [`docs/STDLIB.md`](docs/STDLIB.md) — native modules (`math`, `string`, `regex`, `sqlite`, `http`, `auth`, `validate`, `json_encode`/`decode`, the Python bridge, FFI)
 *   [`docs/ZENITH.md`](docs/ZENITH.md) — the Zenith web framework and the comptime ORM
 *   [`docs/TOOLING.md`](docs/TOOLING.md) — the `vn` CLI in full
+*   [`docs/SECURITY.md`](docs/SECURITY.md) — threat model, hardened build, app-level defenses, and the sandboxing caveat
+*   [`docs/planning/`](docs/planning/) — internal roadmap / design notes
 
 ## Project Status
 We are currently progressing through the **Varian Architecture Roadmap**:

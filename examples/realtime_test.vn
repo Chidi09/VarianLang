@@ -27,12 +27,12 @@ app.get("/ws", |req| {
     }
     // Return keep open response
     return Response { status: 101, body: "", content_type: "", _keep_open: true }
-}, "WebSocket upgrade")
+}, "WebSocket upgrade", null)
 
 app.get("/events", |req| {
     let sse = sse_handshake(req)
     return Response { status: 200, body: "", content_type: "text/event-stream", _keep_open: true }
-}, "SSE stream")
+}, "SSE stream", null)
 
 // Simulate WebSocket Request
 let ws_headers = http.create_struct(

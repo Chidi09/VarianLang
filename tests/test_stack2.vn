@@ -1,2 +1,0 @@
-let x = print(42);
-print(x);

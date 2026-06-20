@@ -1,4 +1,26 @@
+# Build output
 build/
+build_asan/
 vn
+vn_asan
+vn_asan_new
 *.o
+*.so
+*.a
+
+# Sanitizer / scratch binaries
+*_asan
+aot_test
+
+# Runtime artifacts
+*.log
+*.db
+*.bak
+
+# Scratch / experiments
+scratch/
+test_stack*.vn
+test_array_assignment.vn
+
+# Secrets / local env
 .env

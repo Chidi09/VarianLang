@@ -12,5 +12,5 @@
 let app = new_app()
 app.get("/ping", | req | {
     return Response { status: 200, body: "pong", content_type: "text/plain" }
-}, "ping")
+}, "ping", null)
 app.listen_cluster(8300, 4)

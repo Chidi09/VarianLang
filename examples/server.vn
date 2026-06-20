@@ -16,12 +16,12 @@ app.add_middleware(|req, next| {
 
 app.get("/", |req| {
     return Response { status: 200, body: "Welcome to Zenith!", content_type: "text/plain" }
-}, "Root endpoint")
+}, "Root endpoint", null)
 
 app.get("/api/users", |req| {
     let body = json_encode(users)
     return Response { status: 200, body: body, content_type: "application/json" }
-}, "List all users")
+}, "List all users", null)
 
 app.get("/api/users/:id", |req| {
     for i in 0..users.len() {
@@ -31,7 +31,7 @@ app.get("/api/users/:id", |req| {
         }
     }
     return Response { status: 404, body: "User not found", content_type: "application/json" }
-}, "Get user by ID")
+}, "Get user by ID", null)
 
 app.post("/api/users", |req| {
     let new_user = User {
@@ -42,11 +42,11 @@ app.post("/api/users", |req| {
     users = users.push(new_user)
     let body = json_encode(new_user)
     return Response { status: 201, body: body, content_type: "application/json" }
-}, "Create a new user")
+}, "Create a new user", null)
 
 app.get("/hello/:name", |req| {
     return Response { status: 200, body: "Hello, " + req.params.name + "!", content_type: "text/plain" }
-}, "Personalized greeting")
+}, "Personalized greeting", null)
 
 app.enable_docs("/docs")
 

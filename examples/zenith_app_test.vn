@@ -27,7 +27,7 @@ app1.add_middleware(|req, next| {
 
 app1.get("/", |req| {
     return Response { status: 200, body: "Welcome to Zenith!", content_type: "text/plain" }
-}, "Root endpoint")
+}, "Root endpoint", null)
 
 app1.get("/api/users/:id", |req| {
     for i in 0..users.len() {
@@ -36,15 +36,15 @@ app1.get("/api/users/:id", |req| {
         }
     }
     return Response { status: 404, body: "User not found", content_type: "application/json" }
-}, "Get user by ID")
+}, "Get user by ID", null)
 
 app1.get("/hello/:name", |req| {
     return Response { status: 200, body: "Hello, " + req.params.name + "!", content_type: "text/plain" }
-}, "Personalized greeting")
+}, "Personalized greeting", null)
 
 app2.get("/ping", |req| {
     return Response { status: 200, body: "pong", content_type: "text/plain" }
-}, "Health check")
+}, "Health check", null)
 
 // Radix router: param matching, 404 on miss
 print(app1.handle(fake_req("GET", "/api/users/2")).body)

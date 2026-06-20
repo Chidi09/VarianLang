@@ -2779,6 +2779,7 @@ bool vm_run(VM *vm, bool run_tests) {
     /* Initialize built-in modules */
     {
         extern void lib_math_init(VM *vm);
+        extern void lib_env_init(VM *vm);
         extern void lib_io_init(VM *vm);
         extern void lib_string_init(VM *vm);
         extern void lib_http_init(VM *vm);
@@ -2795,6 +2796,7 @@ bool vm_run(VM *vm, bool run_tests) {
         extern void lib_time_init(VM *vm);
         extern void lib_regex_init(VM *vm);
         lib_math_init(vm);
+        lib_env_init(vm);
         lib_io_init(vm);
         lib_string_init(vm);
         lib_http_init(vm);

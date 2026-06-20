@@ -68,6 +68,19 @@ static Value lib_smtp_send(VM *vm, int arg_count, Value *args) {
     const char *subject = args[base + 4].as.string->chars;
     const char *body = args[base + 5].as.string->chars;
 
+    /* SMTP header / command injection guard: from/to/subject are interpolated
+     * directly into SMTP commands and message headers, so a bare CR or LF in
+     * any of them would let a caller (often relaying user input from a contact
+     * form) inject extra recipients, headers, or SMTP verbs. Reject rather than
+     * silently strip so the caller learns their input was malformed. The body
+     * sits after DATA and may legitimately contain newlines, so it is exempt
+     * from the header check -- but see dot-stuffing below. */
+    if (strpbrk(from, "\r\n") || strpbrk(to, "\r\n") || strpbrk(subject, "\r\n")) {
+        runtime_error(vm, "smtp.send(): from/to/subject must not contain CR or LF "
+                           "(header injection)");
+        return val_bool(false);
+    }
+
     /* Connection failure is a mundane, expected outcome (relay not running,
      * network down) -- return false rather than throwing, same convention
      * as io.read_text() returning nil for a missing file. */

@@ -17,7 +17,7 @@ all: $(BUILDDIR) $(TARGET)
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
 
-$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(INCDIR)/*.h
+$(BUILDDIR)/%.o: $(SRCDIR)/%.c $(INCDIR)/*.h | $(BUILDDIR)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 $(TARGET): $(OBJS)
@@ -33,6 +33,23 @@ run: $(TARGET)
 
 debug: CFLAGS += -DVN_DEBUG -g3 -O0
 debug: $(TARGET)
+
+# Hardened, optimized build for shipping. _FORTIFY_SOURCE needs -O1+, so it is
+# only meaningful here (not on the default -g debug build). Stack canaries,
+# full RELRO + immediate binding (no lazy-PLT overwrite), non-exec stack, and a
+# position-independent executable for ASLR. This is the build to benchmark and
+# to release.
+release: CFLAGS += -O2 -DNDEBUG -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+	-fstack-clash-protection -fPIE -fno-strict-aliasing -Wformat -Wformat-security
+release: LDFLAGS += -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
+release: clean $(TARGET)
+
+# AddressSanitizer + UBSan build for finding memory bugs under the test sweep
+# and fuzzers. Slower; not for production. Run: make asan && ./vn test tests/
+asan: CFLAGS += -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer \
+	-fno-sanitize-recover=all
+asan: LDFLAGS += -fsanitize=address,undefined
+asan: clean $(TARGET)
 
 clean:
 	rm -rf $(BUILDDIR) $(TARGET)

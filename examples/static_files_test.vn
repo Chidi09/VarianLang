@@ -10,5 +10,5 @@ let app = new_app()
 app.serve_static("/static", "/tmp/my_static")
 app.get("/ping", | req | {
     return Response { status: 200, body: "pong", content_type: "text/plain" }
-}, "ping")
+}, "ping", null)
 app.listen(8950)

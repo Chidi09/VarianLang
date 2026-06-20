@@ -1,0 +1,30 @@
+fn get_balance(user_id) {
+    let rows = sqlite.query(db, "SELECT balance FROM users WHERE id = ?", [user_id])
+    return rows[0].balance
+}
+
+fn withdraw_funds(user_id, amount) {
+    if amount <= 0.0 {
+        return FinanceResult { error: "Amount must be positive", success: false, new_balance: 0.0 }
+    }
+    
+    let current = get_balance(user_id)
+    if current < amount {
+        return FinanceResult { error: "Insufficient balance for withdrawal", success: false, new_balance: current }
+    }
+    
+    let new_bal = current - amount
+    sqlite.query(db, "UPDATE users SET balance = ? WHERE id = ?", [new_bal, user_id])
+    return FinanceResult { error: null, success: true, new_balance: new_bal }
+}
+
+fn deposit_funds(user_id, amount) {
+    if amount <= 0.0 {
+        return FinanceResult { error: "Amount must be positive", success: false, new_balance: 0.0 }
+    }
+    
+    let current = get_balance(user_id)
+    let new_bal = current + amount
+    sqlite.query(db, "UPDATE users SET balance = ? WHERE id = ?", [new_bal, user_id])
+    return FinanceResult { error: null, success: true, new_balance: new_bal }
+}

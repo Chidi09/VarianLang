@@ -3,7 +3,7 @@
 let app = new_app()
 app.get("/hello/:name", | req | {
     return Response { status: 200, body: "Hello, " + req.params.name + "!", content_type: "text/plain" }
-}, "greet")
+}, "greet", null)
 
 let resp = app.handle(http.test_request("GET", "/hello/Zenith", ""))
 print(resp.body)

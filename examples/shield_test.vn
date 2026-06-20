@@ -27,11 +27,11 @@ app.add_middleware(csrf())
 
 app.get("/", |req| {
     return Response { status: 200, body: "Success", content_type: "text/plain" }
-}, "Root")
+}, "Root", null)
 
 app.post("/mutate", |req| {
     return Response { status: 200, body: "Mutated", content_type: "text/plain" }
-}, "Mutate")
+}, "Mutate", null)
 
 // ─── Test CORS ───
 print("--- Testing CORS ---")
@@ -100,7 +100,7 @@ print("--- Testing Rate Limiting ---")
 let app2 = new_app()
 app2.get("/", |req| {
     return Response { status: 200, body: "ok", content_type: "text/plain" }
-}, "r")
+}, "r", null)
 let tight_limiter = RateLimiterActor.spawn()
 tight_limiter.init(3, 10000)
 app2.add_middleware(|req, next| {

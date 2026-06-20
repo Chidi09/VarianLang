@@ -1,0 +1,111 @@
+use "examples/ecommerce/models.vn"
+use "examples/ecommerce/db.vn"
+use "examples/ecommerce/auth.vn"
+use "examples/ecommerce/products.vn"
+use "examples/ecommerce/finance.vn"
+
+let app = new_app()
+app.title = "Ecommerce API"
+
+app.register_schema("AuthResult", AuthResult { error: "", token: "" })
+app.register_schema("CheckoutResult", CheckoutResult { error: "", success: false, order_id: 0, total: 0.0 })
+app.register_schema("FinanceResult", FinanceResult { error: "", success: false, new_balance: 0.0 })
+app.register_schema("JwtPayload", JwtPayload { sub: 0, username: "" })
+app.register_schema("RegisterRequest", RegisterRequest { username: "", password: "" })
+app.register_schema("LoginRequest", LoginRequest { username: "", password: "" })
+app.register_schema("CheckoutRequest", CheckoutRequest { product_id: 0, quantity: 0 })
+app.register_schema("WithdrawRequest", WithdrawRequest { amount: 0.0 })
+app.register_schema("ErrorResult", ErrorResult { error: "" })
+
+app.add_middleware(|req, next| {
+    print("[HTTP] " + req.method + " " + req.path)
+    return next(req)
+})
+
+// Authentication Routes
+app.post("/api/register", |req| {
+    let username = req.json.username
+    let password = req.json.password
+    let res = auth_register(username, password)
+    
+    if res.error != null {
+        return Response { status: 400, body: json_encode(http.create_struct(["error"], [res.error])), content_type: "application/json" }
+    }
+    return Response { status: 201, body: json_encode(http.create_struct(["token"], [res.token])), content_type: "application/json" }
+}, "Register a new user", http.create_struct(
+    ["request_schema", "response_schema", "response_status", "error_schema", "error_status"],
+    ["RegisterRequest", "AuthResult", 201, "ErrorResult", 400]
+))
+
+app.post("/api/login", |req| {
+    let username = req.json.username
+    let password = req.json.password
+    let res = auth_login(username, password)
+    
+    if res.error != null {
+        return Response { status: 401, body: json_encode(http.create_struct(["error"], [res.error])), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(http.create_struct(["token"], [res.token])), content_type: "application/json" }
+}, "Login user", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["LoginRequest", "AuthResult", "ErrorResult", 401]
+))
+
+// Product Routes (Public)
+app.get("/api/products", |req| {
+    let products = list_products()
+    return Response { status: 200, body: json_encode(products), content_type: "application/json" }
+}, "List all products", null)
+
+// Protected Routes (require JWT)
+let secret = env.require("JWT_SECRET")
+let require_auth = zenith_auth.jwt(secret)
+
+// Store the checkout endpoint with the auth middleware
+let checkout_handler = |req| {
+    let uid = req.user.sub
+    let pid = req.json.product_id
+    let qty = req.json.quantity
+    
+    let res = checkout(uid, pid, qty)
+    
+    if !res.success {
+        return Response { status: 400, body: json_encode(res), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(res), content_type: "application/json" }
+}
+
+app.post("/api/checkout", |req| { return require_auth(req, checkout_handler) }, "Checkout a product", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["CheckoutRequest", "CheckoutResult", "ErrorResult", 400]
+))
+
+let withdraw_handler = |req| {
+    let uid = req.user.sub
+    let amount = req.json.amount
+    let res = withdraw_funds(uid, amount)
+    
+    if !res.success {
+        return Response { status: 400, body: json_encode(res), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(res), content_type: "application/json" }
+}
+
+app.post("/api/withdraw", |req| { return require_auth(req, withdraw_handler) }, "Withdraw funds", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["WithdrawRequest", "FinanceResult", "ErrorResult", 400]
+))
+
+let balance_handler = |req| {
+    let uid = req.user.sub
+    let balance = get_balance(uid)
+    return Response { status: 200, body: json_encode(http.create_struct(["balance"], [balance])), content_type: "application/json" }
+}
+
+app.get("/api/balance", |req| { return require_auth(req, balance_handler) }, "Get user balance", null)
+
+app.enable_docs("/docs")
+
+let port_str = env.get("PORT", "8080")
+print("Modular Ecommerce Server running on http://localhost:" + port_str)
+app.listen(8080)

@@ -1,0 +1,2 @@
+use "examples/math.vn"
+print("Multi-file imports work!", add(10, 20))

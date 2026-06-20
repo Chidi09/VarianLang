@@ -58,6 +58,21 @@ static void parser_error(Parser *parser, const char *message) {
     }
 }
 
+static char *parser_read_file(Parser *parser, const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *buf = (char *)arena_alloc(parser->arena, size + 1);
+    if (buf) {
+        size_t read_bytes = fread(buf, 1, size, f);
+        buf[read_bytes] = '\0';
+    }
+    fclose(f);
+    return buf;
+}
+
 static void parser_error_at(Parser *parser, Token *token, const char *message) {
     if (!parser->had_error) {
         parser->had_error = true;
@@ -2326,32 +2341,93 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
     advance(parser);
 }
 
+extern char *parser_read_file(Parser *parser, const char *path);
+
 AstNode *parser_parse(Parser *parser) {
-    SourceLoc loc;
-    loc.filename = parser->lexer->filename;
-    loc.line = 1;
-    loc.column = 1;
-    loc.offset = 0;
+    AstNode *program = ast_program(parser->arena, current_loc(parser));
 
-    AstNode *program = ast_program(parser->arena, loc);
-
-    /* Use local array for top-level statements */
-#define MAX_PROGRAM_STMTS 4096
-    AstNode *stmts[MAX_PROGRAM_STMTS];
+    AstNode **stmts = NULL;
     int stmt_count = 0;
+    int stmt_capacity = 0;
 
-    while (!check(parser, TOKEN_EOF)) {
-        if (stmt_count >= MAX_PROGRAM_STMTS) {
-            parser_error(parser, "Too many top-level statements");
-            break;
+    while (!check(parser, TOKEN_EOF) && !parser->had_error) {
+        if (match(parser, TOKEN_USE)) {
+            consume(parser, TOKEN_STRING, "Expected file path after 'use'");
+            char *path = token_str(parser, &parser->previous);
+            int len = strlen(path);
+            char *clean_path = (char *)arena_alloc(parser->arena, len);
+            strncpy(clean_path, path + 1, len - 2);
+            clean_path[len - 2] = '\0';
+
+            char *content = parser_read_file(parser, clean_path);
+            if (!content) {
+                char err_buf[512];
+                snprintf(err_buf, sizeof(err_buf), "Could not read included file: %s", clean_path);
+                parser_error(parser, err_buf);
+            } else {
+                Lexer sub_lexer;
+                lexer_init(&sub_lexer, content, clean_path);
+
+                Parser sub_parser;
+                parser_init(&sub_parser, &sub_lexer, parser->arena);
+                sub_parser.struct_count = parser->struct_count;
+                for(int i=0; i<parser->struct_count; i++) sub_parser.structs[i] = parser->structs[i];
+                sub_parser.enum_count = parser->enum_count;
+                for(int i=0; i<parser->enum_count; i++) sub_parser.enums[i] = parser->enums[i];
+                sub_parser.function_count = parser->function_count;
+                for(int i=0; i<parser->function_count; i++) sub_parser.functions[i] = parser->functions[i];
+                sub_parser.method_count = parser->method_count;
+                for(int i=0; i<parser->method_count; i++) sub_parser.method_names[i] = parser->method_names[i];
+
+                AstNode *sub_prog = parser_parse(&sub_parser);
+
+                parser->struct_count = sub_parser.struct_count;
+                for(int i=0; i<parser->struct_count; i++) parser->structs[i] = sub_parser.structs[i];
+                parser->enum_count = sub_parser.enum_count;
+                for(int i=0; i<parser->enum_count; i++) parser->enums[i] = sub_parser.enums[i];
+                parser->function_count = sub_parser.function_count;
+                for(int i=0; i<parser->function_count; i++) parser->functions[i] = sub_parser.functions[i];
+                parser->method_count = sub_parser.method_count;
+                for(int i=0; i<parser->method_count; i++) parser->method_names[i] = sub_parser.method_names[i];
+
+                if (sub_prog && !sub_parser.had_error) {
+                    for (int i = 0; i < sub_prog->program.stmt_count; i++) {
+                        if (stmt_count >= stmt_capacity) {
+                            stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
+                            stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
+                        }
+                        stmts[stmt_count++] = sub_prog->program.stmts[i];
+                    }
+                } else {
+                    parser->had_error = true;
+                    strcpy(parser->error_message, sub_parser.error_message);
+                }
+            }
+            continue;
         }
-        stmts[stmt_count++] = parse_stmt(parser);
+
+        AstNode *stmt = parse_stmt(parser);
+        if (stmt) {
+            if (stmt_count >= stmt_capacity) {
+                stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
+                stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
+            }
+            stmts[stmt_count++] = stmt;
+        }
+    }
+
+    if (parser->had_error) {
+        if (stmts) free(stmts);
+        return NULL;
     }
 
     program->program.stmts = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * stmt_count);
-    memcpy(program->program.stmts, stmts, sizeof(AstNode *) * stmt_count);
+    if (stmts) {
+        memcpy(program->program.stmts, stmts, sizeof(AstNode *) * stmt_count);
+        free(stmts);
+    }
     program->program.stmt_count = stmt_count;
-
+    program->program.stmt_capacity = stmt_count;
     return program;
 }
 

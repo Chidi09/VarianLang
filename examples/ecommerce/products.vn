@@ -1,0 +1,32 @@
+fn list_products() {
+    return sqlite.query(db, "SELECT * FROM products")
+}
+
+fn checkout(user_id, product_id, quantity) {
+    let products = sqlite.query(db, "SELECT * FROM products WHERE id = ?", [product_id])
+    if products.len() == 0 {
+        return CheckoutResult { error: "Product not found", success: false, order_id: 0, total: 0.0 }
+    }
+    let product = products[0]
+    
+    if product.stock < quantity {
+        return CheckoutResult { error: "Insufficient stock", success: false, order_id: 0, total: 0.0 }
+    }
+    
+    let total = product.price * quantity
+    
+    let users = sqlite.query(db, "SELECT balance FROM users WHERE id = ?", [user_id])
+    let user = users[0]
+    
+    if user.balance < total {
+        return CheckoutResult { error: "Insufficient balance", success: false, order_id: 0, total: 0.0 }
+    }
+    
+    // Process transaction
+    sqlite.query(db, "UPDATE users SET balance = balance - ? WHERE id = ?", [total, user_id])
+    sqlite.query(db, "UPDATE products SET stock = stock - ? WHERE id = ?", [quantity, product_id])
+    sqlite.query(db, "INSERT INTO orders (user_id, product_id, quantity, total, status) VALUES (?, ?, ?, ?, ?)", [user_id, product_id, quantity, total, "paid"])
+    
+    let res = sqlite.query(db, "SELECT last_insert_rowid() as id")
+    return CheckoutResult { error: null, success: true, order_id: res[0].id, total: total }
+}

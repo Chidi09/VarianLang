@@ -1,0 +1,1142 @@
+#include "lsp.h"
+#include "lint.h"
+#include "fmt.h"
+#include "varian.h"
+#include "lexer.h"
+#include "parser.h"
+#include "ast.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdbool.h>
+#include <ctype.h>
+
+#define MAX_DOCS 32
+static struct {
+    char *uri;
+    char *text;
+} g_docs[MAX_DOCS];
+static int g_doc_count = 0;
+
+static void update_doc(const char *uri, const char *text) {
+    for (int i = 0; i < g_doc_count; i++) {
+        if (strcmp(g_docs[i].uri, uri) == 0) {
+            free(g_docs[i].text);
+            g_docs[i].text = strdup(text);
+            return;
+        }
+    }
+    if (g_doc_count < MAX_DOCS) {
+        g_docs[g_doc_count].uri = strdup(uri);
+        g_docs[g_doc_count].text = strdup(text);
+        g_doc_count++;
+    }
+}
+
+static const char *get_doc(const char *uri) {
+    for (int i = 0; i < g_doc_count; i++) {
+        if (strcmp(g_docs[i].uri, uri) == 0) {
+            return g_docs[i].text;
+        }
+    }
+    return NULL;
+}
+
+static char *decode_json_string(const char **p) {
+    if (**p != '"') return NULL;
+    (*p)++;
+    size_t cap = 256;
+    size_t len = 0;
+    char *res = malloc(cap);
+    while (**p && **p != '"') {
+        if (**p == '\\') {
+            (*p)++;
+            if (!**p) break;
+            char c = **p;
+            if (c == 'n') res[len++] = '\n';
+            else if (c == 'r') res[len++] = '\r';
+            else if (c == 't') res[len++] = '\t';
+            else if (c == '"') res[len++] = '"';
+            else if (c == '\\') res[len++] = '\\';
+            else res[len++] = c;
+            (*p)++;
+        } else {
+            res[len++] = **p;
+            (*p)++;
+        }
+        if (len + 2 >= cap) {
+            cap *= 2;
+            res = realloc(res, cap);
+        }
+    }
+    if (**p == '"') (*p)++;
+    res[len] = '\0';
+    return res;
+}
+
+static const char *find_json_key(const char *json, const char *key) {
+    char target[256];
+    snprintf(target, sizeof(target), "\"%s\"", key);
+    size_t target_len = strlen(target);
+    const char *p = json;
+    while ((p = strstr(p, target)) != NULL) {
+        const char *after = p + target_len;
+        while (*after && isspace((unsigned char)*after)) after++;
+        if (*after == ':') {
+            return after + 1;
+        }
+        p += target_len;
+    }
+    return NULL;
+}
+
+static char *extract_json_string(const char *json, const char *key) {
+    const char *p = find_json_key(json, key);
+    if (!p) return NULL;
+    while (*p && isspace((unsigned char)*p)) p++;
+    if (*p == '"') {
+        return decode_json_string(&p);
+    }
+    return NULL;
+}
+
+static int extract_json_int(const char *json, const char *key) {
+    const char *p = find_json_key(json, key);
+    if (!p) return 0;
+    while (*p && isspace((unsigned char)*p)) p++;
+    return atoi(p);
+}
+
+static char *get_method(const char *json) {
+    return extract_json_string(json, "method");
+}
+
+static int get_id(const char *json) {
+    const char *p = find_json_key(json, "id");
+    if (!p) return -1;
+    while (*p && isspace((unsigned char)*p)) p++;
+    return atoi(p);
+}
+
+static char *get_uri(const char *json) {
+    return extract_json_string(json, "uri");
+}
+
+static char *get_text(const char *json) {
+    return extract_json_string(json, "text");
+}
+
+static void send_response(const char *json) {
+    printf("Content-Length: %zu\r\n\r\n%s", strlen(json), json);
+    fflush(stdout);
+}
+
+static char *encode_json_string(const char *text) {
+    size_t len = strlen(text);
+    size_t cap = len * 2 + 3;
+    char *res = malloc(cap);
+    size_t i = 0, j = 0;
+    res[j++] = '"';
+    for (; i < len; i++) {
+        if (j + 4 >= cap) {
+            cap *= 2;
+            res = realloc(res, cap);
+        }
+        if (text[i] == '\n') { res[j++] = '\\'; res[j++] = 'n'; }
+        else if (text[i] == '\r') { res[j++] = '\\'; res[j++] = 'r'; }
+        else if (text[i] == '\t') { res[j++] = '\\'; res[j++] = 't'; }
+        else if (text[i] == '"') { res[j++] = '\\'; res[j++] = '"'; }
+        else if (text[i] == '\\') { res[j++] = '\\'; res[j++] = '\\'; }
+        else { res[j++] = text[i]; }
+    }
+    res[j++] = '"';
+    res[j] = '\0';
+    return res;
+}
+
+typedef struct {
+    char *diags_json;
+    size_t diags_len;
+    size_t diags_cap;
+    bool first;
+} LspLintSink;
+
+static void lsp_lint_sink(void *ud, int line, int column, const char *category, const char *msg) {
+    LspLintSink *sink = (LspLintSink *)ud;
+    if (!sink->first) {
+        if (sink->diags_len + 2 >= sink->diags_cap) {
+            sink->diags_cap *= 2;
+            sink->diags_json = realloc(sink->diags_json, sink->diags_cap);
+        }
+        strcat(sink->diags_json, ",");
+        sink->diags_len++;
+    }
+    sink->first = false;
+    
+    int l0 = (line > 0) ? line - 1 : 0;
+    int c0 = (column > 0) ? column - 1 : 0;
+    
+    char *msg_enc = encode_json_string(msg);
+    int severity = (strcmp(category, "syntax") == 0) ? 1 : 2;
+    
+    char buf[2048];
+    snprintf(buf, sizeof(buf),
+             "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},"
+             "\"severity\":%d,\"source\":\"VarianLint\",\"message\":%s}",
+             l0, c0, l0, c0 + 1, severity, msg_enc);
+    free(msg_enc);
+    
+    size_t needed = strlen(buf) + 1;
+    if (sink->diags_len + needed >= sink->diags_cap) {
+        sink->diags_cap *= 2;
+        if (sink->diags_len + needed >= sink->diags_cap) {
+            sink->diags_cap = sink->diags_len + needed + 2048;
+        }
+        sink->diags_json = realloc(sink->diags_json, sink->diags_cap);
+    }
+    strcat(sink->diags_json, buf);
+    sink->diags_len += strlen(buf);
+}
+
+static void run_lint_and_publish(const char *uri, const char *text) {
+    LspLintSink sink = {0};
+    sink.diags_cap = 2048;
+    sink.diags_json = malloc(sink.diags_cap);
+    sink.diags_json[0] = '\0';
+    sink.first = true;
+    
+    LintContext ctx = {0};
+    ctx.sink = lsp_lint_sink;
+    ctx.sink_ud = &sink;
+    
+    lint_buffer(text, uri, &ctx);
+    
+    char *uri_enc = encode_json_string(uri);
+    size_t out_cap = sink.diags_len + strlen(uri_enc) + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/publishDiagnostics\",\"params\":{\"uri\":%s,\"diagnostics\":[%s]}}",
+             uri_enc, sink.diags_json);
+    send_response(out_json);
+    
+    free(uri_enc);
+    free(out_json);
+    free(sink.diags_json);
+}
+
+static void handle_formatting(int id, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+    
+    int out_pos = 0;
+    char *formatted = fmt_format_source(text, strlen(text), &out_pos);
+    if (!formatted) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+    
+    char *safe_fmt = malloc(out_pos + 1);
+    memcpy(safe_fmt, formatted, out_pos);
+    safe_fmt[out_pos] = '\0';
+    
+    int lines = 0;
+    for (const char *p = text; *p; p++) {
+        if (*p == '\n') lines++;
+    }
+    
+    char *fmt_enc = encode_json_string(safe_fmt);
+    size_t out_cap = strlen(fmt_enc) + 512;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":%d,\"character\":0}},\"newText\":%s}]}",
+             id, lines + 1, fmt_enc);
+    send_response(out_json);
+    
+    free(safe_fmt);
+    free(fmt_enc);
+    free(out_json);
+    free(formatted);
+}
+
+/* ────────────────────────────────────────────────
+ *  AST helpers for LSP intelligence features
+ * ──────────────────────────────────────────────── */
+
+/* Walk the AST depth-first; find the deepest/innermost node whose span
+ * contains (line, col) — both 1‑indexed Varian coordinates.  Returns a
+ * pointer into arena memory (do not free). */
+static AstNode *find_node_at(AstNode *node, int line, int col, int depth, int *best_depth) {
+    if (!node) return NULL;
+    AstNode *best = NULL;
+
+    /* Default check: the node starts on the target line at or before col.
+     * For identifiers we use the exact identifier bounds. */
+    bool cursor_here = false;
+    if (node->loc.line == line) {
+        if (node->kind == NODE_IDENTIFIER) {
+            int start = node->loc.column;
+            int end = start + (int)strlen(node->identifier.name);
+            if (col >= start && col < end)
+                cursor_here = true;
+        } else if (node->kind == NODE_STRING_LITERAL && node->literal.string_value) {
+            int start = node->loc.column;
+            int end = start + 2 + (int)strlen(node->literal.string_value);
+            if (col >= start && col < end)
+                cursor_here = true;
+        } else if (node->kind == NODE_INT_LITERAL || node->kind == NODE_FLOAT_LITERAL || node->kind == NODE_BOOL_LITERAL || node->kind == NODE_NULL_LITERAL) {
+            if (node->loc.column <= col)
+                cursor_here = true;
+        } else {
+            if (node->loc.column <= col)
+                cursor_here = true;
+        }
+    } else if (node->loc.line < line) {
+        cursor_here = true;
+    }
+
+    if (cursor_here && depth >= *best_depth) {
+        *best_depth = depth;
+        best = node;
+    }
+
+    /* Recurse into children — DFS, source order */
+    AstNode *child_best = NULL;
+    int child_depth = *best_depth;
+    int new_depth = depth + 1;
+
+    switch (node->kind) {
+    case NODE_PROGRAM:
+        for (int i = 0; i < node->program.stmt_count; i++) {
+            AstNode *c = find_node_at(node->program.stmts[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_LET_DECL:
+        if (node->let_decl.initializer) {
+            AstNode *c = find_node_at(node->let_decl.initializer, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_FN_DECL:
+        if (node->fn_decl.body) {
+            AstNode *c = find_node_at(node->fn_decl.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_BLOCK:
+        for (int i = 0; i < node->block.stmt_count; i++) {
+            AstNode *c = find_node_at(node->block.stmts[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_EXPR_STMT:
+        if (node->expr_stmt.expr) {
+            AstNode *c = find_node_at(node->expr_stmt.expr, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_IF:
+        if (node->if_stmt.condition) {
+            AstNode *c = find_node_at(node->if_stmt.condition, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->if_stmt.then_branch) {
+            AstNode *c = find_node_at(node->if_stmt.then_branch, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->if_stmt.else_branch) {
+            AstNode *c = find_node_at(node->if_stmt.else_branch, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_WHILE:
+        if (node->while_stmt.condition) {
+            AstNode *c = find_node_at(node->while_stmt.condition, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->while_stmt.body) {
+            AstNode *c = find_node_at(node->while_stmt.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_FOR:
+        if (node->for_stmt.iterable) {
+            AstNode *c = find_node_at(node->for_stmt.iterable, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->for_stmt.body) {
+            AstNode *c = find_node_at(node->for_stmt.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_LOOP:
+        if (node->loop_stmt.body) {
+            AstNode *c = find_node_at(node->loop_stmt.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_RETURN:
+        for (int i = 0; i < node->return_stmt.value_count; i++) {
+            AstNode *c = find_node_at(node->return_stmt.values[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_ASSIGN:
+        if (node->assign.target) {
+            AstNode *c = find_node_at(node->assign.target, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->assign.value) {
+            AstNode *c = find_node_at(node->assign.value, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_BINARY:
+        if (node->binary.left) {
+            AstNode *c = find_node_at(node->binary.left, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->binary.right) {
+            AstNode *c = find_node_at(node->binary.right, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_UNARY:
+        if (node->unary.operand) {
+            AstNode *c = find_node_at(node->unary.operand, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_CALL:
+        if (node->call.callee) {
+            AstNode *c = find_node_at(node->call.callee, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        for (int i = 0; i < node->call.arg_count; i++) {
+            AstNode *c = find_node_at(node->call.args[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_INDEX:
+        if (node->index.object) {
+            AstNode *c = find_node_at(node->index.object, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->index.index) {
+            AstNode *c = find_node_at(node->index.index, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_DISPATCH_CALL:
+        if (node->dispatch_call.object) {
+            AstNode *c = find_node_at(node->dispatch_call.object, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        for (int i = 0; i < node->dispatch_call.arg_count; i++) {
+            AstNode *c = find_node_at(node->dispatch_call.args[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_MEMBER:
+        if (node->member.object) {
+            AstNode *c = find_node_at(node->member.object, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_INTERPOLATED_STRING:
+        for (int i = 0; i < node->interpolated_string.part_count; i++) {
+            AstNode *c = find_node_at(node->interpolated_string.parts[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_ARRAY_LITERAL:
+        for (int i = 0; i < node->array_literal.element_count; i++) {
+            AstNode *c = find_node_at(node->array_literal.elements[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_TUPLE_LITERAL:
+        for (int i = 0; i < node->tuple_literal.element_count; i++) {
+            AstNode *c = find_node_at(node->tuple_literal.elements[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_MATCH:
+        if (node->match_stmt.value) {
+            AstNode *c = find_node_at(node->match_stmt.value, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        for (int i = 0; i < node->match_stmt.arm_count; i++) {
+            AstNode *c = find_node_at(node->match_stmt.arms[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_MATCH_ARM:
+        if (node->match_arm.body) {
+            AstNode *c = find_node_at(node->match_arm.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_STRUCT_LITERAL:
+        for (int i = 0; i < node->struct_literal.field_count; i++) {
+            AstNode *c = find_node_at(node->struct_literal.field_values[i], line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_TRY:
+        if (node->try_stmt.try_body) {
+            AstNode *c = find_node_at(node->try_stmt.try_body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->try_stmt.catch_body) {
+            AstNode *c = find_node_at(node->try_stmt.catch_body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_CHAN_SEND:
+        if (node->chan_send.channel) {
+            AstNode *c = find_node_at(node->chan_send.channel, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        if (node->chan_send.value) {
+            AstNode *c = find_node_at(node->chan_send.value, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_CHAN_RECEIVE:
+        if (node->chan_receive.channel) {
+            AstNode *c = find_node_at(node->chan_receive.channel, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_AWAIT:
+        if (node->await.expr) {
+            AstNode *c = find_node_at(node->await.expr, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_COMPTIME:
+        if (node->comptime.body) {
+            AstNode *c = find_node_at(node->comptime.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_ASSERT:
+        if (node->assert_stmt.condition) {
+            AstNode *c = find_node_at(node->assert_stmt.condition, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_TEST:
+        if (node->test_decl.body) {
+            AstNode *c = find_node_at(node->test_decl.body, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    case NODE_PROPAGATE:
+        if (node->propagate.expr) {
+            AstNode *c = find_node_at(node->propagate.expr, line, col, new_depth, &child_depth);
+            if (c) child_best = c;
+        }
+        break;
+    default:
+        break;
+    }
+
+    if (child_best) return child_best;
+    return best;
+}
+
+/* Build a short human‑readable "signature" for a declaration node.
+ * Returns a malloc'd string (caller frees). */
+static char *decl_signature(AstNode *node) {
+    char buf[1024];
+    switch (node->kind) {
+    case NODE_FN_DECL: {
+        if (node->fn_decl.impl_type) {
+            snprintf(buf, sizeof(buf), "fn %s.%s(%s)",
+                     node->fn_decl.impl_type, node->fn_decl.name, "");
+        } else {
+            snprintf(buf, sizeof(buf), "fn %s(...)", node->fn_decl.name);
+        }
+        return strdup(buf);
+    }
+    case NODE_STRUCT_DECL:
+        if (node->struct_decl.field_count > 0) {
+            snprintf(buf, sizeof(buf), "struct %s { … } (%d fields)",
+                     node->struct_decl.name, node->struct_decl.field_count);
+        } else {
+            snprintf(buf, sizeof(buf), "struct %s", node->struct_decl.name);
+        }
+        return strdup(buf);
+    case NODE_ENUM_DECL:
+        snprintf(buf, sizeof(buf), "enum %s (%d variants)",
+                 node->enum_decl.name, node->enum_decl.variant_count);
+        return strdup(buf);
+    case NODE_ACTOR_DECL:
+        snprintf(buf, sizeof(buf), "actor %s (%d fields)",
+                 node->actor_decl.name, node->actor_decl.field_count);
+        return strdup(buf);
+    case NODE_LET_DECL: {
+        char names[512] = {0};
+        for (int i = 0; i < node->let_decl.name_count; i++) {
+            if (i > 0) strcat(names, ", ");
+            strcat(names, node->let_decl.names[i]);
+        }
+        snprintf(buf, sizeof(buf), "let %s", names);
+        return strdup(buf);
+    }
+    default:
+        return strdup("(expression)");
+    }
+}
+
+/* Walk the program's top‑level statements to find a declaration matching
+ * `name`.  Returns NULL if none found. */
+static AstNode *find_decl(AstNode *program, const char *name) {
+    if (!program || program->kind != NODE_PROGRAM) return NULL;
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *s = program->program.stmts[i];
+        switch (s->kind) {
+        case NODE_FN_DECL:
+            if (strcmp(s->fn_decl.name, name) == 0) return s;
+            break;
+        case NODE_STRUCT_DECL:
+            if (strcmp(s->struct_decl.name, name) == 0) return s;
+            break;
+        case NODE_ENUM_DECL:
+            if (strcmp(s->enum_decl.name, name) == 0) return s;
+            break;
+        case NODE_ACTOR_DECL:
+            if (strcmp(s->actor_decl.name, name) == 0) return s;
+            break;
+        default:
+            break;
+        }
+    }
+    return NULL;
+}
+
+/* Parse `source` (with vn_modules prelude) into an AST.  Returns the program
+ * node on success, NULL on parse error.  *arena_out is set so the caller can
+ * arena_destroy when done. */
+static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out, int *out_line_offset) {
+    bool inside_vn = (strstr(path, "vn_modules/") != NULL);
+    char *full_source = NULL;
+    int line_offset = 0;
+    char *prelude = NULL;
+    if (!inside_vn) {
+        prelude = (char *)lint_get_vn_prelude(&line_offset);
+    }
+    if (prelude) {
+        size_t plen = strlen(prelude);
+        size_t olen = strlen(source);
+        full_source = (char *)malloc(plen + 1 + olen + 1);
+        memcpy(full_source, prelude, plen);
+        full_source[plen] = '\n';
+        memcpy(full_source + plen + 1, source, olen);
+        full_source[plen + 1 + olen] = '\0';
+    } else {
+        full_source = strdup(source);
+    }
+
+    Lexer lexer;
+    lexer_init(&lexer, full_source, path);
+
+    *arena_out = arena_create(0);
+    Parser parser;
+    parser_init(&parser, &lexer, *arena_out);
+
+    AstNode *program = parser_parse(&parser);
+    if (parser.had_error || !program) {
+        arena_destroy(*arena_out);
+        *arena_out = NULL;
+        free(full_source);
+        return NULL;
+    }
+    free(full_source);
+    if (out_line_offset) *out_line_offset = line_offset;
+    return program;
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_hover
+ * ──────────────────────────────────────────────── */
+static void handle_hover(int id, const char *json, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    /* Convert LSP 0‑indexed → Varian 1‑indexed, then offset by prelude */
+    int vline = line_lsp + 1 + line_offset;
+    int vcol  = char_lsp + 1;
+
+    int best_depth = -1;
+    AstNode *found = find_node_at(program, vline, vcol, 0, &best_depth);
+
+    char *markdown = NULL;
+
+    /* Helper: check if cursor is on the name part of a declaration */
+    #define CURSOR_ON_NAME(node, name_str) ( \
+        (name_str) && vcol >= (node)->loc.column && \
+        vcol < (node)->loc.column + (int)strlen(name_str) + 1 \
+    )
+
+    if (found) {
+        if (found->kind == NODE_IDENTIFIER) {
+            const char *name = found->identifier.name;
+            AstNode *decl = find_decl(program, name);
+            if (decl) {
+                char *sig = decl_signature(decl);
+                size_t mlen = strlen(sig) + 128;
+                markdown = malloc(mlen);
+                snprintf(markdown, mlen, "```varian\n%s\n```\n\n**%s**", sig, name);
+                free(sig);
+            } else {
+                size_t mlen = strlen(name) + 64;
+                markdown = malloc(mlen);
+                snprintf(markdown, mlen, "```varian\n%s\n```", name);
+            }
+        } else if (found->kind == NODE_FN_DECL && CURSOR_ON_NAME(found, found->fn_decl.name)) {
+            char *sig = decl_signature(found);
+            size_t mlen = strlen(sig) + 64;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            free(sig);
+        } else if (found->kind == NODE_STRUCT_DECL && CURSOR_ON_NAME(found, found->struct_decl.name)) {
+            char *sig = decl_signature(found);
+            size_t mlen = strlen(sig) + 64;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            free(sig);
+        } else if (found->kind == NODE_ENUM_DECL && CURSOR_ON_NAME(found, found->enum_decl.name)) {
+            char *sig = decl_signature(found);
+            size_t mlen = strlen(sig) + 64;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            free(sig);
+        } else if (found->kind == NODE_ACTOR_DECL && CURSOR_ON_NAME(found, found->actor_decl.name)) {
+            char *sig = decl_signature(found);
+            size_t mlen = strlen(sig) + 64;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            free(sig);
+        } else if (found->kind == NODE_CALL) {
+            if (found->call.callee && found->call.callee->kind == NODE_IDENTIFIER) {
+                const char *name = found->call.callee->identifier.name;
+                AstNode *decl = find_decl(program, name);
+                if (decl) {
+                    char *sig = decl_signature(decl);
+                    size_t mlen = strlen(sig) + 128;
+                    markdown = malloc(mlen);
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                    free(sig);
+                }
+            }
+        } else if (found->kind == NODE_STRUCT_LITERAL) {
+            size_t mlen = strlen(found->struct_literal.name) + 128;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\nstruct %s { … }\n```", found->struct_literal.name);
+        } else if (found->kind == NODE_ENUM_LITERAL) {
+            size_t mlen = strlen(found->enum_literal.enum_name) + strlen(found->enum_literal.variant_name) + 128;
+            markdown = malloc(mlen);
+            snprintf(markdown, mlen, "```varian\n%s::%s\n```", found->enum_literal.enum_name, found->enum_literal.variant_name);
+        } else if (found->kind == NODE_STRING_LITERAL) {
+            markdown = strdup("```varian\nstring\n```");
+        } else if (found->kind == NODE_INT_LITERAL) {
+            markdown = strdup("```varian\nint\n```");
+        } else if (found->kind == NODE_FLOAT_LITERAL) {
+            markdown = strdup("```varian\nfloat\n```");
+        } else if (found->kind == NODE_BOOL_LITERAL) {
+            markdown = strdup("```varian\nbool\n```");
+        } else if (found->kind == NODE_NULL_LITERAL) {
+            markdown = strdup("```varian\nnull\n```");
+        }
+    }
+    #undef CURSOR_ON_NAME
+
+    if (!markdown) {
+        markdown = strdup("_(expression)_");
+    }
+
+    char *md_enc = encode_json_string(markdown);
+    size_t out_cap = strlen(md_enc) + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"contents\":{\"kind\":\"markdown\",\"value\":%s}}}",
+             id, md_enc);
+    send_response(out_json);
+
+    free(md_enc);
+    free(out_json);
+    free(markdown);
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_completion
+ * ──────────────────────────────────────────────── */
+static void handle_completion(int id, const char *json, const char *uri) {
+    (void)json;
+    (void)uri;
+
+    /* Built‑in keywords and type names */
+    const char *keywords[] = {
+        "let", "const", "fn", "return", "if", "else", "while", "for", "in",
+        "loop", "match", "case", "struct", "enum", "actor", "impl", "trait",
+        "type", "use", "pub", "mut", "async", "await", "break", "continue",
+        "comptime", "try", "catch", "assert", "test", "true", "false", "null",
+        "bool", "int", "float", "string", "byte", "void", "self",
+        /* Standard library modules */
+        "http", "regex", "io", "math", "env", "time", "json", "string", "sqlite",
+        "postgres", "redis", "auth", "validate", "sanitize", "crypto",
+        /* Common methods */
+        "len", "push", "get", "post", "query", "split", "trim", "replace",
+        "contains", "starts_with", "substring", "upper", "lower",
+        "read_text", "write_text", "read_bytes", "write_bytes",
+        "exists", "delete", "list_dir", "mkdir",
+    };
+    int kw_count = sizeof(keywords) / sizeof(keywords[0]);
+
+    /* Build JSON array of completion items */
+    size_t cap = 8192;
+    size_t len = 0;
+    char *items = malloc(cap);
+    items[0] = '\0';
+
+    for (int i = 0; i < kw_count; i++) {
+        char *label_enc = encode_json_string(keywords[i]);
+        char buf[512];
+        int kind = 14; /* 14 = Keyword in LSP */
+        if (i >= 33 && i <= 38) kind = 6; /* type name → 6 = Class */
+        else if (strcmp(keywords[i], "true") == 0 || strcmp(keywords[i], "false") == 0 || strcmp(keywords[i], "null") == 0) kind = 21; /* 21 = Constant */
+        else if (strcmp(keywords[i], "self") == 0) kind = 10; /* 10 = Variable */
+
+        snprintf(buf, sizeof(buf), "%s{\"label\":%s,\"kind\":%d}", (len > 0 ? "," : ""), label_enc, kind);
+        free(label_enc);
+
+        size_t blen = strlen(buf);
+        if (len + blen + 2 >= cap) {
+            cap *= 2;
+            items = realloc(items, cap);
+        }
+        strcat(items, buf);
+        len += blen;
+    }
+
+    size_t out_cap = len + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"isIncomplete\":false,\"items\":[%s]}}",
+             id, items);
+    send_response(out_json);
+
+    free(items);
+    free(out_json);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_definition
+ * ──────────────────────────────────────────────── */
+static void handle_definition(int id, const char *json, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int vline = line_lsp + 1 + line_offset;
+    int vcol  = char_lsp + 1;
+
+    int best_depth = -1;
+    AstNode *found = find_node_at(program, vline, vcol, 0, &best_depth);
+
+    AstNode *target_decl = NULL;
+
+    if (found) {
+        if (found->kind == NODE_IDENTIFIER) {
+            target_decl = find_decl(program, found->identifier.name);
+        } else if (found->kind == NODE_FN_DECL) {
+            target_decl = found; /* definition points to itself */
+        } else if (found->kind == NODE_STRUCT_DECL) {
+            target_decl = found;
+        } else if (found->kind == NODE_ENUM_DECL) {
+            target_decl = found;
+        } else if (found->kind == NODE_ACTOR_DECL) {
+            target_decl = found;
+        }
+    }
+
+    if (target_decl) {
+        /* Skip if declaration is in the prelude */
+        int dl_raw = target_decl->loc.line;
+        if (dl_raw > line_offset) {
+            int dl = dl_raw - 1 - line_offset;
+            int dc = target_decl->loc.column - 1;
+            char *uri_enc = encode_json_string(uri);
+            size_t out_cap = strlen(uri_enc) + 256;
+            char *out_json = malloc(out_cap);
+            snprintf(out_json, out_cap,
+                     "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":"
+                     "{\"uri\":%s,\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}}",
+                     id, uri_enc, dl, dc, dl, dc + 1);
+            send_response(out_json);
+            free(uri_enc);
+            free(out_json);
+            arena_destroy(arena);
+            return;
+        }
+    }
+
+    char buf[256];
+    snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+    send_response(buf);
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_document_symbols
+ * ──────────────────────────────────────────────── */
+static void handle_document_symbols(int id, const char *json, const char *uri) {
+    (void)json;
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program || program->kind != NODE_PROGRAM) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        if (arena) arena_destroy(arena);
+        return;
+    }
+
+    size_t cap = 4096;
+    size_t len = 0;
+    char *symbols = malloc(cap);
+    symbols[0] = '\0';
+
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *s = program->program.stmts[i];
+        /* Skip nodes that belong to the prelude */
+        if (s->loc.line <= line_offset) continue;
+
+        int kind_lsp = 0; /* LSP SymbolKind */
+        const char *name = NULL;
+        SourceLoc *loc = &s->loc;
+
+        switch (s->kind) {
+        case NODE_FN_DECL:
+            name = s->fn_decl.name;
+            kind_lsp = 12; /* Function */
+            break;
+        case NODE_STRUCT_DECL:
+            name = s->struct_decl.name;
+            kind_lsp = 5; /* Struct (Class) */
+            break;
+        case NODE_ENUM_DECL:
+            name = s->enum_decl.name;
+            kind_lsp = 10; /* Enum */
+            break;
+        case NODE_ACTOR_DECL:
+            name = s->actor_decl.name;
+            kind_lsp = 5; /* Class-like */
+            break;
+        case NODE_TEST:
+            name = s->test_decl.description;
+            kind_lsp = 13; /* Method/Test */
+            break;
+        default:
+            break;
+        }
+
+        if (name) {
+            int sl = loc->line - 1 - line_offset;
+            int sc = loc->column - 1;
+            char *name_enc = encode_json_string(name);
+            char buf[1024];
+            snprintf(buf, sizeof(buf),
+                     "%s{\"name\":%s,\"kind\":%d,\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"selectionRange\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}",
+                     (len > 0 ? "," : ""),
+                     name_enc, kind_lsp,
+                     sl, sc, sl, sc + 1,
+                     sl, sc, sl, sc + 1);
+            free(name_enc);
+            size_t blen = strlen(buf);
+            if (len + blen + 2 >= cap) {
+                cap *= 2;
+                symbols = realloc(symbols, cap);
+            }
+            strcat(symbols, buf);
+            len += blen;
+        }
+    }
+
+    size_t out_cap = len + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[%s]}", id, symbols);
+    send_response(out_json);
+
+    free(symbols);
+    free(out_json);
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  Initialize
+ * ──────────────────────────────────────────────── */
+static void handle_initialize(int id) {
+    char buf[1024];
+    snprintf(buf, sizeof(buf),
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"capabilities\":{"
+             "\"textDocumentSync\":1,"
+             "\"hoverProvider\":true,"
+             "\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},"
+             "\"definitionProvider\":true,"
+             "\"documentFormattingProvider\":true,"
+             "\"documentSymbolProvider\":true"
+             "}}}", id);
+    send_response(buf);
+}
+
+int lsp_main(void) {
+    char line[1024];
+    while (fgets(line, sizeof(line), stdin)) {
+        int content_length = -1;
+        if (strncmp(line, "Content-Length:", 15) == 0) {
+            content_length = atoi(line + 15);
+        }
+        while (fgets(line, sizeof(line), stdin)) {
+            if (strcmp(line, "\r\n") == 0 || strcmp(line, "\n") == 0) {
+                break;
+            }
+            if (strncmp(line, "Content-Length:", 15) == 0) {
+                content_length = atoi(line + 15);
+            }
+        }
+        
+        if (content_length < 0) continue;
+        
+        char *json = malloc(content_length + 1);
+        int read_bytes = 0;
+        while (read_bytes < content_length) {
+            int c = fgetc(stdin);
+            if (c == EOF) break;
+            json[read_bytes++] = c;
+        }
+        json[read_bytes] = '\0';
+        
+        char *method = get_method(json);
+        int id = get_id(json);
+        
+        if (method) {
+            if (strcmp(method, "initialize") == 0) {
+                handle_initialize(id);
+            } else if (strcmp(method, "shutdown") == 0) {
+                char buf[256];
+                snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+                send_response(buf);
+            } else if (strcmp(method, "exit") == 0) {
+                free(method);
+                free(json);
+                break;
+            } else if (strcmp(method, "textDocument/didOpen") == 0 ||
+                       strcmp(method, "textDocument/didChange") == 0 ||
+                       strcmp(method, "textDocument/didSave") == 0) {
+                char *uri = get_uri(json);
+                char *text = get_text(json);
+                if (uri && text) {
+                    update_doc(uri, text);
+                    run_lint_and_publish(uri, text);
+                } else if (uri && strcmp(method, "textDocument/didSave") == 0) {
+                    const char *doc_text = get_doc(uri);
+                    if (doc_text) {
+                        run_lint_and_publish(uri, doc_text);
+                    }
+                }
+                if (uri) free(uri);
+                if (text) free(text);
+            } else if (strcmp(method, "textDocument/formatting") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_formatting(id, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/hover") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_hover(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/completion") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_completion(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/definition") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_definition(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/documentSymbol") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_document_symbols(id, json, uri);
+                    free(uri);
+                }
+            }
+            free(method);
+        }
+        free(json);
+    }
+    return 0;
+}

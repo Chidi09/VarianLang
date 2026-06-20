@@ -1,0 +1,47 @@
+{
+    "name": "varian",
+    "displayName": "Varian Language Support",
+    "description": "Language support and LSP for Varian",
+    "version": "0.1.0",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": [
+        "Programming Languages",
+        "Linters",
+        "Formatters"
+    ],
+    "activationEvents": [
+        "onLanguage:varian"
+    ],
+    "main": "./extension.js",
+    "contributes": {
+        "languages": [
+            {
+                "id": "varian",
+                "aliases": [
+                    "Varian",
+                    "varian"
+                ],
+                "extensions": [
+                    ".vn",
+                    ".vhtml"
+                ]
+            }
+        ],
+        "configuration": {
+            "type": "object",
+            "title": "Varian",
+            "properties": {
+                "varian.path": {
+                    "type": "string",
+                    "default": "vn",
+                    "description": "Path to the Varian executable (e.g. /path/to/vn or vn if in PATH)"
+                }
+            }
+        }
+    },
+    "dependencies": {
+        "vscode-languageclient": "^8.1.0"
+    }
+}

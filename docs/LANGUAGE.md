@@ -158,6 +158,19 @@ print(missing?.name ?? "default")   // "default"
 both sides (it is **not** short-circuiting — consistent with `&&`/`||` in this VM, which
 also always evaluate both operands) and returns the left side unless it's `nil`.
 
+## Boolean operators
+
+`&&`, `||`, and `!` are the logical operators. The keywords `and`, `or`, and `not` are
+accepted as exact aliases (lexed to the same tokens), so both styles are equivalent:
+
+```varian
+if active and not banned { ... }      // same as:  active && !banned
+if role == "admin" or is_owner { ... } // same as:  role == "admin" || is_owner
+```
+
+Member access also accepts these (and other reserved words) as names, so `regex.match(...)`,
+`obj.and`, `resp.not_found` etc. parse fine even though `match`/`and`/`not` are keywords.
+
 ## Structs and methods
 
 ```varian

@@ -15,5 +15,5 @@
 let app = new_app()
 app.get("/ping", | req | {
     return Response { status: 200, body: "pong", content_type: "text/plain" }
-}, "ping")
+}, "ping", null)
 app.listen_tls(8943, "/tmp/cert.pem", "/tmp/key.pem")

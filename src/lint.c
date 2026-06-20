@@ -53,6 +53,12 @@ static void report_lint(LintContext *ctx, SourceLoc loc, const char *category, c
     vsnprintf(msg, sizeof(msg), fmt, args);
     va_end(args);
 
+    if (ctx->sink) {
+        ctx->sink(ctx->sink_ud, line, loc.column, category, msg);
+        ctx->had_error = true;
+        return;
+    }
+
     if (ctx->format && strcmp(ctx->format, "json") == 0) {
         // Simple JSON escape for message
         printf("{\"category\":\"%s\",\"file\":\"%s\",\"line\":%d,\"message\":\"%s\"}\n",
@@ -745,13 +751,24 @@ static char *build_vn_modules_prelude(int *out_line_count) {
     return result;
 }
 
-static int lint_file(const char *path, LintContext *ctx) {
-    char *own_source = read_file(path);
-    if (!own_source) {
-        fprintf(stderr, "lint: could not read file '%s'\n", path);
-        return 1;
-    }
+static char *g_cached_prelude = NULL;
+static int g_cached_prelude_lines = 0;
+static bool g_prelude_cached = false;
 
+static char *get_cached_vn_modules_prelude(int *out_line_count) {
+    if (!g_prelude_cached) {
+        g_cached_prelude = build_vn_modules_prelude(&g_cached_prelude_lines);
+        g_prelude_cached = true;
+    }
+    *out_line_count = g_cached_prelude_lines;
+    return g_cached_prelude;
+}
+
+const char *lint_get_vn_prelude(int *out_line_count) {
+    return get_cached_vn_modules_prelude(out_line_count);
+}
+
+int lint_buffer(const char *user_source, const char *path, LintContext *ctx) {
     /* Files inside vn_modules/ are linted standalone -- prepending the
      * prelude there would mean a file sees (a duplicate of) itself. Other
      * files get the prelude so the parser knows about types/functions
@@ -759,21 +776,22 @@ static int lint_file(const char *path, LintContext *ctx) {
      * trying to parse code that uses them -- without it, e.g. any file using
      * Zenith's `Response { ... }` literal fails to parse at all. */
     bool inside_vn_modules = (strstr(path, "vn_modules/") != NULL);
-    char *source = own_source;
+    char *source = NULL;       /* the buffer actually handed to the lexer */
     int line_offset = 0;
     char *prelude = NULL;
     if (!inside_vn_modules) {
-        prelude = build_vn_modules_prelude(&line_offset);
-        if (prelude) {
-            size_t plen = strlen(prelude);
-            size_t olen = strlen(own_source);
-            char *combined = (char *)malloc(plen + 1 + olen + 1);
-            memcpy(combined, prelude, plen);
-            combined[plen] = '\n';
-            memcpy(combined + plen + 1, own_source, olen);
-            combined[plen + 1 + olen] = '\0';
-            source = combined;
-        }
+        prelude = get_cached_vn_modules_prelude(&line_offset);
+    }
+    if (prelude) {
+        size_t plen = strlen(prelude);
+        size_t olen = strlen(user_source);
+        source = (char *)malloc(plen + 1 + olen + 1);
+        memcpy(source, prelude, plen);
+        source[plen] = '\n';
+        memcpy(source + plen + 1, user_source, olen);
+        source[plen + 1 + olen] = '\0';
+    } else {
+        source = strdup(user_source);
     }
 
     Lexer lexer;
@@ -785,11 +803,28 @@ static int lint_file(const char *path, LintContext *ctx) {
 
     AstNode *program = parser_parse(&parser);
     if (parser.had_error) {
-        fprintf(stderr, "Parse error in %s: %s\n", path, parser_get_error(&parser));
+        const char *emsg = parser_get_error(&parser);
+        if (ctx->sink) {
+            /* Parser error messages are prefixed "[line:col] ...". Pull the
+             * location out, drop the prelude offset, and surface as a syntax
+             * diagnostic only if it lands in the user's own code. */
+            int el = 0, ec = 0;
+            if (sscanf(emsg, "[%d:%d]", &el, &ec) == 2 && el > line_offset) {
+                const char *msg_text = strchr(emsg, ']');
+                if (msg_text) {
+                    msg_text++;
+                    while (*msg_text == ' ') msg_text++;
+                } else {
+                    msg_text = emsg;
+                }
+                ctx->sink(ctx->sink_ud, el - line_offset, ec, "syntax", msg_text);
+                ctx->had_error = true;
+            }
+        } else {
+            fprintf(stderr, "Parse error in %s: %s\n", path, emsg);
+        }
         arena_destroy(arena);
-        free(own_source);
-        if (source != own_source) free(source);
-        free(prelude);
+        free(source);
         return 1;
     }
 
@@ -809,10 +844,19 @@ static int lint_file(const char *path, LintContext *ctx) {
     lint_walk(program, &walker);
 
     arena_destroy(arena);
-    free(own_source);
-    if (source != own_source) free(source);
-    free(prelude);
+    free(source);
     return 0;
+}
+
+static int lint_file(const char *path, LintContext *ctx) {
+    char *own_source = read_file(path);
+    if (!own_source) {
+        fprintf(stderr, "lint: could not read file '%s'\n", path);
+        return 1;
+    }
+    int rc = lint_buffer(own_source, path, ctx);
+    free(own_source);
+    return rc;
 }
 
 static void collect_vn_files(const char *dir, char ***files, int *count, int *cap) {
@@ -856,6 +900,9 @@ int run_lint(const char *path, const char *only_category, const char *format) {
     ctx.only_category = only_category;
     ctx.format = format;
     ctx.had_error = false;
+    ctx.line_offset = 0;
+    ctx.sink = NULL;
+    ctx.sink_ud = NULL;
 
     struct stat st;
     if (stat(path, &st) == -1) {

@@ -6,6 +6,7 @@
 #include "test_runner.h"
 #include "pkg_manager.h"
 #include "lint.h"
+#include "lsp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -263,6 +264,7 @@ static void print_help(const char *prog) {
     printf("                   Run *_test.vn tests (default dir: .)\n");
     printf("  %s add <pkg>     Add a package dependency\n", prog);
     printf("  %s wrap <target> Generate wrapper for a foreign library\n", prog);
+    printf("  %s lsp           Start LSP server\n", prog);
     printf("  %s --help        Show this help\n", prog);
     printf("\n");
     printf("Environment variables:\n");
@@ -438,6 +440,10 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
+    if (strcmp(argv[1], "lsp") == 0) {
+        return lsp_main();
+    }
+
     if (strcmp(argv[1], "fmt") == 0) {
         const char *path = NULL;
         bool check_only = false;
@@ -574,6 +580,13 @@ int main(int argc, char *argv[]) {
     if (argc == 2) {
         char *source = read_file_with_modules(argv[1]);
         if (!source) return 1;
+        
+        FILE *dump = fopen("debug_source.vn", "wb");
+        if (dump) {
+            fwrite(source, 1, strlen(source), dump);
+            fclose(dump);
+        }
+        
         g_varian_script_path = argv[1];
         int result = run_source(source, argv[1]);
         free(source);

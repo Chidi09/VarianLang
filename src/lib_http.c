@@ -786,8 +786,9 @@ static Value radix_lookup(RadixNode *root, const char *method, const char *path,
                     int clen = seg_len < (int)sizeof(params[*param_count].value) - 1 ? seg_len : (int)sizeof(params[*param_count].value) - 1;
                     memcpy(params[*param_count].value, path + start, clen);
                     params[*param_count].value[clen] = '\0';
-                    memcpy(params[*param_count].name, child->param_name, child->param_namelen);
-                    params[*param_count].name[child->param_namelen] = '\0';
+                    int nlen = child->param_namelen < (int)sizeof(params[*param_count].name) - 1 ? child->param_namelen : (int)sizeof(params[*param_count].name) - 1;
+                    memcpy(params[*param_count].name, child->param_name, nlen);
+                    params[*param_count].name[nlen] = '\0';
                     (*param_count)++;
                 }
                 break;

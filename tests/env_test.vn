@@ -1,0 +1,15 @@
+test "env.load works" {
+    env.load() // Doesn't crash if .env doesn't exist
+    assert_eq(true, true)
+}
+
+test "env.get returns null or default" {
+    assert_eq(env.get("NOT_A_VAR_FOR_TEST"), null)
+    assert_eq(env.get("NOT_A_VAR_FOR_TEST", "default_val"), "default_val")
+}
+
+test "env.require crashes if missing" {
+    assert_throws(|_| {
+        env.require("NOT_A_VAR_REQUIRE")
+    })
+}

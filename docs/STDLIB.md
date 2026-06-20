@@ -127,6 +127,26 @@ decorators (see `docs/LANGUAGE.md`) — `is_email`, `is_url`, `is_alphanumeric`,
 
 `sanitize.strip_html(s)`, `sanitize.escape_html(s)`, `sanitize.trim(s)`.
 
+## `regex` — POSIX extended regular expressions
+
+Backed by libc `regcomp`/`regexec` (POSIX ERE). There are **no** `\d`/`\w` shorthands —
+use character classes (`[0-9]`, `[A-Za-z]`). Every function takes an optional trailing
+`flags` string: `"i"` for case-insensitive, `"m"` for multi-line (`^`/`$` match at line
+breaks).
+
+```varian
+regex.test("[0-9]+", "abc123")              // true
+regex.test("hello", "HELLO", "i")           // true (case-insensitive)
+regex.match("[0-9]+", "order 42 now")       // "42"  (first match, or null)
+regex.find_all("[0-9]+", "a1 b22 c333")     // ["1", "22", "333"]
+regex.groups("([a-z]+)@([a-z]+)", "ada@example")  // ["ada@example", "ada", "example"]
+regex.replace("[0-9]+", "a1b2", "#")        // "a#b#"  (replaces all)
+regex.replace("([a-z])([0-9])", "a1", "\\2\\1")   // "1a"  (\1..\9 backrefs, \0 = whole)
+```
+
+`match`/`groups` return `null` when there is no match; `find_all` returns `[]`.
+Note `match` is a reserved keyword but works fine after `.` (see `docs/LANGUAGE.md`).
+
 ## `json_encode` / `json_decode`
 
 Plain globals, not a module (no `json.` prefix):

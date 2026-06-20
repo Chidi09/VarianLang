@@ -1,0 +1,117 @@
+struct Product { id: string, name: string, description: string, price: float, stock: int }
+struct CartItem { product_id: string, quantity: int }
+struct Order { id: string, items: [CartItem], total: float, status: string }
+
+let products = [
+    Product { id: "p1", name: "Laptop", description: "High-performance laptop", price: 999.99, stock: 10 },
+    Product { id: "p2", name: "Smartphone", description: "Latest model smartphone", price: 599.50, stock: 25 },
+    Product { id: "p3", name: "Headphones", description: "Noise-cancelling headphones", price: 199.00, stock: 50 },
+]
+
+let cart = []
+let orders = []
+let next_order_id = 1
+
+let app = new_app()
+
+app.add_middleware(|req, next| {
+    print("ECOMMERCE LOG:", req.method, req.path)
+    return next(req)
+})
+
+// --- Products API ---
+
+app.get("/api/products", |req| {
+    return Response { status: 200, body: json_encode(products), content_type: "application/json" }
+}, "List all products", null)
+
+app.get("/api/products/:id", |req| {
+    for i in 0..products.len() {
+        if products[i].id == req.params.id {
+            return Response { status: 200, body: json_encode(products[i]), content_type: "application/json" }
+        }
+    }
+    return Response { status: 404, body: "{\"error\": \"Product not found\"}", content_type: "application/json" }
+}, "Get a specific product by ID", null)
+
+// --- Cart API ---
+
+app.get("/api/cart", |req| {
+    return Response { status: 200, body: json_encode(cart), content_type: "application/json" }
+}, "View current shopping cart", null)
+
+app.post("/api/cart", |req| {
+    let product_id = req.json.product_id
+    let quantity = req.json.quantity
+    
+    // Check if product exists and has stock
+    let found = false
+    for i in 0..products.len() {
+        if products[i].id == product_id {
+            if products[i].stock < quantity {
+                return Response { status: 400, body: "{\"error\": \"Not enough stock\"}", content_type: "application/json" }
+            }
+            found = true
+            break
+        }
+    }
+    
+    if !found {
+        return Response { status: 404, body: "{\"error\": \"Product not found\"}", content_type: "application/json" }
+    }
+    
+    // Add to cart (simplification: just pushes, doesn't merge duplicates)
+    cart = cart.push(CartItem { product_id: product_id, quantity: quantity })
+    return Response { status: 201, body: json_encode(cart), content_type: "application/json" }
+}, "Add an item to the cart", null)
+
+app.delete("/api/cart", |req| {
+    cart = []
+    return Response { status: 200, body: "{\"message\": \"Cart cleared\"}", content_type: "application/json" }
+}, "Clear the shopping cart", null)
+
+// --- Checkout API ---
+
+app.post("/api/checkout", |req| {
+    if cart.len() == 0 {
+        return Response { status: 400, body: "{\"error\": \"Cart is empty\"}", content_type: "application/json" }
+    }
+    
+    let total = 0.0
+    for i in 0..cart.len() {
+        let item = cart[i]
+        for j in 0..products.len() {
+            if products[j].id == item.product_id {
+                total = total + (products[j].price * item.quantity)
+                // Deduct stock
+                products[j].stock = products[j].stock - item.quantity
+                break
+            }
+        }
+    }
+    
+    let order = Order {
+        id: "ord_" + next_order_id,
+        items: cart,
+        total: total,
+        status: "Completed"
+    }
+    orders = orders.push(order)
+    next_order_id = next_order_id + 1
+    
+    // Empty the cart
+    cart = []
+    
+    return Response { status: 201, body: json_encode(order), content_type: "application/json" }
+}, "Checkout and create an order", null)
+
+app.get("/api/orders", |req| {
+    return Response { status: 200, body: json_encode(orders), content_type: "application/json" }
+}, "List all orders", null)
+
+// --- Setup ---
+
+app.enable_docs("/docs")
+print("Ecommerce backend starting on port 8080...")
+print("API Documentation available at http://localhost:8080/docs")
+app.listen(8080)

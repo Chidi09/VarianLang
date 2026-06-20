@@ -1,3 +1,1024 @@
+// Authentication Module for Varian & Zenith
+
+// JWT Verification Middleware
+fn jwt_middleware(secret) {
+    return |req, next| {
+        let auth_header = req.headers?.authorization
+        if (auth_header == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Missing Authorization header", "text/plain"]
+            )
+        }
+        if (!auth_header.starts_with("Bearer ")) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid Authorization header format", "text/plain"]
+            )
+        }
+        let token = auth_header.substring(7, auth_header.len())
+        let payload = auth.verify_jwt(token, secret)
+        if (payload == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid or expired token", "text/plain"]
+            )
+        }
+
+        // Attach payload to req as req.user
+        let keys = _validate.get_keys(req)
+        let vals = []
+        let i = 0
+        while (i < keys.len()) {
+            vals = vals.push(_validate.get_field(req, keys[i]))
+            i = i + 1
+        }
+        keys = keys.push("user")
+        vals = vals.push(payload)
+        
+        let req_with_user = http.create_struct(keys, vals)
+        return next(req_with_user)
+    }
+}
+
+// Session Actor
+actor SessionStore {
+    sessions: any // Map/Struct created dynamically
+}
+
+fn session_store_actor(self) {
+    self.sessions = http.create_struct([], [])
+    while (true) {
+        let msg = receive()
+        let action = _validate.get_field(msg, "action")
+        let sid = _validate.get_field(msg, "sid")
+        if (action == "get") {
+            let user = _validate.get_field(self.sessions, sid)
+            let reply_to = _validate.get_field(msg, "reply_to")
+            reply_to <- user
+        } else if (action == "set") {
+            let user = _validate.get_field(msg, "user")
+            // Update sessions by creating a new struct with new key/value
+            let keys = _validate.get_keys(self.sessions)
+            let vals = []
+            let i = 0
+            let replaced = false
+            while (i < keys.len()) {
+                if (keys[i] == sid) {
+                    vals = vals.push(user)
+                    replaced = true
+                } else {
+                    vals = vals.push(_validate.get_field(self.sessions, keys[i]))
+                }
+                i = i + 1
+            }
+            if (!replaced) {
+                keys = keys.push(sid)
+                vals = vals.push(user)
+            }
+            self.sessions = http.create_struct(keys, vals)
+        } else if (action == "delete") {
+            let keys = _validate.get_keys(self.sessions)
+            let new_keys = []
+            let new_vals = []
+            let i = 0
+            while (i < keys.len()) {
+                if (keys[i] != sid) {
+                    new_keys = new_keys.push(keys[i])
+                    new_vals = new_vals.push(_validate.get_field(self.sessions, keys[i]))
+                }
+                i = i + 1
+            }
+            self.sessions = http.create_struct(new_keys, new_vals)
+        }
+    }
+}
+
+// Helper to extract cookie value
+fn _extract_cookie(cookie_header, name) {
+    if (cookie_header == null) { return null }
+    let parts = cookie_header.split(";")
+    let i = 0
+    while (i < parts.len()) {
+        let part = _sanitize.trim(parts[i])
+        if (part.starts_with(name + "=")) {
+            return part.substring(name.len() + 1, part.len())
+        }
+        i = i + 1
+    }
+    return null
+}
+
+// Session Middleware Builder
+fn session_middleware(store_pid, cookie_name) {
+    return |req, next| {
+        let cookie_header = req.headers?.cookie
+        let sid = _extract_cookie(cookie_header, cookie_name)
+        let user = null
+
+        if (sid != null) {
+            let reply = task.channel(1)
+            store_pid <- http.create_struct(
+                ["action", "sid", "reply_to"],
+                ["get", sid, reply]
+            )
+            user = <- reply
+        }
+
+        // Attach user (or null) to req.user
+        let keys = _validate.get_keys(req)
+        let vals = []
+        let i = 0
+        while (i < keys.len()) {
+            vals = vals.push(_validate.get_field(req, keys[i]))
+            i = i + 1
+        }
+        keys = keys.push("user")
+        vals = vals.push(user)
+        
+        let req_with_user = http.create_struct(keys, vals)
+        return next(req_with_user)
+    }
+}
+
+// Global zenith_auth namespace object
+let zenith_auth = http.create_struct(
+    ["jwt", "session_store", "session", "hash_password", "verify_password"],
+    [
+        |secret| { return jwt_middleware(secret) },
+        | | { return task.spawn(session_store_actor, []) },
+        |store_pid, cookie_name| { return session_middleware(store_pid, cookie_name) },
+        |password| { return auth.hash_password(password) },
+        |password, hash| { return auth.verify_password(password, hash) }
+    ]
+)
+
+// db.vn - Compile-time SQL generation + runtime parameter binding
+//
+// Query *shape* (table, fields, where field/op pairs, limit/offset, dialect)
+// is static at almost every call site, so compile_select()/QueryBuilder.build()
+// depend on nothing but that shape and are safe to evaluate inside a
+// `comptime { ... }` block. The actual bind *values* are runtime-only and are
+// supplied afterwards via bind(), which checks the value count against the
+// shape before any SQL ever reaches the driver.
+
+struct CompiledQuery { sql: string, param_count: int, dialect: string }
+struct BoundQuery { sql: string, params: array }
+
+// Pure function of query shape -> SQL text. No parameter values involved,
+// so this can be called from inside `comptime { ... }` to bake the SQL
+// string into the program at compile time.
+fn compile_select(table, fields, wheres, limit_val, offset_val, dialect) {
+    let sql = "SELECT "
+    for i in 0..fields.len() {
+        if i > 0 { sql = sql + ", " }
+        sql = sql + fields[i]
+    }
+    sql = sql + " FROM " + table
+
+    if wheres.len() > 0 {
+        sql = sql + " WHERE "
+        for i in 0..wheres.len() {
+            if i > 0 { sql = sql + " AND " }
+            let clause = wheres[i]
+            let placeholder = "?"
+            if dialect == "postgres" {
+                let idx = i + 1
+                placeholder = "$" + idx
+            }
+            sql = sql + clause[0] + " " + clause[1] + " " + placeholder
+        }
+    }
+
+    if limit_val >= 0 { sql = sql + " LIMIT " + limit_val }
+    if offset_val >= 0 { sql = sql + " OFFSET " + offset_val }
+
+    return CompiledQuery { sql: sql, param_count: wheres.len(), dialect: dialect }
+}
+
+// Runtime wrapper: attaches concrete parameter values to a CompiledQuery,
+// enforcing that the value count matches the shape's where-clause count
+// before anything is sent to the driver.
+fn bind(compiled, params) {
+    if params.len() != compiled.param_count {
+        throw("db.bind: expected " + compiled.param_count + " parameter(s), got " + params.len())
+    }
+    return BoundQuery { sql: compiled.sql, params: params }
+}
+
+fn run_sqlite(bound, conn) {
+    return sqlite.query(conn, bound.sql, bound.params)
+}
+
+fn run_postgres(bound, conn) {
+    return postgres.query(conn, bound.sql, bound.params)
+}
+
+// Runs body(conn) inside a transaction that is ALWAYS rolled back, even on
+// success -- so a test can exercise real inserts/updates against a real
+// connection without leaving residue for the next test to trip over.
+fn test_transaction(conn, body) {
+    sqlite.query(conn, "BEGIN")
+    try {
+        let result = body(conn)
+        sqlite.query(conn, "ROLLBACK")
+        return result
+    } catch e {
+        sqlite.query(conn, "ROLLBACK")
+        throw(e)
+    }
+}
+
+// Fluent builder over compile_select — same comptime-safety guarantee:
+// every method only touches shape (table/fields/where field+op/limit/offset),
+// never a bound value, so a full builder chain ending in .build() can be
+// wrapped in `comptime { ... }` just like a bare compile_select() call.
+struct QueryBuilder {
+    table: string,
+    select_fields: array,
+    where_clauses: array,
+    limit_val: int,
+    offset_val: int,
+    dialect: string
+}
+
+fn select(table) {
+    return QueryBuilder {
+        table: table,
+        select_fields: ["*"],
+        where_clauses: [],
+        limit_val: -1,
+        offset_val: -1,
+        dialect: "sqlite"
+    }
+}
+
+impl QueryBuilder {
+    fn use_dialect(self, d) {
+        self.dialect = d
+        return self
+    }
+
+    fn fields(self, f_arr) {
+        self.select_fields = f_arr
+        return self
+    }
+
+    fn where(self, field, op) {
+        self.where_clauses = self.where_clauses.push([field, op])
+        return self
+    }
+
+    fn limit(self, l) {
+        self.limit_val = l
+        return self
+    }
+
+    fn offset(self, o) {
+        self.offset_val = o
+        return self
+    }
+
+    fn paginate(self, page, per_page) {
+        if page < 1 {
+            page = 1
+        }
+        self = self.limit(per_page)
+        self = self.offset((page - 1) * per_page)
+        return self
+    }
+
+    fn cursor_paginate(self, field, has_cursor, l) {
+        if has_cursor {
+            self = self.where(field, ">")
+        }
+        self = self.limit(l)
+        return self
+    }
+
+    fn find_by_key(self, field) {
+        self = self.where(field, "=")
+        self = self.limit(1)
+        return self
+    }
+
+    fn build(self) {
+        return compile_select(self.table, self.select_fields, self.where_clauses,
+                               self.limit_val, self.offset_val, self.dialect)
+    }
+}
+
+// mail.vn - Send email two ways:
+//   1. mail.send_smtp(...) -- raw SMTP, for a local dev relay (mailpit/MailHog)
+//      or an internal unauthenticated relay. No TLS/AUTH support.
+//   2. mail.send_resend(...) -- HTTP API via Resend, using http.post. This is
+//      the path for any real provider (Resend, SendGrid, Postmark, ...) since
+//      they all just want a POST with a Bearer token and a JSON body — the
+//      mechanism doesn't need new native code, just a different vn_modules
+//      wrapper per provider built on the same http.post primitive.
+
+struct MailResult { ok: bool, body }
+
+fn send_smtp(host, port, from, to, subject, body) {
+    let ok = smtp.send(host, port, from, to, subject, body)
+    return MailResult { ok: ok, body: null }
+}
+
+// Resend's HTTP API. http.post doesn't expose the response status code, so
+// `ok` here only means "got a response back" -- inspect `.body` yourself for
+// Resend's own success/error shape (a real `id` field vs. an error message).
+fn send_resend(api_key, from, to, subject, body) {
+    let headers = [
+        "Authorization: Bearer " + api_key,
+        "Content-Type: application/json"
+    ]
+    let payload = http.create_struct(
+        ["from", "to", "subject", "text"],
+        [from, [to], subject, body]
+    )
+    let resp = http.post("https://api.resend.com/emails", headers, json_encode(payload))
+    return MailResult { ok: resp != null, body: resp }
+}
+
+// observe.vn - Structured logging + a Prometheus /metrics route helper.
+// Pure Varian: logging is JSON lines to stdout, metrics formatting is plain
+// string building. No native code needed -- this is a documented pattern on
+// top of time.now_iso8601() / json_encode() / http.create_struct(), all of
+// which already exist.
+
+struct Logger { name: string }
+
+fn new_logger(name) {
+    return Logger { name: name }
+}
+
+let log = Logger { name: "app" }
+
+impl Logger {
+    fn _emit(self, level, msg, field_keys, field_values) {
+        let keys = ["level", "logger", "msg", "ts"]
+        let values = [level, self.name, msg, time.now_iso8601()]
+        for i in 0..field_keys.len() {
+            keys = keys.push(field_keys[i])
+            values = values.push(field_values[i])
+        }
+        print(json_encode(http.create_struct(keys, values)))
+    }
+
+    fn info(self, msg) {
+        self._emit("info", msg, [], [])
+    }
+    fn warn(self, msg) {
+        self._emit("warn", msg, [], [])
+    }
+    fn error(self, msg) {
+        self._emit("error", msg, [], [])
+    }
+
+    // Structured variants: extra context as parallel key/value arrays,
+    // e.g. log.info_with("request handled", ["status", "path"], [200, "/"])
+    fn info_with(self, msg, field_keys, field_values) {
+        self._emit("info", msg, field_keys, field_values)
+    }
+    fn warn_with(self, msg, field_keys, field_values) {
+        self._emit("warn", msg, field_keys, field_values)
+    }
+    fn error_with(self, msg, field_keys, field_values) {
+        self._emit("error", msg, field_keys, field_values)
+    }
+}
+
+// ─── Prometheus /metrics ───
+//
+// counter_names/counter_values are parallel arrays -- build them from
+// whatever in-memory struct or Actor you're already tracking counts with.
+fn metrics_text(counter_names, counter_values) {
+    let out = ""
+    for i in 0..counter_names.len() {
+        let name = counter_names[i]
+        out = out + "# HELP " + name + " " + name + " total\n"
+        out = out + "# TYPE " + name + " counter\n"
+        out = out + name + " " + counter_values[i] + "\n"
+    }
+    return out
+}
+
+// Drop straight into a ZenithApp: app.get("/metrics", metrics_handler(names, values), "Prometheus metrics")
+//
+// Built via http.create_struct rather than a `Response { ... }` literal:
+// vn_modules/*.vn files are concatenated alphabetically (see docs/TOOLING.md),
+// so observe.vn loads before zenith.vn -- a literal naming the `Response`
+// struct here would reference a type that isn't registered with the parser
+// yet. http.create_struct sidesteps that since http.serve()'s response
+// writer only looks at field names ("status"/"body"/"content_type"), not
+// the struct's type name.
+fn metrics_handler(counter_names, counter_values) {
+    return | req | {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [200, metrics_text(counter_names, counter_values), "text/plain; version=0.0.4"]
+        )
+    }
+}
+
+// queue.vn - Background job queue and cron
+
+struct CronJob {
+    stopped: bool
+}
+
+fn cron_worker(interval_ms, handler, job) {
+    while !job.stopped {
+        task.sleep(interval_ms)
+        if job.stopped {
+            return null
+        }
+        handler()
+    }
+}
+
+fn cron(interval_ms, handler) {
+    let job = CronJob { stopped: false }
+    task.spawn(cron_worker, [interval_ms, handler, job])
+    return job
+}
+
+struct WorkerPool {
+    ch: channel,
+    count: int,
+    workers: int,
+    stopped: bool
+}
+
+fn pool_worker(ch, pool) {
+    while !pool.stopped {
+        let job = <- ch
+        if job == null {
+            return null
+        }
+        try {
+            job()
+        } catch e {
+            print("Worker caught error: " + e)
+        }
+    }
+}
+
+impl WorkerPool {
+    fn spawn(self, worker_count) {
+        self.ch = task.channel(1000)
+        self.count = worker_count
+        self.stopped = false
+        let i = 0
+        while i < worker_count {
+            task.spawn(pool_worker, [self.ch, self])
+            i = i + 1
+        }
+    }
+    fn submit(self, job_fn) {
+        if self.stopped {
+            return null
+        }
+        self.ch <- job_fn
+    }
+    fn stop(self) {
+        self.stopped = true
+        task.close(self.ch)
+    }
+    fn close(self) {
+        self.stop()
+    }
+}
+
+// shield.vn - Security and protection middleware for Zenith
+
+fn _join_strings(arr, sep) {
+    let res = ""
+    for i in 0..arr.len() {
+        if i > 0 {
+            res = res + sep
+        }
+        res = res + arr[i]
+    }
+    return res
+}
+
+// ─── CORS Middleware ───
+fn cors(allow_origins, allow_methods, allow_headers) {
+    return |req, next| {
+        let origins_str = _join_strings(allow_origins, ", ")
+        let methods_str = _join_strings(allow_methods, ", ")
+        let headers_str = _join_strings(allow_headers, ", ")
+
+        let cors_headers = http.create_struct(
+            ["access_control_allow_origin", "access_control_allow_methods", "access_control_allow_headers"],
+            [origins_str, methods_str, headers_str]
+        )
+
+        if req.method == "OPTIONS" {
+            return http.create_struct(
+                ["status", "body", "content_type", "headers"],
+                [204, "", "text/plain", cors_headers]
+            )
+        }
+
+        let resp = next(req)
+
+        // Merge onto whatever headers an inner middleware/handler already
+        // set, rather than replacing them outright -- this used to
+        // silently discard e.g. csrf()'s Set-Cookie header whenever cors()
+        // was registered before it (middleware wraps outside-in by
+        // registration order, so an outer middleware's post-processing
+        // runs *after* an inner one's, on the way back out).
+        let existing_headers = _validate.get_field(resp, "headers")
+        let merged_headers = cors_headers
+        if existing_headers != null {
+            let keys = _validate.get_keys(existing_headers)
+            let vals = []
+            for i in 0..keys.len() {
+                vals = vals.push(_validate.get_field(existing_headers, keys[i]))
+            }
+            keys = keys.push("access_control_allow_origin").push("access_control_allow_methods").push("access_control_allow_headers")
+            vals = vals.push(origins_str).push(methods_str).push(headers_str)
+            merged_headers = http.create_struct(keys, vals)
+        }
+
+        return http.create_struct(
+            ["status", "body", "content_type", "headers"],
+            [resp.status, resp.body, resp.content_type, merged_headers]
+        )
+    };
+}
+
+// ─── Rate Limiting Middleware (in-memory, single-worker only) ───
+//
+// IMPORTANT: this tracks request counts in one Actor living inside one VM.
+// Zenith's clustering (app.listen_cluster(port, workers)) runs each worker
+// as a FULLY INDEPENDENT VM (its own heap, its own copy of every Actor) --
+// there is no shared memory between workers. That means a clustered server
+// using THIS middleware enforces max_reqs *per worker*, not per server: a
+// client distributed across N workers can make up to N * max_reqs requests
+// in one window before any single worker's limiter notices. For a
+// clustered deployment, use rate_limit_redis() below instead, which
+// coordinates across every worker through a shared Redis counter.
+actor RateLimiterActor {
+    ips: array = [],
+    tokens: array = [],
+    last_updated: array = [],
+    max_tokens: int = 60,
+    window_ms: int = 60000,
+
+    fn init(self, max_t, win_ms) {
+        self.ips = []
+        self.tokens = []
+        self.last_updated = []
+        self.max_tokens = max_t
+        self.window_ms = win_ms
+    }
+
+    fn check_limit(self, ip) -> bool {
+        let now = time.now_ms()
+        let idx = -1
+        for i in 0..self.ips.len() {
+            if self.ips[i] == ip {
+                idx = i
+                break
+            }
+        }
+
+        if idx == -1 {
+            self.ips = self.ips.push(ip)
+            self.tokens = self.tokens.push(self.max_tokens - 1)
+            self.last_updated = self.last_updated.push(now)
+            return true
+        }
+
+        let elapsed = now - self.last_updated[idx]
+        let regen = elapsed * self.max_tokens / self.window_ms
+        let current_tokens = self.tokens[idx] + regen
+        if current_tokens > self.max_tokens {
+            current_tokens = self.max_tokens
+        }
+
+        if current_tokens >= 1 {
+            self.tokens[idx] = current_tokens - 1
+            self.last_updated[idx] = now
+            return true
+        } else {
+            return false
+        }
+    }
+}
+
+fn rate_limit(max_reqs, window_ms) {
+    let limiter = RateLimiterActor.spawn()
+    limiter.init(max_reqs, window_ms)
+
+    return |req, next| {
+        let client_ip = req.ip
+        if !limiter.check_limit(client_ip) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [429, "Too Many Requests", "text/plain"]
+            )
+        }
+        return next(req)
+    };
+}
+
+// ─── Rate Limiting Middleware (Redis-backed, cluster-safe) ───
+//
+// Fixed-window counter: INCR a per-IP, per-window key and EXPIRE it once.
+// Every worker (in-process or clustered) hits the same Redis instance, so
+// the limit is enforced across the whole server, not per worker. Simpler
+// than the in-memory token bucket above (bursts right at a window boundary
+// can momentarily allow close to 2x max_reqs, a known fixed-window
+// trade-off) but correctness under clustering matters more here than
+// burst-smoothing precision.
+fn rate_limit_redis(redis_conn, max_reqs, window_seconds) {
+    return |req, next| {
+        let window = time.now_ms() / (window_seconds * 1000)
+        let key = "shield:ratelimit:" + req.ip + ":" + window
+
+        let count = redis.cmd(redis_conn, "INCR", [key])
+        if count == 1 {
+            redis.cmd(redis_conn, "EXPIRE", [key, window_seconds])
+        }
+
+        if count > max_reqs {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [429, "Too Many Requests", "text/plain"]
+            )
+        }
+        return next(req)
+    };
+}
+
+// ─── CSRF Protection Middleware (signed double-submit cookie) ───
+//
+// On a safe method (GET/HEAD/OPTIONS), issues a random csrf_token cookie
+// if the client doesn't already have one. On a state-changing method,
+// requires the x-csrf-token header to match the csrf_token cookie value
+// exactly (constant-time compare). This defeats both classic CSRF vectors:
+// a cross-origin <form> submission can't set a custom header at all, and
+// a cross-origin script can't read the victim's cookie (browser same-
+// origin policy) to forge a matching header value -- it can only cause
+// the cookie to be *sent* automatically, never *read* its contents.
+//
+// Varian functions have no default/optional parameters (a missing
+// argument is a hard arity error, not a null), so this stays zero-arg to
+// match every existing caller -- the cookie is issued without the Secure
+// attribute. Serving exclusively over HTTPS in production and want it?
+// Add "; Secure" to cookie_attrs below directly, or fork this function.
+fn csrf() {
+    let cookie_attrs = "Path=/; SameSite=Lax"
+
+    return |req, next| {
+        // NOTE: req.headers?.cookie is NOT safe here -- ?. only guards
+        // against req.headers itself being nil; req.headers is a struct
+        // built from whatever headers this specific client actually sent,
+        // so a request with no Cookie header at all has a valid headers
+        // struct that simply has no "cookie" field, and a plain .cookie
+        // access on it throws ("Struct has no field 'cookie'") rather than
+        // returning nil. _validate.get_field tolerates a missing field.
+        let cookie_header = _validate.get_field(req.headers, "cookie")
+        let existing_token = _extract_cookie(cookie_header, "csrf_token")
+
+        if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
+            let resp = next(req)
+            if existing_token != null {
+                return resp
+            }
+            // Issue a fresh token for this client; merge onto whatever
+            // headers the handler itself already set. resp may be a plain
+            // Response{...} literal with no "headers" field at all -- a
+            // bare `resp.headers` would throw ("Struct has no field
+            // 'headers'") rather than return nil, so this has to go
+            // through the same nil-tolerant accessor session_middleware
+            // and friends already use elsewhere in this codebase.
+            let new_token = auth.generate_token(32)
+            let set_cookie_val = "csrf_token=" + new_token + "; " + cookie_attrs
+            let resp_headers = _validate.get_field(resp, "headers")
+            if resp_headers == null {
+                resp_headers = http.create_struct(["set_cookie"], [set_cookie_val])
+            } else {
+                let keys = _validate.get_keys(resp_headers).push("set_cookie")
+                let vals = []
+                for i in 0..(keys.len() - 1) {
+                    vals = vals.push(_validate.get_field(resp_headers, keys[i]))
+                }
+                vals = vals.push(set_cookie_val)
+                resp_headers = http.create_struct(keys, vals)
+            }
+            return http.create_struct(
+                ["status", "body", "content_type", "headers"],
+                [resp.status, resp.body, resp.content_type, resp_headers]
+            )
+        }
+
+        let header_token = _validate.get_field(req.headers, "x_csrf_token")
+        if existing_token == null || header_token == null || header_token == "" {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: Missing CSRF Token", "text/plain"]
+            )
+        }
+        if !auth.constant_time_eq(existing_token, header_token) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: Invalid CSRF Token", "text/plain"]
+            )
+        }
+
+        return next(req)
+    };
+}
+
+// storage.vn - Key/value blob storage, local filesystem backend.
+//
+// `key` maps directly to a relative path under `base_dir` (default ".storage"),
+// created on first use. For S3/R2/GCS, there's no native module here -- use
+// the existing python.run bridge to call boto3 directly (see
+// examples/storage_s3_test.vn) rather than maintaining cloud SDK bindings in C.
+
+struct Storage { base_dir: string }
+
+fn new_storage(base_dir) {
+    return Storage { base_dir: base_dir }
+}
+
+let default_storage = Storage { base_dir: ".storage" }
+
+impl Storage {
+    fn _path(self, key) {
+        return self.base_dir + "/" + key
+    }
+
+    fn put(self, key, bytes) {
+        io.mkdir(self.base_dir)
+        return io.write_bytes(self._path(key), bytes)
+    }
+
+    fn get(self, key) {
+        return io.read_bytes(self._path(key))
+    }
+
+    fn exists(self, key) {
+        return io.exists(self._path(key))
+    }
+
+    fn delete(self, key) {
+        return io.delete(self._path(key))
+    }
+
+    fn list(self) {
+        let entries = io.list_dir(self.base_dir)
+        if entries == null {
+            return []
+        }
+        return entries
+    }
+}
+
+fn storage_put(key, bytes) {
+    return default_storage.put(key, bytes)
+}
+
+fn storage_get(key) {
+    return default_storage.get(key)
+}
+
+fn storage_delete(key) {
+    return default_storage.delete(key)
+}
+
+// Request Validation & Sanitization Module for Varian
+
+// Helper to check if a value is nil or string
+fn _validate_is_string(v) {
+    try {
+        _validate.min_len(v, 0)
+        return true
+    } catch e {
+        return false
+    }
+}
+
+struct Validator {
+    _type_check: string,
+    _checks: array,
+    _transforms: array,
+    _optional: bool
+}
+
+impl Validator {
+    fn optional(self) {
+        self._optional = true
+        return self
+    }
+
+    // String checks
+    fn is_email(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_email(v)) { return null }
+            return "Invalid email address"
+        })
+        return self
+    }
+
+    fn is_url(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_url(v)) { return null }
+            return "Invalid URL"
+        })
+        return self
+    }
+
+    fn is_alphanumeric(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_alphanumeric(v)) { return null }
+            return "Must be alphanumeric"
+        })
+        return self
+    }
+
+    fn is_uuid(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_uuid(v)) { return null }
+            return "Invalid UUID"
+        })
+        return self
+    }
+
+    fn min(self, limit) {
+        self._checks = self._checks.push(|v| {
+            if (self._type_check == "string") {
+                if (_validate.min_len(v, limit)) { return null }
+                return "Length must be at least " + limit
+            } else if (self._type_check == "number") {
+                if (v >= limit) { return null }
+                return "Must be at least " + limit
+            }
+            return "Unsupported min check"
+        })
+        return self
+    }
+
+    fn max(self, limit) {
+        self._checks = self._checks.push(|v| {
+            if (self._type_check == "string") {
+                if (_validate.max_len(v, limit)) { return null }
+                return "Length must be at most " + limit
+            } else if (self._type_check == "number") {
+                if (v <= limit) { return null }
+                return "Must be at most " + limit
+            }
+            return "Unsupported max check"
+        })
+        return self
+    }
+
+    // Sanitization/Transforms
+    fn strip_html(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.strip_html(v)
+        })
+        return self
+    }
+
+    fn escape_html(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.escape_html(v)
+        })
+        return self
+    }
+
+    fn trim(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.trim(v)
+        })
+        return self
+    }
+
+    fn parse(self, v) {
+        if (v == null) {
+            if (self._optional) {
+                return http.create_struct(["success", "data"], [true, null])
+            }
+            return http.create_struct(["success", "error"], [false, "Value is required"])
+        }
+
+        // Type verification
+        if (self._type_check == "string") {
+            if (!_validate_is_string(v)) {
+                return http.create_struct(["success", "error"], [false, "Expected string"])
+            }
+        } else if (self._type_check == "number") {
+            try {
+                let dummy = v + 0
+            } catch e {
+                return http.create_struct(["success", "error"], [false, "Expected number"])
+            }
+        }
+
+        // Apply transforms (sanitization)
+        let current = v
+        let i = 0
+        while (i < self._transforms.len()) {
+            let transform = self._transforms[i]
+            current = transform(current)
+            i = i + 1
+        }
+
+        // Apply checks
+        let j = 0
+        while (j < self._checks.len()) {
+            let check = self._checks[j]
+            let err = check(current)
+            if (err != null) {
+                return http.create_struct(["success", "error"], [false, err])
+            }
+            j = j + 1
+        }
+
+        return http.create_struct(["success", "data"], [true, current])
+    }
+}
+
+struct ObjectValidator {
+    _fields: any,
+    _optional: bool
+}
+
+impl ObjectValidator {
+    fn optional(self) {
+        self._optional = true
+        return self
+    }
+
+    fn parse(self, v) {
+        if (v == null) {
+            if (self._optional) {
+                return http.create_struct(["success", "data"], [true, null])
+            }
+            return http.create_struct(["success", "error"], [false, "Value is required"])
+        }
+
+        // Verify it is actually a struct/object by calling _validate.get_keys
+        let is_struct = true
+        try {
+            _validate.get_keys(v)
+        } catch e {
+            is_struct = false
+        }
+        if (!is_struct) {
+            return http.create_struct(["success", "error"], [false, "Expected object"])
+        }
+
+        let schema_keys = _validate.get_keys(self._fields)
+        let out_keys = []
+        let out_vals = []
+
+        let i = 0
+        while (i < schema_keys.len()) {
+            let key = schema_keys[i]
+            let field_validator = _validate.get_field(self._fields, key)
+            let val = _validate.get_field(v, key)
+
+            let res = field_validator.parse(val)
+            if (!res.success) {
+                return http.create_struct(["success", "error"], [false, key + ": " + res.error])
+            }
+
+            out_keys = out_keys.push(key)
+            out_vals = out_vals.push(res.data)
+            i = i + 1
+        }
+
+        let validated_struct = http.create_struct(out_keys, out_vals)
+        return http.create_struct(["success", "data"], [true, validated_struct])
+    }
+}
+
+let validate = http.create_struct(
+    ["str", "num", "object"],
+    [
+        | | { return Validator { _type_check: "string", _checks: [], _transforms: [], _optional: false } },
+        | | { return Validator { _type_check: "number", _checks: [], _transforms: [], _optional: false } },
+        |fields| { return ObjectValidator { _fields: fields, _optional: false } }
+    ]
+)
+
+let sanitize = http.create_struct(
+    ["strip_html", "escape_html", "trim"],
+    [
+        |v| { return _sanitize.strip_html(v) },
+        |v| { return _sanitize.escape_html(v) },
+        |v| { return _sanitize.trim(v) }
+    ]
+)
+
 // zenith.vn - Zenith web framework
 //
 // - ZenithApp is a real instantiable struct: route tables, middleware, and
@@ -1290,3 +2311,115 @@ fn render_response(template, ctx) {
         _keep_open: false
     }
 }
+
+use "examples/ecommerce/models.vn"
+use "examples/ecommerce/db.vn"
+use "examples/ecommerce/auth.vn"
+use "examples/ecommerce/products.vn"
+use "examples/ecommerce/finance.vn"
+
+let app = new_app()
+app.title = "Ecommerce API"
+
+app.register_schema("AuthResult", AuthResult { error: "", token: "" })
+app.register_schema("CheckoutResult", CheckoutResult { error: "", success: false, order_id: 0, total: 0.0 })
+app.register_schema("FinanceResult", FinanceResult { error: "", success: false, new_balance: 0.0 })
+app.register_schema("JwtPayload", JwtPayload { sub: 0, username: "" })
+app.register_schema("RegisterRequest", RegisterRequest { username: "", password: "" })
+app.register_schema("LoginRequest", LoginRequest { username: "", password: "" })
+app.register_schema("CheckoutRequest", CheckoutRequest { product_id: 0, quantity: 0 })
+app.register_schema("WithdrawRequest", WithdrawRequest { amount: 0.0 })
+app.register_schema("ErrorResult", ErrorResult { error: "" })
+
+app.add_middleware(|req, next| {
+    print("[HTTP] " + req.method + " " + req.path)
+    return next(req)
+})
+
+// Authentication Routes
+app.post("/api/register", |req| {
+    let username = req.json.username
+    let password = req.json.password
+    let res = auth_register(username, password)
+    
+    if res.error != null {
+        return Response { status: 400, body: json_encode(http.create_struct(["error"], [res.error])), content_type: "application/json" }
+    }
+    return Response { status: 201, body: json_encode(http.create_struct(["token"], [res.token])), content_type: "application/json" }
+}, "Register a new user", http.create_struct(
+    ["request_schema", "response_schema", "response_status", "error_schema", "error_status"],
+    ["RegisterRequest", "AuthResult", 201, "ErrorResult", 400]
+))
+
+app.post("/api/login", |req| {
+    let username = req.json.username
+    let password = req.json.password
+    let res = auth_login(username, password)
+    
+    if res.error != null {
+        return Response { status: 401, body: json_encode(http.create_struct(["error"], [res.error])), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(http.create_struct(["token"], [res.token])), content_type: "application/json" }
+}, "Login user", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["LoginRequest", "AuthResult", "ErrorResult", 401]
+))
+
+// Product Routes (Public)
+app.get("/api/products", |req| {
+    let products = list_products()
+    return Response { status: 200, body: json_encode(products), content_type: "application/json" }
+}, "List all products", null)
+
+// Protected Routes (require JWT)
+let secret = env.require("JWT_SECRET")
+let require_auth = zenith_auth.jwt(secret)
+
+// Store the checkout endpoint with the auth middleware
+let checkout_handler = |req| {
+    let uid = req.user.sub
+    let pid = req.json.product_id
+    let qty = req.json.quantity
+    
+    let res = checkout(uid, pid, qty)
+    
+    if !res.success {
+        return Response { status: 400, body: json_encode(res), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(res), content_type: "application/json" }
+}
+
+app.post("/api/checkout", |req| { return require_auth(req, checkout_handler) }, "Checkout a product", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["CheckoutRequest", "CheckoutResult", "ErrorResult", 400]
+))
+
+let withdraw_handler = |req| {
+    let uid = req.user.sub
+    let amount = req.json.amount
+    let res = withdraw_funds(uid, amount)
+    
+    if !res.success {
+        return Response { status: 400, body: json_encode(res), content_type: "application/json" }
+    }
+    return Response { status: 200, body: json_encode(res), content_type: "application/json" }
+}
+
+app.post("/api/withdraw", |req| { return require_auth(req, withdraw_handler) }, "Withdraw funds", http.create_struct(
+    ["request_schema", "response_schema", "error_schema", "error_status"],
+    ["WithdrawRequest", "FinanceResult", "ErrorResult", 400]
+))
+
+let balance_handler = |req| {
+    let uid = req.user.sub
+    let balance = get_balance(uid)
+    return Response { status: 200, body: json_encode(http.create_struct(["balance"], [balance])), content_type: "application/json" }
+}
+
+app.get("/api/balance", |req| { return require_auth(req, balance_handler) }, "Get user balance", null)
+
+app.enable_docs("/docs")
+
+let port_str = env.get("PORT", "8080")
+print("Modular Ecommerce Server running on http://localhost:" + port_str)
+app.listen(8080)

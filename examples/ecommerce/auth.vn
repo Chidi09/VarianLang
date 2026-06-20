@@ -1,0 +1,34 @@
+fn auth_register(username, password) {
+    let existing = sqlite.query(db, "SELECT id FROM users WHERE username = ?", [username])
+    if existing.len() > 0 {
+        return AuthResult { error: "Username already exists", token: null }
+    }
+    
+    let hashed = auth.hash_password(password)
+    sqlite.query(db, "INSERT INTO users (username, password, balance) VALUES (?, ?, ?)", [username, hashed, 1000.0]) // Start with free balance
+    
+    let res = sqlite.query(db, "SELECT last_insert_rowid() as id")
+    let id = res[0].id
+    
+    let secret = env.require("JWT_SECRET")
+    let payload = JwtPayload { sub: id, username: username }
+    let token = auth.sign_jwt(payload, secret)
+    return AuthResult { error: null, token: token }
+}
+
+fn auth_login(username, password) {
+    let users = sqlite.query(db, "SELECT id, password FROM users WHERE username = ?", [username])
+    if users.len() == 0 {
+        return AuthResult { error: "Invalid credentials", token: null }
+    }
+    
+    let user = users[0]
+    if !auth.verify_password(password, user.password) {
+        return AuthResult { error: "Invalid credentials", token: null }
+    }
+    
+    let secret = env.require("JWT_SECRET")
+    let payload = JwtPayload { sub: user.id, username: username }
+    let token = auth.sign_jwt(payload, secret)
+    return AuthResult { error: null, token: token }
+}

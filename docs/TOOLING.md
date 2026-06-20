@@ -5,7 +5,7 @@ vn                  Start interactive REPL
 vn run <file>        Execute a Varian script
 vn <file>            Same as `vn run <file>` (back-compat shorthand)
 vn fmt <file>        Format a Varian script in-place
-vn test [dir]         Run tests in a directory (default: .)
+vn test [dir] [--filter <substr>] [--timeout <secs>]   Run tests in a directory (default: .)
 vn lint [path] [--only category] [--format json]   Lint a file or directory
 vn add <pkg>          Record a dependency in varian.pkg
 vn wrap <target>      Generate a Varian wrapper for a foreign library
@@ -49,6 +49,12 @@ the assertion globals `assert_eq(a, b)`, `assert_ne(a, b)`, `assert_throws(fn)` 
 ordinary globals, not a module. On failure, the actual error message (not just the test
 description) is printed indented under the `❌ FAIL` line, so you don't have to re-run
 under a debugger to see why something failed.
+
+`--filter <substr>` runs only tests whose description contains `<substr>`. `--timeout
+<secs>` (fractional seconds allowed) caps each individual test; a test exceeding it is
+killed at the next loop back-edge, marked `⏱️ TIMEOUT`, and counted as a failure without
+hanging the rest of the run. The summary line reports `X passed, Y failed (Z timed out),
+W skipped`.
 
 Mocking native module functions inside tests:
 
@@ -108,3 +114,18 @@ Python module (spawning Python to list its public functions) and writes
 `vn_modules/<module>.vn`, a generated wrapper whose functions call through to
 `python.run(module, fn, args)` (see `docs/STDLIB.md`) so the rest of your Varian code can
 call it like any other module without spelling out `python.run` every time.
+
+## Building from source
+
+```
+make            # default: -g debug build, fast to rebuild — use while developing
+make release    # -O2 hardened build to ship/benchmark (see docs/SECURITY.md)
+make asan       # AddressSanitizer + UBSan build, for finding memory bugs
+make clean
+```
+
+`make release` enables `_FORTIFY_SOURCE=2`, stack-protector/-clash protection, full
+RELRO + immediate binding, a non-executable stack, and a position-independent executable
+(ASLR). `make asan` builds with `-fsanitize=address,undefined`; run the suite under it
+with `ASAN_OPTIONS=detect_leaks=0 ./vn test tests/` to catch overflows and UB. Both do a
+`clean` first so object files aren't mixed between flag sets.

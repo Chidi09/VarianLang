@@ -1,0 +1,45 @@
+struct AuthResult {
+    error: string,
+    token: string
+}
+
+struct CheckoutResult {
+    error: string,
+    success: bool,
+    order_id: int,
+    total: float
+}
+
+struct FinanceResult {
+    error: string,
+    success: bool,
+    new_balance: float
+}
+
+struct JwtPayload {
+    sub: int,
+    username: string
+}
+
+struct RegisterRequest {
+    username: string,
+    password: string
+}
+
+struct LoginRequest {
+    username: string,
+    password: string
+}
+
+struct CheckoutRequest {
+    product_id: int,
+    quantity: int
+}
+
+struct WithdrawRequest {
+    amount: float
+}
+
+struct ErrorResult {
+    error: string
+}

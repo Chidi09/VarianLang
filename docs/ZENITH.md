@@ -5,6 +5,69 @@ modules — they're plain Varian source. Every file under `vn_modules/` is autom
 concatenated as a prelude in front of whatever file you run (see `docs/TOOLING.md`), so
 `ZenithApp`, `new_app()`, etc. are just always in scope, with no `import` needed.
 
+## Why Zenith — conveniences over Fastify, Express, FastAPI, and friends
+
+Zenith's pitch is not "fastest raw throughput" (Go and Rust win there — see the honest
+numbers in `docs/planning/`). It's **everything a real web app needs, built in, secure by
+default, in one binary, with zero dependency tree.** Concretely:
+
+- **Batteries included — nothing to `npm install`.** SQLite, Postgres and Redis drivers,
+  JWT auth + password hashing, request validation, HTML sanitization, an HTML template
+  engine, signed sessions, cookies, regex, SMTP, a background queue, and OpenAPI
+  generation all ship in the box. A comparable Fastify/Express app pulls in dozens of
+  plugins (`@fastify/cookie`, `@fastify/cors`, `@fastify/jwt`, `@fastify/rate-limit`,
+  `fastify-helmet`, a validation lib, an ORM, a template engine, a mailer…), each its own
+  version, changelog, and supply-chain risk. Zenith has **no `node_modules`** and no
+  third-party runtime dependencies to audit.
+
+- **No imports, no boilerplate wiring.** Everything in `vn_modules/` is automatically in
+  scope. You write `new_app()` and `app.get(...)` — no `require`/`import`, no plugin
+  registration order to get right, no `app.use(...)` ceremony.
+
+- **Secure by default, not by opt-in.** Templates HTML-escape (`<%= %>`) unless you
+  explicitly ask for raw output; session cookies are `HttpOnly; SameSite=Lax` and
+  JWT-signed (a forged secret yields `null`); DB drivers use bound parameters; secret
+  comparisons can use `auth.constant_time_eq`; `smtp.send` blocks header injection. In
+  Express you reach the same posture only after correctly wiring `helmet`, `csurf`,
+  `express-session` + a store, and remembering to escape output yourself.
+
+- **A compile-time ORM with no runtime cost.** `db.vn`'s query builder runs inside
+  `comptime`, so SQL strings and parameter counts are produced and checked *at compile
+  time* — `bind()` throws before anything reaches the driver if the param count is wrong.
+  Fastify/Express bolt on Prisma/Knex/TypeORM, which build queries at runtime and add
+  startup + per-query overhead.
+
+- **Validation as declarative decorators.** `@is_email`, `@min_len(n)`, `@is_uuid` etc.
+  go directly on struct fields (see `docs/LANGUAGE.md`), instead of hand-writing JSON
+  Schema objects or Zod/Joi pipelines.
+
+- **The toolchain is the language, not five more packages.** `vn test` (with mocking,
+  `--filter`, `--timeout`), `vn lint` (including security rules that flag concatenated SQL
+  and hardcoded secrets), and `vn fmt` are all built into the `vn` binary. No
+  jest + supertest + eslint + prettier + their config files and peer-dependency conflicts.
+
+- **OpenAPI for free.** The `summary` you pass to each route feeds a generated OpenAPI
+  document — no decorator soup or separate spec file to keep in sync.
+
+- **True multi-core out of the box.** Zenith clusters across threads with independent
+  per-thread VMs, plus SIMD request parsing (picohttpparser), `writev` single-syscall
+  responses, and a per-request struct arena that skips the GC entirely. Node is
+  single-threaded per process — you run the `cluster` module or PM2 to use your cores, and
+  still pay V8 GC on every request object.
+
+- **Deploys as one self-contained binary.** `make release` produces a single hardened
+  executable (`docs/SECURITY.md`). No runtime to install on the box, no lockfile to
+  reconcile, no "works on my Node version" drift.
+
+- **An escape hatch for the long tail.** Anything not built in (S3, niche SDKs) is one
+  `python.run(module, fn, args)` call away via the Python bridge, so "batteries included"
+  never becomes "stuck when you need something exotic."
+
+Where Zenith does **not** lead: raw single-endpoint throughput trails Go/Rust, the
+ecosystem is young, and it is **not** a sandbox for untrusted code (`docs/SECURITY.md`).
+The trade is deliberate: dramatically less glue code and supply-chain surface, for a young
+runtime you're betting on.
+
 ## Building an app
 
 ```varian
@@ -66,6 +129,60 @@ Each middleware is `|req, next| { ... return next(req) }` — a real closure cap
 route handler. There is no global "current app" or "current next" slot; the whole chain
 is built and passed explicitly through `_run_middleware`, which is why multiple `app`
 instances don't interfere with each other.
+
+`vn_modules/shield.vn` ships ready-made security middleware: `cors(origins, methods,
+headers)`, `csrf()`, and `rate_limit(max_reqs, window_ms)` /
+`rate_limit_redis(conn, max_reqs, window_seconds)`. Add them with `app.add_middleware(...)`.
+
+## Request & response helpers
+
+Reading from the request (all take sensible defaults and URL-decode for you):
+
+```varian
+query(req, "page", "1")     // ?page=2 -> "2"   (single query param)
+query_params(req)           // whole query string as a struct
+form(req, "email", "")      // application/x-www-form-urlencoded body field
+form_params(req)            // whole form body as a struct
+cookie(req, "sid", "")      // a single request cookie
+cookies(req)                // all cookies as a struct
+```
+
+Building responses:
+
+```varian
+redirect("/login")                  // 302 with Location
+redirect_with("/login", 301)        // explicit status
+json_response(value, 200)           // JSON body + content_type, any struct/array/primitive
+with_header(resp, "X-Trace", id)    // returns a copy of resp with an extra header
+set_cookie(resp, "sid", v, null)    // adds Set-Cookie: ...; Path=/; SameSite=Lax; HttpOnly
+clear_cookie(resp, "sid")           // expires the cookie
+```
+
+Signed sessions (JWT-backed, tamper-evident — a wrong/forged secret yields `null`):
+
+```varian
+let resp = session_set(resp, data_struct, secret, null)   // sets a signed `session` cookie
+let data = session_get(req, secret)                       // struct, or null if absent/forged
+let resp = session_clear(resp)                            // logs the user out
+```
+
+## Templates
+
+`render(template, ctx)` renders an ERB-style template string against a context struct, and
+`render_response(template, ctx)` wraps the result in a `text/html` `Response`. Delimiters:
+
+- `<%= expr %>` — interpolate, **HTML-escaped** (safe by default).
+- `<%- expr %>` — interpolate **raw/unescaped** (only for trusted content).
+- `<% if cond %>...<% else %>...<% endif %>` — conditionals.
+- `<% for x in items %>...<% endfor %>` — loops.
+
+```varian
+render("Hi <%= name %>", ctx)                     // escapes name
+render("<% for x in xs %>[<%= x %>]<% endfor %>", ctx)
+```
+
+(ERB-style `<% %>` is used rather than `{{ }}` because `{...}` is string interpolation at
+lex time in Varian — see `docs/LANGUAGE.md`.)
 
 ## Testing without a socket
 
