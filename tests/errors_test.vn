@@ -1,0 +1,27 @@
+test "errors.explain" {
+    let e = "Undefined variable 'foo'"
+    let expl = errors.explain(e)
+    assert_ne(expl, "Unknown error")
+}
+
+test "errors.kind" {
+    assert_eq(errors.kind("Undefined variable 'foo'"), "UndefinedName")
+    assert_eq(errors.kind("Struct has no field 'x'"), "NoSuchField")
+    assert_eq(errors.kind("Division by zero"), "DivByZero")
+    assert_eq(errors.kind("index out of bounds"), "IndexOutOfBounds")
+    assert_eq(errors.kind("Operand must be a number"), "TypeMismatch")
+    assert_eq(errors.kind("closed channel"), "ClosedChannel")
+}
+
+test "errors.is" {
+    let e = "Undefined variable 'foo'"
+    assert(errors.is(e, "UndefinedName"))
+    assert(!errors.is(e, "DivByZero"))
+}
+
+test "errors.make" {
+    let m = errors.make("PaymentFailed", "card declined", "ask the user to try another card")
+    assert_eq(m.kind, "PaymentFailed")
+    assert_eq(m.message, "card declined")
+    assert_eq(m.hint, "ask the user to try another card")
+}

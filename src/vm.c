@@ -2795,6 +2795,7 @@ bool vm_run(VM *vm, bool run_tests) {
         extern void lib_smtp_init(VM *vm);
         extern void lib_time_init(VM *vm);
         extern void lib_regex_init(VM *vm);
+        extern void lib_errors_init(VM *vm);
         lib_math_init(vm);
         lib_env_init(vm);
         lib_io_init(vm);
@@ -2812,6 +2813,7 @@ bool vm_run(VM *vm, bool run_tests) {
         lib_smtp_init(vm);
         lib_time_init(vm);
         lib_regex_init(vm);
+        lib_errors_init(vm);
     }
 
 #define BINARY_OP_NUM(op) \
