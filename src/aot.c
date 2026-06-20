@@ -1126,9 +1126,7 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "        {\n");
                     fprintf(out, "            uint8_t field_count = %d;\n", field_count);
                     fprintf(out, "            ObjString *type_name_str = frame->function->constants[%d].as.string;\n", type_name_idx);
-                    fprintf(out, "            ObjStruct *s = new_struct(field_count);\n");
-                    fprintf(out, "            s->obj.next = vm->objects;\n");
-                    fprintf(out, "            vm->objects = (Obj *)s;\n");
+                    fprintf(out, "            ObjStruct *s = new_struct(vm, field_count, false);\n");
                     fprintf(out, "            s->type_name = (char *)malloc(type_name_str->length + 1);\n");
                     fprintf(out, "            memcpy(s->type_name, type_name_str->chars, type_name_str->length);\n");
                     fprintf(out, "            s->type_name[type_name_str->length] = '\\0';\n");

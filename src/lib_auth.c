@@ -101,7 +101,7 @@ static Value lib_auth_sign_jwt(VM *vm, int arg_count, Value *args) {
     int secret_len = args[base + 1].as.string->length;
 
     /* Encode header */
-    ObjStruct *header = new_struct(2);
+    ObjStruct *header = new_struct(vm, 2, false);
     header->field_names[0] = strdup("alg");
     header->fields[0] = val_string(copy_string("HS256", 5));
     header->field_names[1] = strdup("typ");
@@ -109,12 +109,6 @@ static Value lib_auth_sign_jwt(VM *vm, int arg_count, Value *args) {
     header->type_name = NULL;
     int header_json_len;
     char *header_json = json_encode(vm, val_struct(header), &header_json_len);
-    free(header->field_names[0]);
-    free(header->field_names[1]);
-    free(header->field_names);
-    free(header->fields);
-    free(header);
-
     /* Encode payload */
     int payload_json_len;
     char *payload_json = json_encode(vm, args[base], &payload_json_len);

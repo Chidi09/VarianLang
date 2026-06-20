@@ -1,6 +1,8 @@
 #include "lib_http.h"
 #include "json.h"
 #include "picohttpparser.h"
+#include "lexer.h"
+#include "parser.h"
 #include <stdatomic.h>
 #include <curl/curl.h>
 #include <stdio.h>
@@ -24,6 +26,10 @@
 #include <pthread.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+#ifndef SO_REUSEPORT
+#define SO_REUSEPORT 15 /* Linux value; not exposed under strict _POSIX_C_SOURCE */
+#endif
 
 /* ─── Dynamic buffer for collecting HTTP response ─── */
 typedef struct { char *data; size_t len; } DynBuf;
@@ -327,9 +333,7 @@ static Value make_request(VM *vm, const char *method, const char *path,
                            Value body_val, Value json_val, Value params_val,
                            Value headers_val, const char *ip_str, int client_fd) {
     int total = 8;
-    ObjStruct *req = new_struct(total);
-    req->obj.next = vm->objects;
-    vm->objects = (Obj *)req;
+    ObjStruct *req = new_struct(vm, total, false);
 
     req->field_names[0] = strdup("method");
     req->fields[0] = val_string(allocate_string(vm, method, (int)strlen(method)));
@@ -551,6 +555,7 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
     ObjClosure *handler_closure = (handler_val.type == VAL_CLOSURE) ? handler_val.as.closure : NULL;
     ObjFunction *handler_fn = handler_closure ? handler_closure->function : handler_val.as.function;
     Task *tmp = task_new(vm);
+    task_arena_enable(tmp);
     /* Register *before* running: gc_mark_roots() only scans stacks of tasks
      * in vm->tasks, so if tmp isn't registered yet, anything the handler
      * allocates (including req_val's own fields, still live on tmp's stack)
@@ -593,9 +598,7 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
          * struct's fields alive, and the result struct built below could
          * still be in use when the next GC cycle runs. */
         tmp->dead = true;
-        ObjStruct *rs = new_struct(2);
-        rs->obj.next = vm->objects;
-        vm->objects = (Obj *)rs;
+        ObjStruct *rs = new_struct(vm, 2, false);
         rs->field_names[0] = strdup("status");
         rs->fields[0] = val_int(500);
         rs->field_names[1] = strdup("body");
@@ -626,26 +629,19 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
  * uncaught error partway through a long-lived connection (e.g. a bad
  * WebSocket message). Either way this must not propagate further: finalize
  * this one connection and let everything else keep running. */
-void http_finalize_deferred_response(Task *t, bool had_error) {
+void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
     int fd = t->http_response_fd;
     SSL *ssl = (SSL *)t->http_response_ssl;
     t->http_response_fd = -1;
     t->http_response_ssl = NULL;
     if (had_error) {
         fprintf(stderr, "Unhandled error in long-lived request handler\n");
-        ObjStruct *rs = new_struct(2);
+        ObjStruct *rs = new_struct(vm, 2, false);
         rs->field_names[0] = strdup("status");
         rs->fields[0] = val_int(500);
         rs->field_names[1] = strdup("body");
         rs->fields[1] = val_string(copy_string("Internal Server Error", 22));
         send_http_response(fd, ssl, val_struct(rs), false);
-        free(rs->field_names[0]);
-        free(rs->field_names[1]);
-        free(rs->field_names);
-        free(rs->fields);
-        free(rs->field_validations);
-        free(rs->field_validation_counts);
-        free(rs);
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         close(fd);
         return;
@@ -836,9 +832,7 @@ static const char *find_phr_header_value(const struct phr_header *headers, size_
 
 static Value parse_all_headers_phr(VM *vm, const struct phr_header *phr_headers, size_t num_headers) {
     if (num_headers == 0) return val_nil();
-    ObjStruct *hs = new_struct((int)num_headers);
-    hs->obj.next = vm->objects;
-    vm->objects = (Obj *)hs;
+    ObjStruct *hs = new_struct(vm, (int)num_headers, false);
     Task *self = vm->current_task;
     self->stack[self->stack_top++] = val_struct(hs);
     int idx = 0;
@@ -891,14 +885,12 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
                                       &minor_version,
                                       phr_headers, &num_phr_headers, 0);
     if (consumed < 0) {
-        ObjStruct *rs = new_struct(2);
+        ObjStruct *rs = new_struct(vm, 2, false);
         rs->field_names[0] = strdup("status");
         rs->fields[0] = val_int(400);
         rs->field_names[1] = strdup("body");
         rs->fields[1] = val_string(copy_string("Bad Request", 11));
         send_http_response(client_fd, ssl, val_struct(rs), false);
-                        free(rs->field_names[0]); free(rs->field_names[1]); free(rs->field_names);
-                        free(rs->fields); free(rs->field_validations); free(rs->field_validation_counts); free(rs);
                         return false;
                     }
     char method[64], path[2048];
@@ -1006,9 +998,7 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
             free_request(vm, req_val);
         } else {
             result = val_nil();
-            ObjStruct *rs = new_struct(2);
-            rs->obj.next = vm->objects;
-            vm->objects = (Obj *)rs;
+            ObjStruct *rs = new_struct(vm, 2, false);
             rs->field_names[0] = strdup("status");
             rs->fields[0] = val_int(404);
             rs->field_names[1] = strdup("body");
@@ -1047,9 +1037,8 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
 
 
 
-/* Cluster worker forward declarations */
-static void fork_cluster_workers(int worker_count, int port);
-static void fork_cluster_stop(void);
+/* Cluster worker forward declaration */
+static void spawn_cluster_workers(int worker_count, int port);
 
 /* ═══════════════════════════════════════════
  *  Pending connection pool -- non-blocking multiplexing
@@ -1191,7 +1180,9 @@ void http_cleanup_pending_conns(Task *t) {
     free(pool->conns);
     free(pool);
     t->http_pending_conns = NULL;
-    thread_cluster_stop();
+    /* Cluster worker threads (see spawn_cluster_workers) each own a fully
+     * independent VM/Task/pool -- this task's pool teardown has no bearing
+     * on them, and they run for the lifetime of the process either way. */
 }
 
 static void send_plain_status(int fd, SSL *ssl, int status, const char *status_text) {
@@ -1492,6 +1483,11 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
     }
     int opt = 1;
     setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    /* Required for cluster mode: each worker thread (see
+     * spawn_cluster_workers) runs its own fully independent VM and binds
+     * its OWN socket on this same port rather than sharing one fd -- the
+     * kernel load-balances incoming connections across all of them. */
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     struct sockaddr_in addr;
@@ -1517,8 +1513,7 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
     PendingConnPool *pool = get_pending_pool(t);
     pool->tls_ctx = tls_ctx;
     pool->listen_fd = fd;
-    /* Phase 4: thread-based workers replace fork() */
-    thread_cluster_workers(workers, fd, port);
+    spawn_cluster_workers(workers, port);
     return true;
 }
 
@@ -1570,175 +1565,118 @@ static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool i
 }
 
 /* ═══════════════════════════════════════════
- *  Phase 4: Thread-based worker cluster
+ *  Thread-based worker cluster
  *
- *  Replaces the old fork()-based prefork model with pthreads for shared-
- *  memory parallelism. Each worker thread shares the already-bound,
- *  already-listening socket fd and runs its own accept loop concurrently --
- *  the kernel serializes accept() on a shared listen fd, distributing
- *  connections across workers. Threads share the address space, so read-
- *  only data (compiled bytecode, radix tries) is naturally shared without
- *  copy-on-write overhead.
+ *  lib_http_serve() is a cooperative native function: it yields and gets
+ *  retried every scheduler tick (see its t->yielded = true at the end), so
+ *  by the time a script reaches app.listen_cluster(port, workers), its
+ *  whole top level has already run -- every route is registered, every
+ *  closure built. That means the only way to get a *second* independent
+ *  copy of that same ready-to-serve state is to either (a) actually share
+ *  the one VM's heap across OS threads (which would require making the
+ *  single-threaded mark-sweep GC and every allocation site thread-safe --
+ *  a much larger, riskier rewrite than this), or (b) give each worker
+ *  thread its own VM and have it independently re-parse and re-compile the
+ *  exact same script from scratch, reaching the identical ready-to-serve
+ *  state on its own. This does (b): each worker thread is a fully isolated
+ *  VM/heap/GC, so there is zero shared mutable VM state between threads,
+ *  and therefore no locking needed anywhere in the interpreter for this to
+ *  be correct. The only process-wide (non-per-VM) mutable state that
+ *  multiple threads' independent scripts could ever race on is guarded
+ *  separately (see lib_cache_lock in ffi.c, curl_global_init() in main.c).
  *
- *  Cross-thread communication uses an atomic SPSC (single-producer,
- *  single-consumer) ring buffer for Actor message passing.
+ *  Each worker binds its own socket with SO_REUSEPORT on the same port
+ *  (see http_serve_setup_listener) rather than sharing one listening fd --
+ *  the kernel itself load-balances new connections across every bound
+ *  socket, so there's no single shared accept() queue to contend on, and
+ *  no accept() thundering-herd between workers either.
  * ═══════════════════════════════════════════ */
 
 #define MAX_CLUSTER_WORKERS 64
-#define WORKER_QUEUE_SIZE 256
+
+/* Set true at the top of cluster_worker_thread_main(), before that thread's
+ * independent VM ever starts running bytecode. If the script it's running
+ * reaches its own app.listen_cluster(...) call, this stops it from trying
+ * to spawn yet another whole set of worker threads recursively -- only the
+ * original (non-worker) thread that first called listen_cluster() spawns
+ * workers; every worker just serves on its own SO_REUSEPORT socket. */
+static __thread bool g_is_cluster_worker_thread = false;
+
+static int g_cluster_worker_count = 0;
 
 typedef struct {
-    uint64_t type;
-    void *data;
-} WorkerMsg;
-
-typedef struct {
-    WorkerMsg buffer[WORKER_QUEUE_SIZE];
-    _Atomic uint64_t head;
-    _Atomic uint64_t tail;
-} SPSCQueue;
-
-static void spsc_init(SPSCQueue *q) {
-    q->head = 0;
-    q->tail = 0;
-}
-
-static bool spsc_push(SPSCQueue *q, WorkerMsg *msg) {
-    uint64_t head = atomic_load_explicit(&q->head, memory_order_relaxed);
-    uint64_t tail = atomic_load_explicit(&q->tail, memory_order_acquire);
-    if (head - tail >= WORKER_QUEUE_SIZE) return false;
-    q->buffer[head % WORKER_QUEUE_SIZE] = *msg;
-    atomic_store_explicit(&q->head, head + 1, memory_order_release);
-    return true;
-}
-
-static bool spsc_pop(SPSCQueue *q, WorkerMsg *msg) {
-    uint64_t tail = atomic_load_explicit(&q->tail, memory_order_relaxed);
-    uint64_t head = atomic_load_explicit(&q->head, memory_order_acquire);
-    if (tail >= head) return false;
-    *msg = q->buffer[tail % WORKER_QUEUE_SIZE];
-    atomic_store_explicit(&q->tail, tail + 1, memory_order_release);
-    return true;
-}
-
-typedef struct {
-    pthread_t thread;
     int id;
-    int listen_fd;
-    _Atomic bool running;
-    SPSCQueue *inbox;
-    volatile bool *master_running;
-} WorkerThread;
+} ClusterWorkerArg;
 
-static WorkerThread g_workers[MAX_CLUSTER_WORKERS];
-static int g_worker_count = 0;
-static SPSCQueue g_master_inbox;
+static void *cluster_worker_thread_main(void *arg) {
+    ClusterWorkerArg *cwa = (ClusterWorkerArg *)arg;
+    int id = cwa->id;
+    free(cwa);
+    g_is_cluster_worker_thread = true;
 
-static void *worker_thread_main(void *arg) {
-    WorkerThread *w = (WorkerThread *)arg;
-    int epoll_fd = epoll_create1(0);
-    if (epoll_fd < 0) {
-        fprintf(stderr, "  worker %d: epoll_create1 failed: %s\n", w->id, strerror(errno));
+    if (!g_varian_script_path) {
+        fprintf(stderr, "  cluster worker %d: no script path recorded, exiting\n", id);
+        return NULL;
+    }
+    char *source = read_file_with_modules(g_varian_script_path);
+    if (!source) {
+        fprintf(stderr, "  cluster worker %d: could not reload '%s'\n", id, g_varian_script_path);
         return NULL;
     }
 
-    /* Thread-local connection tracking (no locking needed) */
-    typedef struct {
-        int fd;
-        double last_activity;
-    } TLocalConn;
-    TLocalConn *local_conns = NULL;
-    int local_count = 0;
-    int local_capacity = 0;
-
-    while (atomic_load_explicit(&w->running, memory_order_relaxed)) {
-        if (w->inbox) {
-            WorkerMsg msg;
-            while (spsc_pop(w->inbox, &msg)) {
-                if (msg.type == 0) goto worker_done;
-            }
-        }
-        for (int burst = 0; burst < 8; burst++) {
-            struct sockaddr_in client_addr;
-            socklen_t addr_len = sizeof(client_addr);
-            int client_fd = accept(w->listen_fd, (struct sockaddr *)&client_addr, &addr_len);
-            if (client_fd < 0) { if (errno == EAGAIN || errno == EWOULDBLOCK) break; break; }
-            int flags = fcntl(client_fd, F_GETFL, 0);
-            if (flags >= 0) fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
-            int nodelay = 1;
-            setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
-            struct epoll_event ev;
-            ev.events = EPOLLIN | EPOLLRDHUP;
-            ev.data.fd = client_fd;
-            epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_fd, &ev);
-            if (local_count >= local_capacity) {
-                int new_cap = local_capacity ? local_capacity * 2 : 16;
-                local_conns = (TLocalConn *)realloc(local_conns, (size_t)new_cap * sizeof(TLocalConn));
-                local_capacity = new_cap;
-            }
-            local_conns[local_count].fd = client_fd;
-            local_conns[local_count].last_activity = 0;
-            local_count++;
-        }
-        #define WT_MAX_EVENTS 64
-        struct epoll_event evts[WT_MAX_EVENTS];
-        int nfds = epoll_wait(epoll_fd, evts, WT_MAX_EVENTS, 10);
-        if (nfds > 0) {
-            for (int e = 0; e < nfds; e++) {
-                int fd = evts[e].data.fd;
-                for (int i = 0; i < local_count; i++) {
-                    if (local_conns[i].fd == fd) {
-                        char buf[4096];
-                        int n = (int)recv(fd, buf, sizeof(buf) - 1, 0);
-                        if (n > 0) {
-                            local_conns[i].last_activity = 0; /* keep alive */
-                        } else {
-                            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, fd, NULL);
-                            close(fd);
-                            local_conns[i] = local_conns[--local_count];
-                            i--;
-                        }
-                        break;
-                    }
-                }
-            }
-        }
+    Lexer lexer;
+    lexer_init(&lexer, source, g_varian_script_path);
+    Arena *arena = arena_create(0);
+    Parser parser;
+    parser_init(&parser, &lexer, arena);
+    AstNode *program = parser_parse(&parser);
+    if (parser.had_error) {
+        fprintf(stderr, "  cluster worker %d: parse error: %s\n", id, parser_get_error(&parser));
+        arena_destroy(arena);
+        free(source);
+        return NULL;
     }
-worker_done:
-    for (int i = 0; i < local_count; i++) close(local_conns[i].fd);
-    free(local_conns);
-    close(epoll_fd);
+
+    Chunk chunk;
+    chunk_init(&chunk);
+    Compiler compiler;
+    compiler_init(&compiler, arena, &chunk, program);
+    if (!compiler_compile(&compiler)) {
+        fprintf(stderr, "  cluster worker %d: compile error: %s\n", id, compiler.error_message);
+        chunk_free(&chunk);
+        arena_destroy(arena);
+        free(source);
+        return NULL;
+    }
+
+    VM vm;
+    vm_init(&vm, &compiler);
+    vm_run(&vm, false); /* this worker's own copy of the server's event loop -- runs forever */
+    vm_free(&vm);
+    chunk_free(&chunk);
+    arena_destroy(arena);
+    free(source);
     return NULL;
 }
 
-static void thread_cluster_workers(int worker_count, int listen_fd, int port) {
+static void spawn_cluster_workers(int worker_count, int port) {
     if (worker_count <= 1) return;
-    spsc_init(&g_master_inbox);
-    g_worker_count = 0;
+    if (g_is_cluster_worker_thread) return; /* a worker's own nested run must not spawn more */
     for (int i = 0; i < worker_count - 1 && i < MAX_CLUSTER_WORKERS; i++) {
-        WorkerThread *w = &g_workers[g_worker_count];
-        w->id = i + 1;
-        w->listen_fd = listen_fd;
-        atomic_store_explicit(&w->running, true, memory_order_relaxed);
-        w->inbox = NULL;
-        w->master_running = NULL;
-        if (pthread_create(&w->thread, NULL, worker_thread_main, w) != 0) {
+        ClusterWorkerArg *cwa = (ClusterWorkerArg *)malloc(sizeof(ClusterWorkerArg));
+        cwa->id = i + 1;
+        pthread_t th;
+        if (pthread_create(&th, NULL, cluster_worker_thread_main, cwa) != 0) {
             fprintf(stderr, "  http.serve: pthread_create() failed for worker %d: %s\n", i + 1, strerror(errno));
+            free(cwa);
             break;
         }
-        g_worker_count++;
+        pthread_detach(th);
+        g_cluster_worker_count++;
     }
     printf("  http.serve: %d worker thread(s) on port %d (pid %d)\n",
-           g_worker_count + 1, port, getpid());
+           g_cluster_worker_count + 1, port, getpid());
     fflush(stdout);
-}
-
-static void thread_cluster_stop(void) {
-    for (int i = 0; i < g_worker_count; i++)
-        atomic_store_explicit(&g_workers[i].running, false, memory_order_relaxed);
-    for (int i = 0; i < g_worker_count; i++)
-        pthread_join(g_workers[i].thread, NULL);
-    g_worker_count = 0;
 }
 
 /* ═══════════════════════════════════════════
@@ -1923,9 +1861,7 @@ static Value lib_http_create_struct(VM *vm, int arg_count, Value *args) {
     ObjArray *keys = keys_val.as.array;
     ObjArray *vals = vals_val.as.array;
     int count = keys->count < vals->count ? keys->count : vals->count;
-    ObjStruct *s = new_struct(count);
-    s->obj.next = vm->objects;
-    vm->objects = (Obj *)s;
+    ObjStruct *s = new_struct(vm, count, false);
     s->type_name = NULL;
     for (int i = 0; i < count; i++) {
         if (keys->elements[i].type == VAL_STRING) {

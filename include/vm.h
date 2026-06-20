@@ -333,7 +333,7 @@ struct ObjStruct {
     int struct_validation_count;
 };
 
-ObjStruct *new_struct(int field_count);
+ObjStruct *new_struct(struct VM *vm, int field_count, bool force_heap);
 
 /* ─── Enum ─── */
 struct ObjEnum {
@@ -593,6 +593,12 @@ void vm_free(VM *vm);
  * worker thread gets a fully isolated heap/GC -- no shared mutable VM
  * state across threads at all, so no locking is needed anywhere). */
 extern const char *g_varian_script_path;
+
+/* Reads a .vn file plus every .vn file under ./vn_modules/ (the module
+ * prelude), concatenated -- the same source main.c feeds to the top-level
+ * compiler for "vn <file>"/"vn run <file>". Cluster worker threads call
+ * this again themselves to get an identical, independent compile. */
+char *read_file_with_modules(const char *path);
 
 /* Native function type: receives arg array, returns Value */
 typedef Value (*NativeFn)(VM *vm, int arg_count, Value *args);

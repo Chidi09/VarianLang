@@ -104,9 +104,7 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
     int cols = sqlite3_column_count(stmt);
 
     while (rc == SQLITE_ROW) {
-        ObjStruct *s = new_struct(cols);
-        s->obj.next = vm->objects;
-        vm->objects = (Obj *)s;
+        ObjStruct *s = new_struct(vm, cols, false);
         s->type_name = NULL;
         self->stack[self->stack_top++] = val_struct(s);
 

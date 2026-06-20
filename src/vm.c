@@ -436,17 +436,110 @@ static ObjTuple *allocate_tuple(VM *vm, int count) {
     return t;
 }
 
-ObjStruct *new_struct(int field_count) {
-    ObjStruct *s = (ObjStruct *)calloc(1, sizeof(ObjStruct));
+ObjStruct *new_struct(VM *vm, int field_count, bool force_heap) {
+    Task *t = vm->current_task;
+
+    size_t hsize  = (sizeof(ObjStruct) + 7) & ~(size_t)7;
+    size_t fc     = (size_t)(field_count > 0 ? field_count : 0);
+    size_t nsize  = (fc * sizeof(char *) + 7) & ~(size_t)7;
+    size_t vsize  = (fc * sizeof(Value) + 7) & ~(size_t)7;
+    size_t avsize = (fc * sizeof(ValidationRule *) + 7) & ~(size_t)7;
+    size_t acsize = (fc * sizeof(int) + 7) & ~(size_t)7;
+    size_t total  = hsize + nsize + vsize + avsize + acsize;
+
+    bool use_arena = !force_heap && t && t->use_arena && t->arena_base &&
+                      (t->arena_offset + total <= TASK_ARENA_SIZE);
+
+    ObjStruct *s;
+    if (use_arena) {
+        char *base = t->arena_base + t->arena_offset;
+        t->arena_offset += total;
+        memset(base, 0, total);
+        s = (ObjStruct *)base;
+        s->field_names = (char **)(base + hsize);
+        s->fields = (Value *)(base + hsize + nsize);
+        s->field_validations = (ValidationRule **)(base + hsize + nsize + vsize);
+        s->field_validation_counts = (int *)(base + hsize + nsize + vsize + avsize);
+        /* Deliberately NOT linked into vm->objects: arena structs are bulk-
+         * reclaimed when this task's arena resets on recycle, not GC-swept
+         * individually. See escape_promote() for how references that must
+         * outlive this request get safely copied out before that happens. */
+    } else {
+        s = (ObjStruct *)calloc(1, sizeof(ObjStruct));
+        s->field_names = (char **)calloc(fc, sizeof(char *));
+        s->fields = (Value *)calloc(fc, sizeof(Value));
+        s->field_validations = (ValidationRule **)calloc(fc, sizeof(ValidationRule *));
+        s->field_validation_counts = (int *)calloc(fc, sizeof(int));
+        s->obj.next = vm->objects;
+        vm->objects = (Obj *)s;
+    }
     s->obj.type = VAL_STRUCT;
     s->field_count = field_count;
-    s->field_names = (char **)calloc(field_count, sizeof(char *));
-    s->fields = (Value *)calloc(field_count, sizeof(Value));
-    s->field_validations = (ValidationRule **)calloc(field_count, sizeof(ValidationRule *));
-    s->field_validation_counts = (int *)calloc(field_count, sizeof(int));
-    /* field_cache zeroed by calloc; field_cache_count = 0 means cold */
     return s;
 }
+
+/* True if `s` physically lives inside task t's 64KB arena block. */
+static bool struct_is_arena_backed(Task *t, ObjStruct *s) {
+    if (!t || !t->arena_base) return false;
+    const char *p = (const char *)s;
+    return p >= t->arena_base && p < t->arena_base + TASK_ARENA_SIZE;
+}
+
+/* Deep-copies any arena-backed ObjStruct reachable from `v` into a fresh
+ * heap-backed (force_heap) copy, recursively, rewriting pointers as it
+ * goes. Call this at every point a Value can outlive the task that built
+ * it -- right now that is exactly three opcodes: BC_SET_GLOBAL,
+ * BC_DEFINE_GLOBAL (both via define_global/set_global), and BC_CHAN_SEND
+ * (channels double as actor mailboxes in this codebase, so this single
+ * call site covers both). Cheap fast path: anything that isn't a
+ * VAL_STRUCT/VAL_ARRAY/VAL_CLOSURE/VAL_ENUM returns immediately unchanged (ints,
+ * floats, strings, bools, nil, functions -- strings are NEVER arena-backed
+ * in this design, see "Why this design" above, so they need no check
+ * here at all). Arrays, closures and enums are never themselves arena-backed
+ * either (only ObjStruct is) -- they're walked in place (not copied) only
+ * to find and promote any arena-backed struct nested inside them. */
+static Value escape_promote(VM *vm, Value v) {
+    Task *t = vm->current_task;
+    if (!t || !t->use_arena) return v;
+    switch (v.type) {
+        case VAL_STRUCT: {
+            ObjStruct *s = v.as.structure;
+            if (!struct_is_arena_backed(t, s)) return v;
+            ObjStruct *copy = new_struct(vm, s->field_count, true /* force_heap */);
+            copy->type_name = s->type_name;             /* never arena-backed, safe to share */
+            copy->struct_validations = s->struct_validations;
+            copy->struct_validation_count = s->struct_validation_count;
+            for (int i = 0; i < s->field_count; i++) {
+                copy->field_names[i] = s->field_names[i]; /* never arena-backed, safe to share */
+                copy->field_validations[i] = s->field_validations[i];
+                copy->field_validation_counts[i] = s->field_validation_counts[i];
+                copy->fields[i] = escape_promote(vm, s->fields[i]); /* recurse: a field can itself be an arena struct */
+            }
+            return val_struct(copy);
+        }
+        case VAL_ARRAY: {
+            ObjArray *a = v.as.array;
+            for (int i = 0; i < a->count; i++)
+                a->elements[i] = escape_promote(vm, a->elements[i]);
+            return v;
+        }
+        case VAL_CLOSURE: {
+            ObjClosure *c = v.as.closure;
+            for (int i = 0; i < c->captured_count; i++)
+                c->captured[i] = escape_promote(vm, c->captured[i]);
+            return v;
+        }
+        case VAL_ENUM: {
+            ObjEnum *e = v.as.enum_val;
+            for (int i = 0; i < e->count; i++)
+                e->values[i] = escape_promote(vm, e->values[i]);
+            return v;
+        }
+        default:
+            return v;
+    }
+}
+
 
 ObjClosure *new_closure(ObjFunction *f, int captured_count) {
     ObjClosure *c = (ObjClosure *)calloc(1, sizeof(ObjClosure));
@@ -629,6 +722,8 @@ static size_t gc_sweep(VM *vm) {
                     free(s->field_names);
                     free(s->fields);
                     free(s->type_name);
+                    free(s->field_validations);
+                    free(s->field_validation_counts);
                     obj_size = sizeof(ObjStruct);
                     break;
                 }
@@ -2261,6 +2356,7 @@ void runtime_error(VM *vm, const char *format, ...) {
 }
 
 void define_global(VM *vm, ObjString *name, Value value) {
+    value = escape_promote(vm, value);
     for (int i = 0; i < vm->global_count; i++) {
         if (strcmp(vm->global_names[i], name->chars) == 0) {
             vm->globals[i] = value;
@@ -2287,6 +2383,7 @@ Value get_global(VM *vm, ObjString *name) {
 }
 
 void set_global(VM *vm, ObjString *name, Value value) {
+    value = escape_promote(vm, value);
     for (int i = 0; i < vm->global_count; i++) {
         if (strcmp(vm->global_names[i], name->chars) == 0) {
             vm->globals[i] = value;
@@ -2294,6 +2391,14 @@ void set_global(VM *vm, ObjString *name, Value value) {
         }
     }
     runtime_error(vm, "Undefined variable '%s'", name->chars);
+}
+
+static Value native_test_enable_arena(VM *vm, int arg_count, Value *args) {
+    (void)arg_count; (void)args;
+    if (vm->current_task) {
+        task_arena_enable(vm->current_task);
+    }
+    return val_nil();
 }
 
 static Value native_print(VM *vm, int arg_count, Value *args) {
@@ -2511,7 +2616,7 @@ Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
     }
 
     /* 1. Create inner state struct */
-    ObjStruct *state = new_struct(info->field_count);
+    ObjStruct *state = new_struct(vm, info->field_count, false);
     state->type_name = (char *)malloc(strlen(type_name) + 1);
     strcpy(state->type_name, type_name);
     for (int i = 0; i < info->field_count; i++) {
@@ -2535,8 +2640,6 @@ Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
     obj_actor->inbox = val_channel(inbox);
 
     /* Link into GC */
-    state->obj.next = vm->objects;
-    vm->objects = (Obj *)state;
     inbox->obj.next = vm->objects;
     vm->objects = (Obj *)inbox;
     obj_actor->obj.next = vm->objects;
@@ -2635,6 +2738,7 @@ bool vm_run(VM *vm, bool run_tests) {
     }
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
+    define_global(vm, copy_string("__test_enable_arena", 19), val_native_fn((void *)native_test_enable_arena));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
     define_global(vm, copy_string("ffi_to_string", 13), val_native_fn((void *)native_ffi_to_string));
     define_global(vm, copy_string("assert_eq", 9), val_native_fn((void *)native_assert_eq));
@@ -2755,8 +2859,8 @@ bool vm_run(VM *vm, bool run_tests) {
                      * message on an open WebSocket). Either way this must
                      * not crash the server -- just finalize this one
                      * connection's response/close. */
-                    extern void http_finalize_deferred_response(Task *t, bool had_error);
-                    http_finalize_deferred_response(t, tick_had_error);
+                    extern void http_finalize_deferred_response(VM *vm, Task *t, bool had_error);
+                    http_finalize_deferred_response(vm, t, tick_had_error);
                 }
                 if (t->dead || t->frame_count == 0 || (t->frame_count > 0 && t->frames[t->frame_count - 1].ip != prev_ip)) {
                     made_progress = true;
@@ -3031,6 +3135,7 @@ bool task_run(VM *vm, Task *task) {
                     return false;
                 }
                 if (ch->count < ch->capacity) {
+                    val = escape_promote(vm, val);
                     ch->buffer[ch->tail] = val;
                     ch->tail = (ch->tail + 1) % ch->capacity;
                     ch->count++;
@@ -3580,9 +3685,7 @@ bool task_run(VM *vm, Task *task) {
             case BC_STRUCT: {
                 uint8_t field_count = READ_BYTE();
                 ObjString *type_name_str = READ_CONSTANT().as.string;
-                ObjStruct *s = new_struct(field_count);
-                s->obj.next = vm->objects;
-                vm->objects = (Obj *)s;
+                ObjStruct *s = new_struct(vm, field_count, false);
                 s->type_name = (char *)malloc(type_name_str->length + 1);
                 memcpy(s->type_name, type_name_str->chars, type_name_str->length);
                 s->type_name[type_name_str->length] = '\0';

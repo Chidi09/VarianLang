@@ -1,0 +1,28 @@
+__test_enable_arena()
+let cache_a = null
+let cache_b = null
+
+fn make_and_store(key) {
+    let s = Response { status: 200, body: "cached-" + key, content_type: "text/plain", _keep_open: false }
+    if key == "a" {
+        cache_a = s
+    } else {
+        cache_b = s
+    }
+    return s
+}
+
+make_and_store("a")
+make_and_store("b")
+
+// Simulate many task recycles happening between the store and the read,
+// the way many HTTP requests would cycle the same pooled Task in production.
+let i = 0
+while (i < 50) {
+    let throwaway = Response { status: 200, body: "throwaway " + i, content_type: "text/plain", _keep_open: false }
+    i = i + 1
+}
+
+assert_eq(cache_a.body, "cached-a")
+assert_eq(cache_b.body, "cached-b")
+print("arena escape test passed")
