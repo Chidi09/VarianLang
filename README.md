@@ -28,7 +28,7 @@ c.increment()
 print(c.get())
 ```
 
-### he Zenith Web Framework
+### The Zenith Web Framework
 
 <p align="center">
   <img src="docs/zenith_logo.png" alt="Zenith Logo" width="300" />
