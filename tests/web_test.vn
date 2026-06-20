@@ -1,0 +1,56 @@
+// Zenith request/response helper coverage: query, form, cookies, redirect,
+// sessions, and the template engine.
+
+test "query parses and url-decodes" {
+    let req = http.test_request("GET", "/s?q=hello%20world&page=2&flag", "")
+    assert_eq(query(req, "q", "x"), "hello world")
+    assert_eq(query(req, "page", "0"), "2")
+    assert_eq(query(req, "flag", "MISSING"), "")
+    assert_eq(query(req, "absent", "default"), "default")
+}
+
+test "form body parses url-encoded fields" {
+    let req = http.test_request("POST", "/submit", "name=Ada+Lovelace&email=ada%40example.com")
+    assert_eq(form(req, "name", ""), "Ada Lovelace")
+    assert_eq(form(req, "email", ""), "ada@example.com")
+}
+
+test "redirect sets status and Location" {
+    let r = redirect("/login")
+    assert_eq(r.status, 302)
+    assert_eq(_validate.get_field(r.headers, "Location"), "/login")
+}
+
+test "set_cookie builds a secure Set-Cookie header" {
+    let base = Response { status: 200, body: "ok", content_type: "text/plain", _keep_open: false }
+    let r = set_cookie(base, "sid", "abc123", null)
+    let hdr = _validate.get_field(r.headers, "Set_Cookie")
+    assert_eq(hdr, "sid=abc123; Path=/; SameSite=Lax; HttpOnly")
+}
+
+test "session round-trips and rejects tampering" {
+    let secret = "test-secret"
+    let data = http.create_struct(["uid", "name"], ["42", "Ada"])
+    let resp = session_set(Response { status: 200, body: "", content_type: "text/plain", _keep_open: false }, data, secret, null)
+    let hdr = _validate.get_field(resp.headers, "Set_Cookie")
+    let token = hdr.substring(8, hdr.index_of(";"))
+    let req = http.create_struct(["headers"], [http.create_struct(["cookie"], ["session=" + token])])
+    let got = session_get(req, secret)
+    assert_eq(_validate.get_field(got, "uid"), "42")
+    assert_eq(session_get(req, "wrong-secret"), null)
+}
+
+test "template interpolation escapes by default" {
+    let ctx = http.create_struct(["name"], ["Ada <b>"])
+    assert_eq(render("Hi <%= name %>", ctx), "Hi Ada &lt;b&gt;")
+    assert_eq(render("Hi <%- name %>", ctx), "Hi Ada <b>")
+}
+
+test "template conditionals and loops" {
+    let ctx = http.create_struct(["on", "user"], [true, "Bob"])
+    assert_eq(render("<% if on %>Hi <%= user %><% else %>bye<% endif %>", ctx), "Hi Bob")
+    let ctx2 = http.create_struct(["on"], [false])
+    assert_eq(render("<% if on %>hi<% else %>guest<% endif %>", ctx2), "guest")
+    let ctx3 = http.create_struct(["xs"], [["a", "b", "c"]])
+    assert_eq(render("<% for x in xs %>[<%= x %>]<% endfor %>", ctx3), "[a][b][c]")
+}

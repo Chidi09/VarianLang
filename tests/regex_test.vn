@@ -1,0 +1,40 @@
+// Regex module (POSIX ERE) coverage.
+
+test "test matches and rejects" {
+    assert_eq(regex.test("[0-9]+", "abc123"), true)
+    assert_eq(regex.test("[0-9]+", "abcdef"), false)
+}
+
+test "match returns first occurrence" {
+    assert_eq(regex.match("[0-9]+", "order 42 then 99"), "42")
+    assert_eq(regex.match("[0-9]+", "no digits"), null)
+}
+
+test "find_all returns every match" {
+    let all = regex.find_all("[0-9]+", "a1 b22 c333")
+    assert_eq(all.len(), 3)
+    assert_eq(all[0], "1")
+    assert_eq(all[2], "333")
+}
+
+test "groups captures subexpressions" {
+    let g = regex.groups("([a-z]+)@([a-z]+)", "ada@example")
+    assert_eq(g[0], "ada@example")
+    assert_eq(g[1], "ada")
+    assert_eq(g[2], "example")
+}
+
+test "replace all with backreferences" {
+    assert_eq(regex.replace("[0-9]+", "a1b2c3", "#"), "a#b#c#")
+    assert_eq(regex.replace("([a-z])([0-9])", "a1 b2", "\\2\\1"), "1a 2b")
+}
+
+test "case-insensitive flag" {
+    assert_eq(regex.test("hello", "HELLO WORLD", "i"), true)
+    assert_eq(regex.test("hello", "HELLO WORLD"), false)
+}
+
+test "anchored email shape" {
+    assert_eq(regex.test("^[a-z0-9._]+@[a-z0-9.]+$", "user@domain.com"), true)
+    assert_eq(regex.test("^[a-z0-9._]+@[a-z0-9.]+$", "not an email"), false)
+}
