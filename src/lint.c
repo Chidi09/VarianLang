@@ -157,8 +157,28 @@ static const char *known_native_methods[] = {
     "is_uuid", "max_len", "min_len", "write_socket", "close_socket",
     "read_socket", "code_at", "from_codes", "sha1_base64", "hash_password",
     "verify_password", "bit_and", "bit_or", "bit_xor",
+    "generate_token", "constant_time_eq", "index_of", "contains",
 };
 #define KNOWN_NATIVE_METHOD_COUNT (sizeof(known_native_methods) / sizeof(known_native_methods[0]))
+
+/* The parser accepts @anything(args) on a struct/field with no validation
+ * at all (see parse_struct_decl in src/parser.c) -- a typo like
+ * @min_lenn(3) silently does nothing, ever, with no error at parse time,
+ * compile time, or runtime. This is every decorator name actually wired
+ * up to a real effect (validation rules from lib_validate.c, plus the
+ * handful of non-validation decorators used elsewhere in this codebase). */
+static const char *known_decorator_names[] = {
+    "validate", "is_email", "is_url", "is_alphanumeric", "min_len", "max_len",
+    "is_uuid", "cache", "retry", "ffi",
+};
+#define KNOWN_DECORATOR_COUNT (sizeof(known_decorator_names) / sizeof(known_decorator_names[0]))
+
+static bool is_known_decorator(const char *name) {
+    for (size_t i = 0; i < KNOWN_DECORATOR_COUNT; i++) {
+        if (strcmp(known_decorator_names[i], name) == 0) return true;
+    }
+    return false;
+}
 
 static bool is_known_native_method(const char *name) {
     for (size_t i = 0; i < KNOWN_NATIVE_METHOD_COUNT; i++) {
@@ -502,6 +522,67 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
 
         case NODE_STRING_LITERAL:
             break;
+
+        case NODE_STRUCT_DECL: {
+            /* Duplicate field names: the parser accepts this silently, and
+             * whichever field comes last simply shadows the earlier one in
+             * generated code -- the first declaration is dead, not an
+             * error, which is exactly the kind of bug a typo produces and
+             * nothing else currently catches. */
+            for (int i = 0; i < node->struct_decl.field_count; i++) {
+                for (int j = i + 1; j < node->struct_decl.field_count; j++) {
+                    if (strcmp(node->struct_decl.field_names[i], node->struct_decl.field_names[j]) == 0) {
+                        report_lint(walker->ctx, node->loc, "duplicate",
+                                    "Struct '%s' declares field '%s' more than once",
+                                    node->struct_decl.name, node->struct_decl.field_names[i]);
+                    }
+                }
+            }
+            for (int i = 0; i < node->struct_decl.decorator_count; i++) {
+                if (!is_known_decorator(node->struct_decl.decorator_keys[i])) {
+                    report_lint(walker->ctx, node->loc, "unknown-decorator",
+                                "Unknown decorator '@%s' on struct '%s' (typo? this silently does nothing)",
+                                node->struct_decl.decorator_keys[i], node->struct_decl.name);
+                }
+            }
+            for (int i = 0; i < node->struct_decl.field_count; i++) {
+                for (int j = 0; j < node->struct_decl.field_decorator_counts[i]; j++) {
+                    const char *dname = node->struct_decl.field_decorator_keys[i][j];
+                    if (!is_known_decorator(dname)) {
+                        report_lint(walker->ctx, node->loc, "unknown-decorator",
+                                    "Unknown decorator '@%s' on field '%s' of struct '%s' (typo? this silently does nothing)",
+                                    dname, node->struct_decl.field_names[i], node->struct_decl.name);
+                    }
+                }
+            }
+            break;
+        }
+
+        case NODE_ACTOR_DECL: {
+            for (int i = 0; i < node->actor_decl.field_count; i++) {
+                for (int j = i + 1; j < node->actor_decl.field_count; j++) {
+                    if (strcmp(node->actor_decl.field_names[i], node->actor_decl.field_names[j]) == 0) {
+                        report_lint(walker->ctx, node->loc, "duplicate",
+                                    "Actor '%s' declares field '%s' more than once",
+                                    node->actor_decl.name, node->actor_decl.field_names[i]);
+                    }
+                }
+            }
+            break;
+        }
+
+        case NODE_ENUM_DECL: {
+            for (int i = 0; i < node->enum_decl.variant_count; i++) {
+                for (int j = i + 1; j < node->enum_decl.variant_count; j++) {
+                    if (strcmp(node->enum_decl.variant_names[i], node->enum_decl.variant_names[j]) == 0) {
+                        report_lint(walker->ctx, node->loc, "duplicate",
+                                    "Enum '%s' declares variant '%s' more than once",
+                                    node->enum_decl.name, node->enum_decl.variant_names[i]);
+                    }
+                }
+            }
+            break;
+        }
 
         case NODE_FN_DECL: {
             if (node->fn_decl.impl_type && is_known_native_method(node->fn_decl.name)) {

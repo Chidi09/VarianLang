@@ -2285,6 +2285,13 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->test_count = 0;
     memset(vm->tests, 0, sizeof(vm->tests));
     vm->validation_registry.count = 0;
+    vm->test_filter = NULL;
+    vm->test_skip_count = 0;
+    vm->test_timeout_ms = 0;
+    vm->test_timeout_count = 0;
+    vm->deadline_us = 0;
+    vm->timed_out = false;
+    vm->loop_tick = 0;
 }
 
 /* ─── FFI Resolution ─── */
@@ -2933,6 +2940,11 @@ bool vm_run(VM *vm, bool run_tests) {
         for (int i = 0; i < vm->test_count; i++) {
             TestRecord *tr = &vm->tests[i];
 
+            if (vm->test_filter && (!tr->description || !strstr(tr->description, vm->test_filter))) {
+                vm->test_skip_count++;
+                continue;
+            }
+
             Task *t = task_new(vm);
             if (!t) continue;
             vm_register_task(vm, t);
@@ -2944,6 +2956,18 @@ bool vm_run(VM *vm, bool run_tests) {
             t->frame_count = 1;
 
             vm->had_error = false;
+            vm->timed_out = false;
+
+            /* Optional per-test wall-clock deadline (vn test --timeout N).
+             * task_run() enforces it on loop back-edges; the yield-point
+             * check below covers tests that block in native I/O instead. */
+            vm->deadline_us = 0;
+            if (vm->test_timeout_ms > 0) {
+                struct timeval tv;
+                gettimeofday(&tv, NULL);
+                vm->deadline_us = (int64_t)tv.tv_sec * 1000000 + tv.tv_usec +
+                                  (int64_t)vm->test_timeout_ms * 1000;
+            }
 
             /* Mini-scheduler: handle yields from await, actors, etc. */
             while (!t->dead && !vm->had_error) {
@@ -2964,9 +2988,30 @@ bool vm_run(VM *vm, bool run_tests) {
                         }
                     }
                 }
+
+                if (vm->deadline_us && !vm->timed_out) {
+                    struct timeval now;
+                    gettimeofday(&now, NULL);
+                    int64_t now_us = (int64_t)now.tv_sec * 1000000 + now.tv_usec;
+                    if (now_us >= vm->deadline_us) { vm->timed_out = true; break; }
+                }
             }
 
-            if (vm->had_error) {
+            vm->deadline_us = 0;
+
+            if (vm->timed_out) {
+                printf("  ⏱️  TIMEOUT: %s (exceeded %dms)\n",
+                       tr->description, vm->test_timeout_ms);
+                /* Kill the aborted test's task and any background tasks it
+                 * spawned so a runaway loop can't bleed into later tests. */
+                for (int j = 0; j < vm->task_count; j++) {
+                    if (vm->tasks[j]) vm->tasks[j]->dead = true;
+                }
+                vm->had_error = false;
+                vm->last_error[0] = '\0';
+                vm->test_fail_count++;
+                vm->test_timeout_count++;
+            } else if (vm->had_error) {
                 printf("  \u274c FAIL: %s\n", tr->description);
                 if (vm->last_error[0] != '\0') {
                     printf("     %s\n", vm->last_error);
@@ -3559,6 +3604,20 @@ L_BC_LOOP_TOP:
             {
                 uint16_t offset = READ_SHORT();
                 t->frames[t->frame_count - 1].ip -= offset;
+                /* Test-only deadline guard. Free in the common case (no
+                 * deadline set); when one is, gettimeofday is amortized
+                 * across many iterations so a tight loop still pays almost
+                 * nothing while remaining interruptible within ~a few ms. */
+                if (vm->deadline_us && (++vm->loop_tick & 0x3FFF) == 0) {
+                    struct timeval now;
+                    gettimeofday(&now, NULL);
+                    int64_t now_us = (int64_t)now.tv_sec * 1000000 + now.tv_usec;
+                    if (now_us >= vm->deadline_us) {
+                        vm->timed_out = true;
+                        vm->had_error = true;
+                        goto end_vm;
+                    }
+                }
                 DISPATCH();
             }
 

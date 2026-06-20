@@ -152,9 +152,18 @@ static void collect_test_files(const char *dir, char ***files, int *count, int *
     closedir(d);
 }
 
+/* Aggregate counts across files, for the final summary line. */
+typedef struct {
+    int passed;
+    int failed;
+    int skipped;
+    int timed_out;
+} TestTotals;
+
 /* ─── Run a single test file ─── */
 /* Returns: 0 on success (all tests pass), 1 on failure */
-static int run_test_file(const char *path) {
+static int run_test_file(const char *path, const char *filter, int timeout_ms,
+                         TestTotals *totals) {
     char *source = test_runner_read_file_with_modules(path);
     if (!source) return 1;
 
@@ -189,6 +198,8 @@ static int run_test_file(const char *path) {
 
     VM vm;
     vm_init(&vm, &compiler);
+    vm.test_filter = filter;
+    vm.test_timeout_ms = timeout_ms;
 
     /* Copy tests from compiler to VM */
     for (int i = 0; i < compiler.test_count && vm.test_count < MAX_TESTS; i++) {
@@ -201,6 +212,14 @@ static int run_test_file(const char *path) {
     vm_run(&vm, true);
 
     int fails = vm.test_fail_count;
+
+    if (totals) {
+        int ran = vm.test_count - vm.test_skip_count;
+        totals->passed    += ran - vm.test_fail_count;
+        totals->failed    += vm.test_fail_count;
+        totals->skipped   += vm.test_skip_count;
+        totals->timed_out += vm.test_timeout_count;
+    }
 
     vm_free(&vm);
     chunk_free(&chunk);
@@ -219,7 +238,7 @@ static int run_test_file(const char *path) {
 }
 
 /* ─── Public API ─── */
-int test_run_dir(const char *path) {
+int test_run_dir(const char *path, const char *filter, int timeout_ms) {
     struct stat st;
     if (stat(path, &st) == -1) {
         fprintf(stderr, "test: path '%s' does not exist\n", path);
@@ -244,18 +263,27 @@ int test_run_dir(const char *path) {
     }
 
     printf("Found %d test file(s) in '%s'\n", count, path);
+    if (filter) printf("Filter: tests matching \"%s\"\n", filter);
+    if (timeout_ms > 0) printf("Timeout: %dms per test\n", timeout_ms);
     printf("\n");
 
     int total_failed = 0;
+    TestTotals totals = {0, 0, 0, 0};
 
     for (int i = 0; i < count; i++) {
         printf("File: %s\n", files[i]);
-        total_failed += run_test_file(files[i]);
+        total_failed += run_test_file(files[i], filter, timeout_ms, &totals);
         printf("\n");
         free(files[i]);
     }
 
     free(files);
+
+    printf("─────────────────────────────────────\n");
+    printf("Summary: %d passed, %d failed", totals.passed, totals.failed);
+    if (totals.timed_out > 0) printf(" (%d timed out)", totals.timed_out);
+    if (totals.skipped > 0)   printf(", %d skipped", totals.skipped);
+    printf("\n");
 
     return total_failed > 0 ? 1 : 0;
 }

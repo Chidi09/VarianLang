@@ -224,6 +224,14 @@ static FmtToken fmt_scan_token(FmtScanner *s) {
     if (c == '/' && fmt_peek(s) == '=') { fmt_advance(s); return fmt_make_token(s, FMT_OPERATOR); }
     if (c == '&' && fmt_peek(s) == '&') { fmt_advance(s); return fmt_make_token(s, FMT_OPERATOR); }
     if (c == '|' && fmt_peek(s) == '|') { fmt_advance(s); return fmt_make_token(s, FMT_OPERATOR); }
+    /* ?? (nil-coalesce) and ?. (safe navigation) -- without merging these
+     * into one token here, the formatter only ever sees a bare '?' and has
+     * to guess (via prev-token heuristics) whether it's the propagate
+     * operator (x?), the start of ??, or the start of ?. -- merging them
+     * the same way ::/->/=> already are below makes each one an explicit,
+     * unambiguous token instead. */
+    if (c == '?' && fmt_peek(s) == '?') { fmt_advance(s); return fmt_make_token(s, FMT_OPERATOR); }
+    if (c == '?' && fmt_peek(s) == '.') { fmt_advance(s); return fmt_make_token(s, FMT_OPERATOR); }
     if (c == '.' && fmt_peek(s) == '.') {
         fmt_advance(s);
         if (fmt_peek(s) == '.') fmt_advance(s);
@@ -338,6 +346,20 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
     bool after_open_brace = false;
     bool after_comma = false;
     bool prev_is_decl_keyword = false;
+    /* Tracks whether we're between the opening and closing | of a closure
+     * param list (|x, y| body) -- a single | is ambiguous on its own
+     * (bitwise-or vs. closure delimiter), so this is resolved positionally:
+     * a | where the previous token couldn't be a valid left operand opens
+     * a param list; the next bare | after that closes it. Param lists
+     * never contain a nested |, so a simple toggle is sufficient. */
+    bool in_closure_params = false;
+    /* How many newlines emitted since the last real content, capped at 2
+     * (one to end the content's line, one more to preserve a single blank
+     * line) -- collapsing 3+ consecutive source newlines down to exactly
+     * one blank line, the same convention as gofmt/rustfmt/prettier,
+     * instead of the previous all-or-nothing behavior that silently
+     * deleted every intentional blank line in the entire file. */
+    int consecutive_newlines_emitted = 0;
 
 /* Emit a string */
 #define EMIT(s, len) do { \
@@ -370,15 +392,17 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
     for (int i = 0; i < token_count; i++) {
         FmtToken *tok = &tokens[i];
         bool prev_was_nl = (prev.type == FMT_NEWLINE || prev.type == FMT_EOF);
+        if (tok->type != FMT_NEWLINE) consecutive_newlines_emitted = 0;
 
         if (tok->type == FMT_EOF) break;
 
         /* ── NEWLINE ── */
         if (tok->type == FMT_NEWLINE) {
-            if (!prev_was_nl) {
+            if (consecutive_newlines_emitted < 2) {
                 after_open_brace = false;
                 after_comma = false;
                 NEWLINE_AND_INDENT();
+                consecutive_newlines_emitted++;
             }
             prev = *tok;
             prev_is_decl_keyword = false;
@@ -393,7 +417,20 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
             NEWLINE_AND_INDENT();
             after_open_brace = false;
             after_comma = false;
+            /* The real newline token right after this comment in the
+             * source still comes next in the stream -- mark prev as if it
+             * were that newline (not this comment) so the NEWLINE case
+             * above correctly collapses it instead of emitting a second,
+             * blank-line-producing one. */
+            /* The real newline token right after this comment in the
+             * source is the SAME line-ending this just emitted, not a
+             * second, separate one -- consume it outright rather than
+             * letting the generic NEWLINE case see it (which can't tell
+             * "this is the line the comment already ended" apart from
+             * "this starts a genuine blank line" using a counter alone). */
+            if (i + 1 < token_count && tokens[i + 1].type == FMT_NEWLINE) i++;
             prev = *tok;
+            prev.type = FMT_NEWLINE;
             prev_is_decl_keyword = false;
             continue;
         }
@@ -416,6 +453,16 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
                     p = le + 1;
                 }
                 NEWLINE_AND_INDENT();
+                /* Same fix as the line-comment case above: the next token
+                 * is the real source newline after this comment, which
+                 * needs to see prev as already-a-newline to collapse
+                 * correctly instead of producing a blank line. */
+                /* Same reasoning as the line-comment case above. */
+                if (i + 1 < token_count && tokens[i + 1].type == FMT_NEWLINE) i++;
+                prev = *tok;
+                prev.type = FMT_NEWLINE;
+                prev_is_decl_keyword = false;
+                continue;
             } else {
                 /* Inline block comment */
                 if (!prev_was_nl && prev.type != FMT_BRACE_OPEN && prev.type != FMT_PAREN_OPEN && prev.type != FMT_COMMA) EMITS(" ");
@@ -459,7 +506,7 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
                     NEWLINE_AND_INDENT();
                 }
             }
-            if (need_indent) EMIT_INDENT();
+            if (need_indent) { EMIT_INDENT(); need_indent = false; }
             EMITS("}");
             after_open_brace = false;
             after_comma = false;
@@ -494,8 +541,13 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
 
         /* OPENING BRACE */
         if (tok->type == FMT_BRACE_OPEN) {
+            /* A closure's closing | (e.g. |req, next| {) already emitted
+             * its own trailing space -- same reasoning as already-excluded
+             * ( and [. */
+            bool prev_is_closure_pipe_close = (prev.type == FMT_OPERATOR && prev.length == 1 && prev.start[0] == '|');
             /* Same-line brace rule: space before { unless after ( or decl keyword */
-            if (prev.type != FMT_PAREN_OPEN && prev.type != FMT_BRACKET_OPEN && !prev_was_nl && !prev_is_decl_keyword)
+            if (prev.type != FMT_PAREN_OPEN && prev.type != FMT_BRACKET_OPEN && !prev_is_closure_pipe_close &&
+                !prev_was_nl && !prev_is_decl_keyword)
                 space_before = true;
             EMITS(space_before ? " {" : "{");
             indent++;
@@ -518,7 +570,11 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
         /* OPENING PAREN */
         if (tok->type == FMT_PAREN_OPEN) {
             if (prev.type == FMT_IDENTIFIER && fmt_is_opening_brace_keyword(prev.start, prev.length)) {
-                EMITS(" (");  /* if (, while (, fn ( */
+                /* if (, while (, fn ( -- but if this keyword is also
+                 * flagged is_decl in fmt_keywords (e.g. "while"/"if"),
+                 * it already emitted its own trailing space, so adding
+                 * " (" here too would double it up. */
+                EMITS(prev_is_decl_keyword ? "(" : " (");
             } else if (prev.type == FMT_IDENTIFIER) {
                 EMITS("(");   /* function call: foo( */
             } else {
@@ -555,6 +611,22 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
 
         /* ── OPERATORS & PUNCTUATION ── */
         if (tok->type == FMT_OPERATOR) {
+            /* Handle ! — always prefix logical-not (a bare ! is never
+             * binary; != is already its own 2-char token, see above), so
+             * unlike unary -, there's no ambiguity to resolve: just a
+             * normal leading space (if one is needed at all) and no space
+             * before the operand it negates. */
+            if (tok->length == 1 && tok->start[0] == '!') {
+                /* prev_is_decl_keyword covers "while"/"if"/etc., which
+                 * already emitted their own trailing space (see is_decl in
+                 * fmt_keywords) -- without this check, "while !x" would
+                 * get a second, doubled-up space here. */
+                if (!prev_is_decl_keyword && !prev_was_nl && !prev_was_punct) EMITS(" ");
+                EMITS("!");
+                prev = *tok;
+                prev_is_decl_keyword = false;
+                continue;
+            }
             /* Handle .. and ... (range) — no spaces */
             if (tok->length >= 2 && tok->start[0] == '.') {
                 EMIT(tok->start, tok->length);
@@ -589,6 +661,23 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
                 prev_is_decl_keyword = false;
                 continue;
             }
+            /* Handle ?. — safe navigation: no space before or after, like . */
+            if (tok->length == 2 && tok->start[0] == '?' && tok->start[1] == '.') {
+                EMITS("?.");
+                prev = *tok;
+                prev_is_decl_keyword = false;
+                continue;
+            }
+            /* Handle ?? — nil-coalesce: a normal binary operator, space
+             * before and after, same as || or &&. */
+            if (tok->length == 2 && tok->start[0] == '?' && tok->start[1] == '?') {
+                if (!prev_was_nl && !prev_was_punct) EMITS(" ");
+                EMITS("??");
+                EMITS(" ");
+                prev = *tok;
+                prev_is_decl_keyword = false;
+                continue;
+            }
             /* Handle ? — postfix (no space before) */
             if (tok->length == 1 && tok->start[0] == '?') {
                 bool postfix = (prev.type == FMT_PAREN_CLOSE || prev.type == FMT_BRACKET_CLOSE ||
@@ -608,9 +697,30 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
             if (tok->length == 1 && (tok->start[0] == '<' || tok->start[0] == '>')) {
                 bool is_generic = false;
                 if (tok->start[0] == '<' && prev.type == FMT_IDENTIFIER) {
+                    /* A single token of lookahead can't tell Foo<T> apart
+                     * from a plain comparison like "i < keys" -- both have
+                     * IDENTIFIER < IDENTIFIER. Scan forward instead: real
+                     * generic content between < and > is only
+                     * identifiers/commas/newlines; a comparison's right
+                     * side hits something else first (., (, an operator,
+                     * a closing paren/brace, ;) well before any matching >
+                     * -- if it ever closes with one at all. */
                     int n = i + 1;
-                    while (n < token_count && tokens[n].type == FMT_NEWLINE) n++;
-                    if (n < token_count && tokens[n].type == FMT_IDENTIFIER) is_generic = true;
+                    bool plausible = true;
+                    int scanned = 0;
+                    while (n < token_count && scanned < 20) {
+                        if (tokens[n].type == FMT_NEWLINE) { n++; continue; }
+                        if (tokens[n].type == FMT_OPERATOR && tokens[n].length == 1 && tokens[n].start[0] == '>') {
+                            is_generic = plausible;
+                            break;
+                        }
+                        if (tokens[n].type != FMT_IDENTIFIER && tokens[n].type != FMT_COMMA) {
+                            plausible = false;
+                            break;
+                        }
+                        n++;
+                        scanned++;
+                    }
                 }
                 if (tok->start[0] == '>' && !prev_was_nl && !prev_was_punct &&
                     prev.type == FMT_IDENTIFIER) {
@@ -628,6 +738,58 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
                     if (!prev_was_nl && !prev_was_punct) EMITS(" ");
                     EMIT(tok->start, tok->length);
                     EMITS(" ");
+                }
+                prev = *tok;
+                prev_is_decl_keyword = false;
+                continue;
+            }
+            /* Handle | — closure param delimiter vs. bitwise-or. A | can't
+             * be told apart from the next token alone; what disambiguates
+             * it is whether the *previous* token could be a valid left
+             * operand. If it can't (e.g. after "return", "(", ",", or a
+             * newline), this | can only be opening a closure's param list,
+             * never a binary operator. See in_closure_params above. */
+            if (tok->length == 1 && tok->start[0] == '|') {
+                if (in_closure_params) {
+                    /* Always emit the trailing space here (covers a bare-
+                     * expression closure body, e.g. |x| x + 1) -- the {
+                     * rule below checks for this exact token to avoid
+                     * doubling it up for the far more common |x| { ... }. */
+                    EMITS("|");
+                    EMITS(" ");
+                    in_closure_params = false;
+                } else {
+                    /* A keyword (e.g. "return") tokenizes as plain
+                     * FMT_IDENTIFIER here -- fmt has no separate keyword
+                     * token type at this stage (see fmt_is_keyword) -- so
+                     * checking prev.type alone would wrongly call "return |"
+                     * a binary use, since "return" looks like a valid
+                     * left-hand identifier by type alone. */
+                    bool prev_is_kw = fmt_is_keyword(prev.start, prev.length, NULL);
+                    bool could_be_binary = !prev_is_kw &&
+                                            (prev.type == FMT_IDENTIFIER || prev.type == FMT_NUMBER ||
+                                             prev.type == FMT_PAREN_CLOSE || prev.type == FMT_BRACKET_CLOSE);
+                    if (!prev_was_nl && !prev_was_punct) EMITS(" ");
+                    EMITS("|");
+                    if (could_be_binary) {
+                        EMITS(" ");
+                    } else {
+                        /* Zero-arg closure (| |): the lexer is whitespace-
+                         * sensitive here -- || with no space between is a
+                         * single TOKEN_PIPE_PIPE (logical-or), while | |
+                         * with a space is two separate TOKEN_PIPEs (empty
+                         * param list). Collapsing the space would silently
+                         * change what this parses as, not just its style,
+                         * so when the very next non-newline token is also
+                         * a bare |, a space MUST be preserved here. */
+                        int n = i + 1;
+                        while (n < token_count && tokens[n].type == FMT_NEWLINE) n++;
+                        if (n < token_count && tokens[n].type == FMT_OPERATOR &&
+                            tokens[n].length == 1 && tokens[n].start[0] == '|') {
+                            EMITS(" ");
+                        }
+                        in_closure_params = true;
+                    }
                 }
                 prev = *tok;
                 prev_is_decl_keyword = false;

@@ -559,6 +559,21 @@ typedef struct VM {
     TestRecord tests[MAX_TESTS];
     int test_count;
     int test_fail_count;
+    int test_skip_count;
+    /* Set by test_runner.c before vm_run(vm, true) for "vn test --filter
+     * <substring>" -- NULL runs every test, matching today's behavior. */
+    const char *test_filter;
+    /* Per-test wall-clock budget in milliseconds for "vn test --timeout
+     * <seconds>" -- 0 means no limit (today's behavior). A test exceeding
+     * it is aborted and reported as a failure rather than hanging the run. */
+    int test_timeout_ms;
+    int test_timeout_count;
+    /* Active per-test deadline, in microseconds since the epoch (0 = none).
+     * Set by the test mini-scheduler around each test; task_run() checks it
+     * on loop back-edges so even a tight infinite loop is interrupted. */
+    int64_t deadline_us;
+    bool timed_out;
+    unsigned int loop_tick;
     /* Validation registry */
     ValidationRegistry validation_registry;
     /* Set by a native function (e.g. http.serve()'s poll/accept loop) when

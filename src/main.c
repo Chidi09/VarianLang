@@ -259,7 +259,8 @@ static void print_help(const char *prog) {
     printf("  %s            Start interactive REPL\n", prog);
     printf("  %s run <file>    Execute a Varian script\n", prog);
     printf("  %s fmt <file>    Format a Varian script in-place\n", prog);
-    printf("  %s test [dir]    Run tests in directory (default: .)\n", prog);
+    printf("  %s test [dir] [--filter <substr>] [--timeout <secs>]\n", prog);
+    printf("                   Run *_test.vn tests (default dir: .)\n");
     printf("  %s add <pkg>     Add a package dependency\n", prog);
     printf("  %s wrap <target> Generate wrapper for a foreign library\n", prog);
     printf("  %s --help        Show this help\n", prog);
@@ -492,8 +493,21 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[1], "test") == 0) {
-        const char *dir = (argc >= 3) ? argv[2] : ".";
-        return test_run_dir(dir);
+        const char *dir = ".";
+        const char *filter = NULL;
+        int timeout_ms = 0;
+
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--filter") == 0 && i + 1 < argc) {
+                filter = argv[++i];
+            } else if (strcmp(argv[i], "--timeout") == 0 && i + 1 < argc) {
+                double secs = atof(argv[++i]);
+                if (secs > 0) timeout_ms = (int)(secs * 1000);
+            } else {
+                dir = argv[i];
+            }
+        }
+        return test_run_dir(dir, filter, timeout_ms);
     }
 
     if (strcmp(argv[1], "lint") == 0) {
