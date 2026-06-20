@@ -1984,8 +1984,15 @@ static AstNode *parse_call(Parser *parser) {
             consume(parser, TOKEN_RBRACKET, "Expected ']' after index");
             expr = ast_index(parser->arena, current_loc(parser), expr, index);
         } else if (match(parser, TOKEN_DOT)) {
-            /* Member access or method call */
-            if (parser->current.type != TOKEN_IDENTIFIER) {
+            /* Member access or method call. After '.' a keyword is
+             * unambiguous as a name, so accept identifiers and any
+             * keyword-like token (alphabetic/underscore start) -- this is
+             * what lets methods be named `match`, `test`, `type`, etc. */
+            char dot_first = parser->current.start[0];
+            bool dot_name_like = parser->current.type == TOKEN_IDENTIFIER ||
+                (dot_first >= 'a' && dot_first <= 'z') ||
+                (dot_first >= 'A' && dot_first <= 'Z') || dot_first == '_';
+            if (!dot_name_like) {
                 parser_error(parser, "Expected member name after '.'");
                 break;
             }
@@ -2011,8 +2018,12 @@ static AstNode *parse_call(Parser *parser) {
                 expr = ast_member(parser->arena, current_loc(parser), expr, member);
             }
         } else if (match(parser, TOKEN_QUESTION_DOT)) {
-            /* Safe navigation: expr?.member */
-            if (parser->current.type != TOKEN_IDENTIFIER) {
+            /* Safe navigation: expr?.member (keywords allowed as names too) */
+            char qd_first = parser->current.start[0];
+            bool qd_name_like = parser->current.type == TOKEN_IDENTIFIER ||
+                (qd_first >= 'a' && qd_first <= 'z') ||
+                (qd_first >= 'A' && qd_first <= 'Z') || qd_first == '_';
+            if (!qd_name_like) {
                 parser_error(parser, "Expected member name after '?.'");
                 break;
             }
