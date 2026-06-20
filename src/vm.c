@@ -3041,21 +3041,110 @@ bool task_run(VM *vm, Task *task) {
             frame->function->aot_func(vm, t);
             continue;
         }
-        instruction = READ_BYTE();
+            static void *dispatch_table[256];
+    static bool dispatch_table_initialized = false;
+    if (!dispatch_table_initialized) {
+        for (int idx = 0; idx < 256; idx++) {
+            dispatch_table[idx] = &&L_BC_DEFAULT;
+        }
+        dispatch_table[BC_CONSTANT] = &&L_BC_CONSTANT;
+        dispatch_table[BC_NIL] = &&L_BC_NIL;
+        dispatch_table[BC_TRUE] = &&L_BC_TRUE;
+        dispatch_table[BC_FALSE] = &&L_BC_FALSE;
+        dispatch_table[BC_POP] = &&L_BC_POP;
+        dispatch_table[BC_ADD] = &&L_BC_ADD;
+        dispatch_table[BC_SUB] = &&L_BC_SUB;
+        dispatch_table[BC_MUL] = &&L_BC_MUL;
+        dispatch_table[BC_DIV] = &&L_BC_DIV;
+        dispatch_table[BC_MOD] = &&L_BC_MOD;
+        dispatch_table[BC_NEGATE] = &&L_BC_NEGATE;
+        dispatch_table[BC_NOT] = &&L_BC_NOT;
+        dispatch_table[BC_EQUAL] = &&L_BC_EQUAL;
+        dispatch_table[BC_NOT_EQUAL] = &&L_BC_NOT_EQUAL;
+        dispatch_table[BC_LESS] = &&L_BC_LESS;
+        dispatch_table[BC_GREATER] = &&L_BC_GREATER;
+        dispatch_table[BC_LESS_EQUAL] = &&L_BC_LESS_EQUAL;
+        dispatch_table[BC_GREATER_EQUAL] = &&L_BC_GREATER_EQUAL;
+        dispatch_table[BC_AND] = &&L_BC_AND;
+        dispatch_table[BC_OR] = &&L_BC_OR;
+        dispatch_table[BC_NIL_COALESCE] = &&L_BC_NIL_COALESCE;
+        dispatch_table[BC_DEFINE_GLOBAL] = &&L_BC_DEFINE_GLOBAL;
+        dispatch_table[BC_GET_GLOBAL] = &&L_BC_GET_GLOBAL;
+        dispatch_table[BC_SET_GLOBAL] = &&L_BC_SET_GLOBAL;
+        dispatch_table[BC_GET_LOCAL] = &&L_BC_GET_LOCAL;
+        dispatch_table[BC_SET_LOCAL] = &&L_BC_SET_LOCAL;
+        dispatch_table[BC_JUMP] = &&L_BC_JUMP;
+        dispatch_table[BC_JUMP_IF_FALSE] = &&L_BC_JUMP_IF_FALSE;
+        dispatch_table[BC_JUMP_IF_NIL] = &&L_BC_JUMP_IF_NIL;
+        dispatch_table[BC_LOOP] = &&L_BC_LOOP;
+        dispatch_table[BC_CALL] = &&L_BC_CALL;
+        dispatch_table[BC_RETURN] = &&L_BC_RETURN;
+        dispatch_table[BC_RETURN_N] = &&L_BC_RETURN_N;
+        dispatch_table[BC_GET_UPVALUE] = &&L_BC_GET_UPVALUE;
+        dispatch_table[BC_SET_UPVALUE] = &&L_BC_SET_UPVALUE;
+        dispatch_table[BC_CLOSURE] = &&L_BC_CLOSURE;
+        dispatch_table[BC_ARRAY] = &&L_BC_ARRAY;
+        dispatch_table[BC_TUPLE] = &&L_BC_TUPLE;
+        dispatch_table[BC_INDEX] = &&L_BC_INDEX;
+        dispatch_table[BC_SET_INDEX] = &&L_BC_SET_INDEX;
+        dispatch_table[BC_MEMBER] = &&L_BC_MEMBER;
+        dispatch_table[BC_SET_MEMBER] = &&L_BC_SET_MEMBER;
+        dispatch_table[BC_DISPATCH] = &&L_BC_DISPATCH;
+        dispatch_table[BC_REGISTER_METHOD] = &&L_BC_REGISTER_METHOD;
+        dispatch_table[BC_STRUCT] = &&L_BC_STRUCT;
+        dispatch_table[BC_ENUM] = &&L_BC_ENUM;
+        dispatch_table[BC_PROPAGATE] = &&L_BC_PROPAGATE;
+        dispatch_table[BC_UNPACK_ENUM] = &&L_BC_UNPACK_ENUM;
+        dispatch_table[BC_TAG_EQ] = &&L_BC_TAG_EQ;
+        dispatch_table[BC_THROW] = &&L_BC_THROW;
+        dispatch_table[BC_TRY] = &&L_BC_TRY;
+        dispatch_table[BC_POP_TRY] = &&L_BC_POP_TRY;
+        dispatch_table[BC_FFI_CALL] = &&L_BC_FFI_CALL;
+        dispatch_table[BC_COMPTIME_EXEC] = &&L_BC_COMPTIME_EXEC;
+        dispatch_table[BC_AWAIT] = &&L_BC_AWAIT;
+        dispatch_table[BC_CHAN_SEND] = &&L_BC_CHAN_SEND;
+        dispatch_table[BC_CHAN_RECEIVE] = &&L_BC_CHAN_RECEIVE;
+        dispatch_table[BC_ACTOR_INIT] = &&L_BC_ACTOR_INIT;
+        dispatch_table[BC_PRINT] = &&L_BC_PRINT;
+        dispatch_table[BC_STRING_CONCAT] = &&L_BC_STRING_CONCAT;
+        dispatch_table[BC_BUILD_STRING] = &&L_BC_BUILD_STRING;
+        dispatch_table[BC_INT_TO_STRING] = &&L_BC_INT_TO_STRING;
+        dispatch_table[BC_CONSTANT_LONG] = &&L_BC_CONSTANT_LONG;
+        dispatch_table[BC_ASSERT] = &&L_BC_ASSERT;
+        dispatch_table[BC_HALT] = &&L_BC_HALT;
+        dispatch_table[BC_REGISTER_VALIDATIONS] = &&L_BC_REGISTER_VALIDATIONS;
+        dispatch_table_initialized = true;
+    }
 
-        switch (instruction) {
-            case BC_CONSTANT: {
+#define DISPATCH() \
+    do { \
+        if (vm->had_error || t->dead || t->yielded) goto end_vm; \
+        CallFrame *frame = &t->frames[t->frame_count - 1]; \
+        if (frame->function->aot_func) { \
+            frame->function->aot_func(vm, t); \
+            goto L_BC_LOOP_TOP; \
+        } \
+        instruction = READ_BYTE(); \
+        goto *dispatch_table[instruction]; \
+    } while (0)
+
+L_BC_LOOP_TOP:
+    DISPATCH();
+            L_BC_CONSTANT:
+            {
                 Value constant = READ_CONSTANT();
                 PUSH(constant);
-                break;
+                DISPATCH();
             }
-            case BC_CONSTANT_LONG: {
+            L_BC_CONSTANT_LONG:
+            {
                 uint16_t idx = READ_SHORT();
                 Value constant = t->frames[t->frame_count - 1].function->constants[idx];
                 PUSH(constant);
-                break;
+                DISPATCH();
             }
-            case BC_COMPTIME_EXEC: {
+            L_BC_COMPTIME_EXEC:
+            {
                 /* Evaluated inline, in lexical position, so any function or
                  * global defined earlier in the program is already visible —
                  * unlike a startup pre-pass, which would run before any of
@@ -3102,9 +3191,10 @@ bool task_run(VM *vm, Task *task) {
 
                 cur_fn->constants[result_idx] = result;
                 PUSH(result);
-                break;
+                DISPATCH();
             }
-            case BC_AWAIT: {
+            L_BC_AWAIT:
+            {
                 Value v = POP();
                 if (v.type != VAL_TASK) {
                     runtime_error(vm, "await requires a task value");
@@ -3120,9 +3210,10 @@ bool task_run(VM *vm, Task *task) {
                     t->yielded = true;
                     t->frames[t->frame_count - 1].ip--;
                 }
-                break;
+                DISPATCH();
             }
-            case BC_CHAN_SEND: {
+            L_BC_CHAN_SEND:
+            {
                 Value val = POP();
                 Value chan_v = POP();
                 if (chan_v.type != VAL_CHANNEL) {
@@ -3147,9 +3238,10 @@ bool task_run(VM *vm, Task *task) {
                     t->yielded = true;
                     t->frames[t->frame_count - 1].ip--;
                 }
-                break;
+                DISPATCH();
             }
-            case BC_CHAN_RECEIVE: {
+            L_BC_CHAN_RECEIVE:
+            {
                 Value chan_v = POP();
                 if (chan_v.type != VAL_CHANNEL) {
                     runtime_error(vm, "receive requires a channel");
@@ -3169,9 +3261,10 @@ bool task_run(VM *vm, Task *task) {
                     t->yielded = true;
                     t->frames[t->frame_count - 1].ip--;
                 }
-                break;
+                DISPATCH();
             }
-            case BC_ACTOR_INIT: {
+            L_BC_ACTOR_INIT:
+            {
                 ObjString *type_name = READ_CONSTANT().as.string;
                 uint8_t field_count = READ_BYTE();
                 if (vm->actor_field_count < MAX_ACTOR_TYPES) {
@@ -3194,14 +3287,19 @@ bool task_run(VM *vm, Task *task) {
                 vm->objects = (Obj *)mod;
                 define_global(vm, copy_string(type_name->chars, type_name->length), val_module(mod));
                 vm_register_dispatch(vm, type_name->chars, "spawn", val_native_fn((void *)actor_spawn_native));
-                break;
+                DISPATCH();
             }
-            case BC_NIL:    PUSH(val_nil()); break;
-            case BC_TRUE:   PUSH(val_bool(true)); break;
-            case BC_FALSE:  PUSH(val_bool(false)); break;
-            case BC_POP:    (void)POP(); break;
+            L_BC_NIL:
+            PUSH(val_nil()); DISPATCH();
+            L_BC_TRUE:
+            PUSH(val_bool(true)); DISPATCH();
+            L_BC_FALSE:
+            PUSH(val_bool(false)); DISPATCH();
+            L_BC_POP:
+            (void)POP(); DISPATCH();
 
-            case BC_ADD: {
+            L_BC_ADD:
+            {
                 Value b = POP();
                 Value a = POP();
                 if (a.type == VAL_STRING || b.type == VAL_STRING) {
@@ -3243,11 +3341,14 @@ bool task_run(VM *vm, Task *task) {
                     double av = (a.type == VAL_FLOAT) ? a.as.floating : (double)a.as.integer;
                     PUSH(val_float(av + bv));
                 }
-                break;
+                DISPATCH();
             }
-            case BC_SUB: BINARY_OP_NUM(-); break;
-            case BC_MUL: BINARY_OP_NUM(*); break;
-            case BC_DIV: {
+            L_BC_SUB:
+            BINARY_OP_NUM(-); DISPATCH();
+            L_BC_MUL:
+            BINARY_OP_NUM(*); DISPATCH();
+            L_BC_DIV:
+            {
                 Value b = POP();
                 Value a = POP();
                 if (a.type == VAL_INT && b.type == VAL_INT) {
@@ -3259,75 +3360,89 @@ bool task_run(VM *vm, Task *task) {
                     if (bv == 0.0) { runtime_error(vm, "Division by zero"); return false; }
                     PUSH(val_float(av / bv));
                 }
-                break;
+                DISPATCH();
             }
-            case BC_MOD: {
+            L_BC_MOD:
+            {
                 int64_t b = POP().as.integer;
                 int64_t a = POP().as.integer;
                 if (b == 0) { runtime_error(vm, "Division by zero"); return false; }
                 PUSH(val_int(a % b));
-                break;
+                DISPATCH();
             }
 
-            case BC_NEGATE: {
+            L_BC_NEGATE:
+            {
                 Value v = POP();
                 if (v.type == VAL_INT) PUSH(val_int(-v.as.integer));
                 else if (v.type == VAL_FLOAT) PUSH(val_float(-v.as.floating));
                 else { runtime_error(vm, "Operand must be a number"); return false; }
-                break;
+                DISPATCH();
             }
-            case BC_NOT: {
+            L_BC_NOT:
+            {
                 Value v = POP();
                 PUSH(val_bool(!value_is_truthy(v)));
-                break;
+                DISPATCH();
             }
 
-            case BC_ASSERT: {
+            L_BC_ASSERT:
+            {
                 Value val = POP();
                 if (!value_is_truthy(val)) {
                     runtime_error(vm, "Assertion failed");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_EQUAL: {
+            L_BC_EQUAL:
+            {
                 Value b = POP();
                 Value a = POP();
                 PUSH(val_bool(value_equal(a, b)));
-                break;
+                DISPATCH();
             }
-            case BC_NOT_EQUAL: {
+            L_BC_NOT_EQUAL:
+            {
                 Value b = POP();
                 Value a = POP();
                 PUSH(val_bool(!value_equal(a, b)));
-                break;
+                DISPATCH();
             }
-            case BC_LESS:    BINARY_OP_NUM(<); break;
-            case BC_GREATER: BINARY_OP_NUM(>); break;
-            case BC_LESS_EQUAL:    BINARY_OP_NUM(<=); break;
-            case BC_GREATER_EQUAL: BINARY_OP_NUM(>=); break;
+            L_BC_LESS:
+            BINARY_OP_NUM(<); DISPATCH();
+            L_BC_GREATER:
+            BINARY_OP_NUM(>); DISPATCH();
+            L_BC_LESS_EQUAL:
+            BINARY_OP_NUM(<=); DISPATCH();
+            L_BC_GREATER_EQUAL:
+            BINARY_OP_NUM(>=); DISPATCH();
 
-            case BC_AND: {
+            L_BC_AND:
+            {
                 Value b = POP();
                 Value a = POP();
                 PUSH(val_bool(value_is_truthy(a) && value_is_truthy(b)));
-                break;
+                DISPATCH();
             }
-            case BC_OR: {
+            L_BC_OR:
+            {
                 Value b = POP();
                 Value a = POP();
                 PUSH(val_bool(value_is_truthy(a) || value_is_truthy(b)));
-                break;
+                DISPATCH();
             }
-            case BC_NIL_COALESCE: {
+            L_BC_NIL_COALESCE:
+            {
                 Value b = POP();
                 Value a = POP();
                 PUSH(a.type == VAL_NIL ? b : a);
-                break;
+                DISPATCH();
             }
 
-            case BC_DEFINE_GLOBAL: {
+            L_BC_DEFINE_GLOBAL:
+            {
                 uint16_t idx = READ_SHORT();
                 ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = PEEK(0);
@@ -3343,9 +3458,10 @@ bool task_run(VM *vm, Task *task) {
                             fprintf(stderr, "    const[%d] = int %ld\n", j, (long)value.as.function->constants[j].as.integer);
                     }
                 }
-                break;
+                DISPATCH();
             }
-            case BC_CLOSURE: {
+            L_BC_CLOSURE:
+            {
                 uint8_t upvalue_count = READ_BYTE();
                 ObjClosure *closure = new_closure(NULL, upvalue_count);
                 closure->obj.next = vm->objects;
@@ -3356,57 +3472,66 @@ bool task_run(VM *vm, Task *task) {
                 Value fn_val = POP();
                 closure->function = fn_val.as.function;
                 PUSH(val_closure(closure));
-                break;
+                DISPATCH();
             }
-            case BC_GET_UPVALUE: {
+            L_BC_GET_UPVALUE:
+            {
                 uint8_t idx = READ_BYTE();
                 PUSH(t->frames[t->frame_count - 1].closure->captured[idx]);
-                break;
+                DISPATCH();
             }
-            case BC_SET_UPVALUE: {
+            L_BC_SET_UPVALUE:
+            {
                 uint8_t idx = READ_BYTE();
                 t->frames[t->frame_count - 1].closure->captured[idx] = PEEK(0);
-                break;
+                DISPATCH();
             }
-            case BC_GET_GLOBAL: {
+            L_BC_GET_GLOBAL:
+            {
                 uint16_t idx = READ_SHORT();
                 ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = get_global(vm, name);
                 PUSH(value);
-                break;
+                DISPATCH();
             }
-            case BC_SET_GLOBAL: {
+            L_BC_SET_GLOBAL:
+            {
                 uint16_t idx = READ_SHORT();
                 ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = PEEK(0);
                 set_global(vm, name, value);
-                break;
+                DISPATCH();
             }
 
-            case BC_JUMP: {
+            L_BC_JUMP:
+            {
                 uint16_t offset = READ_SHORT();
                 t->frames[t->frame_count - 1].ip += offset;
-                break;
+                DISPATCH();
             }
-            case BC_JUMP_IF_FALSE: {
+            L_BC_JUMP_IF_FALSE:
+            {
                 uint16_t offset = READ_SHORT();
                 if (!value_is_truthy(PEEK(0)))
                     t->frames[t->frame_count - 1].ip += offset;
-                break;
+                DISPATCH();
             }
-            case BC_JUMP_IF_NIL: {
+            L_BC_JUMP_IF_NIL:
+            {
                 uint16_t offset = READ_SHORT();
                 if (PEEK(0).type == VAL_NIL)
                     t->frames[t->frame_count - 1].ip += offset;
-                break;
+                DISPATCH();
             }
-            case BC_LOOP: {
+            L_BC_LOOP:
+            {
                 uint16_t offset = READ_SHORT();
                 t->frames[t->frame_count - 1].ip -= offset;
-                break;
+                DISPATCH();
             }
 
-            case BC_CALL: {
+            L_BC_CALL:
+            {
                 uint8_t arg_count = READ_BYTE();
                 Value callee = PEEK(arg_count);
 
@@ -3532,22 +3657,25 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Can only call functions");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_GET_LOCAL: {
+            L_BC_GET_LOCAL:
+            {
                 uint8_t local_idx = READ_BYTE();
                 PUSH(t->frames[t->frame_count - 1].slots[local_idx]);
-                break;
+                DISPATCH();
             }
 
-            case BC_SET_LOCAL: {
+            L_BC_SET_LOCAL:
+            {
                 uint8_t local_idx = READ_BYTE();
                 t->frames[t->frame_count - 1].slots[local_idx] = PEEK(0);
-                break;
+                DISPATCH();
             }
 
-            case BC_RETURN: {
+            L_BC_RETURN:
+            {
                 Value result = POP();
                 /* ─── @cache: save result before returning ─── */
                 if (t->cache_on_return) {
@@ -3578,10 +3706,11 @@ bool task_run(VM *vm, Task *task) {
                 }
                 t->stack_top = base;
                 PUSH(result);
-                break;
+                DISPATCH();
             }
 
-            case BC_RETURN_N: {
+            L_BC_RETURN_N:
+            {
                 uint8_t rcount = READ_BYTE();
                 Value tmp_vals[16];
                 int copy_count = rcount < 16 ? rcount : 16;
@@ -3607,10 +3736,11 @@ bool task_run(VM *vm, Task *task) {
                 t->stack_top = base;
                 for (int i = 0; i < copy_count; i++)
                     PUSH(tmp_vals[i]);
-                break;
+                DISPATCH();
             }
 
-            case BC_ARRAY: {
+            L_BC_ARRAY:
+            {
                 uint8_t count = READ_BYTE();
                 ObjArray *arr = allocate_array(vm);
                 arr->count = count;
@@ -3619,19 +3749,21 @@ bool task_run(VM *vm, Task *task) {
                 for (int i = count - 1; i >= 0; i--)
                     arr->elements[i] = POP();
                 PUSH(val_array(arr));
-                break;
+                DISPATCH();
             }
 
-            case BC_TUPLE: {
+            L_BC_TUPLE:
+            {
                 uint8_t count = READ_BYTE();
                 ObjTuple *tup = allocate_tuple(vm, count);
                 for (int i = count - 1; i >= 0; i--)
                     tup->elements[i] = POP();
                 PUSH(val_tuple(tup));
-                break;
+                DISPATCH();
             }
 
-            case BC_INDEX: {
+            L_BC_INDEX:
+            {
                 Value index = POP();
                 Value obj = POP();
                 if (obj.type == VAL_ARRAY && index.type == VAL_INT) {
@@ -3645,10 +3777,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Indexing not supported for this type");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_SET_INDEX: {
+            L_BC_SET_INDEX:
+            {
                 Value val = POP();
                 Value index = POP();
                 Value obj = POP();
@@ -3679,10 +3812,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Index assignment not supported for this type");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_STRUCT: {
+            L_BC_STRUCT:
+            {
                 uint8_t field_count = READ_BYTE();
                 ObjString *type_name_str = READ_CONSTANT().as.string;
                 ObjStruct *s = new_struct(vm, field_count, false);
@@ -3730,18 +3864,20 @@ bool task_run(VM *vm, Task *task) {
                 }
 
                 PUSH(val_struct(s));
-                break;
+                DISPATCH();
             }
 
-            case BC_REGISTER_METHOD: {
+            L_BC_REGISTER_METHOD:
+            {
                 ObjString *type_name = READ_CONSTANT().as.string;
                 ObjString *method_name = READ_CONSTANT().as.string;
                 Value func = PEEK(0);
                 vm_register_dispatch(vm, type_name->chars, method_name->chars, func);
-                break;
+                DISPATCH();
             }
 
-             case BC_REGISTER_VALIDATIONS: {
+             L_BC_REGISTER_VALIDATIONS:
+             {
                 uint16_t type_name_idx = READ_SHORT();
                 ObjString *type_name_str = t->frames[t->frame_count - 1].function->constants[type_name_idx].as.string;
                 char *type_name = (char *)malloc(type_name_str->length + 1);
@@ -3829,10 +3965,11 @@ bool task_run(VM *vm, Task *task) {
                     free(field_names);
                 }
                 free(type_name);
-                break;
+                DISPATCH();
             }
 
-            case BC_DISPATCH: {
+            L_BC_DISPATCH:
+            {
                 ObjString *method_name = READ_CONSTANT().as.string;
                 uint8_t arg_count = READ_BYTE();
                 Value obj = PEEK(arg_count);
@@ -4048,10 +4185,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Method is not callable");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_ENUM: {
+            L_BC_ENUM:
+            {
                 uint8_t tag = READ_BYTE();
                 uint8_t value_count = READ_BYTE();
                 ObjEnum *e = new_enum(value_count);
@@ -4061,10 +4199,11 @@ bool task_run(VM *vm, Task *task) {
                 for (int i = value_count - 1; i >= 0; i--)
                     e->values[i] = POP();
                 PUSH(val_enum(e));
-                break;
+                DISPATCH();
             }
 
-            case BC_TAG_EQ: {
+            L_BC_TAG_EQ:
+            {
                 uint8_t tag = READ_BYTE();
                 Value v = POP();
                 if (v.type == VAL_ENUM) {
@@ -4072,10 +4211,11 @@ bool task_run(VM *vm, Task *task) {
                 } else {
                     PUSH(val_bool(false));
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_UNPACK_ENUM: {
+            L_BC_UNPACK_ENUM:
+            {
                 Value v = POP();
                 if (v.type == VAL_ENUM) {
                     ObjEnum *e = v.as.enum_val;
@@ -4084,10 +4224,11 @@ bool task_run(VM *vm, Task *task) {
                 } else {
                     PUSH(val_nil());
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_PROPAGATE: {
+            L_BC_PROPAGATE:
+            {
                 Value v = PEEK(0);
                 if (v.type == VAL_NIL) {
                     (void)POP();
@@ -4101,10 +4242,11 @@ bool task_run(VM *vm, Task *task) {
                     t->stack_top -= (arity + 1);
                     PUSH(val_nil());
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_THROW: {
+            L_BC_THROW:
+            {
                 Value err = POP();
 
                 /* ─── @retry decorator: retry on throw ─── */
@@ -4144,10 +4286,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Unhandled exception");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_TRY: {
+            L_BC_TRY:
+            {
                 uint16_t offset = READ_SHORT();
                 if (t->try_count >= TASK_TRY_MAX) {
                     runtime_error(vm, "Too many nested try blocks");
@@ -4159,16 +4302,18 @@ bool task_run(VM *vm, Task *task) {
                 t->try_stack[t->try_count].stack_depth = t->stack_top;
                 t->try_stack[t->try_count].frame_index = t->frame_count - 1;
                 t->try_count++;
-                break;
+                DISPATCH();
             }
 
-            case BC_POP_TRY: {
+            L_BC_POP_TRY:
+            {
                 if (t->try_count > 0)
                     t->try_count--;
-                break;
+                DISPATCH();
             }
 
-            case BC_MEMBER: {
+            L_BC_MEMBER:
+            {
                 ObjString *name = READ_CONSTANT().as.string;
                 Value obj = POP();
                 if (obj.type == VAL_STRUCT) {
@@ -4234,10 +4379,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Cannot access field on non-struct value");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_SET_MEMBER: {
+            L_BC_SET_MEMBER:
+            {
                 ObjString *name = READ_CONSTANT().as.string;
                 Value val = POP();
                 Value obj = POP();
@@ -4276,10 +4422,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "Cannot set field on non-struct value");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_FFI_CALL: {
+            L_BC_FFI_CALL:
+            {
                 uint8_t ffi_idx = READ_BYTE();
                 uint8_t arg_count = READ_BYTE();
 
@@ -4403,17 +4550,19 @@ bool task_run(VM *vm, Task *task) {
                     free(value_storage[i]);
                 if (ret_val) free(ret_val);
 
-                break;
+                DISPATCH();
             }
 
-            case BC_PRINT: {
+            L_BC_PRINT:
+            {
                 Value v = POP();
                 value_print(v);
                 printf("\n");
-                break;
+                DISPATCH();
             }
 
-            case BC_BUILD_STRING: {
+            L_BC_BUILD_STRING:
+            {
                 uint8_t count = READ_BYTE();
                 int total_len = 0;
                 for (int i = 0; i < count; i++) {
@@ -4435,10 +4584,11 @@ bool task_run(VM *vm, Task *task) {
                 ObjString *result = allocate_string(vm, chars, total_len);
                 free(chars);
                 PUSH(val_string(result));
-                break;
+                DISPATCH();
             }
 
-            case BC_STRING_CONCAT: {
+            L_BC_STRING_CONCAT:
+            {
                 Value b = POP();
                 Value a = POP();
                 if (a.type == VAL_STRING && b.type == VAL_STRING) {
@@ -4454,10 +4604,11 @@ bool task_run(VM *vm, Task *task) {
                     runtime_error(vm, "String concatenation requires strings");
                     return false;
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_INT_TO_STRING: {
+            L_BC_INT_TO_STRING:
+            {
                 Value v = POP();
                 if (v.type == VAL_INT) {
                     char buf[64];
@@ -4476,18 +4627,18 @@ bool task_run(VM *vm, Task *task) {
                 } else {
                     PUSH(v);
                 }
-                break;
+                DISPATCH();
             }
 
-            case BC_HALT:
+            L_BC_HALT:
                 /* Mark task as dead so the scheduler knows to stop */
                 t->dead = true;
                 goto end_vm;
 
-            default:
+            L_BC_DEFAULT:
                 runtime_error(vm, "Unknown opcode %d", instruction);
                 return false;
-        }
+
     }
 
 end_vm:
