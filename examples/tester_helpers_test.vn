@@ -1,0 +1,23 @@
+// Test D3 tester helpers: http.test_request() and db.vn's test_transaction().
+
+let app = new_app()
+app.get("/hello/:name", | req | {
+    return Response { status: 200, body: "Hello, " + req.params.name + "!", content_type: "text/plain" }
+}, "greet")
+
+let resp = app.handle(http.test_request("GET", "/hello/Zenith", ""))
+print(resp.body)
+
+let conn = sqlite.connect(":memory:")
+sqlite.query(conn, "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+
+let count_before = sqlite.query(conn, "SELECT * FROM users").len()
+test_transaction(conn, | c | {
+    sqlite.query(c, "INSERT INTO users (name) VALUES ('temp')")
+    print("rows inside transaction:", sqlite.query(c, "SELECT * FROM users").len())
+})
+let count_after = sqlite.query(conn, "SELECT * FROM users").len()
+print("rows before:", count_before, "rows after rollback:", count_after)
+
+sqlite.close(conn)
+print("done")

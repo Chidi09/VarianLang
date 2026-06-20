@@ -6,11 +6,12 @@
 #include <libpq-fe.h>
 
 static Value lib_postgres_connect(VM *vm, int arg_count, Value *args) {
-    if (arg_count < 1 || args[0].type != VAL_STRING) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || args[base].type != VAL_STRING) {
         runtime_error(vm, "postgres.connect() requires a connection string");
         return val_nil();
     }
-    const char *conn_str = args[0].as.string->chars;
+    const char *conn_str = args[base].as.string->chars;
     PGconn *conn = PQconnectdb(conn_str);
     if (PQstatus(conn) != CONNECTION_OK) {
         runtime_error(vm, "postgres.connect() failed: %s", PQerrorMessage(conn));
@@ -21,29 +22,30 @@ static Value lib_postgres_connect(VM *vm, int arg_count, Value *args) {
 }
 
 static Value lib_postgres_query(VM *vm, int arg_count, Value *args) {
-    if (arg_count < 2) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 2) {
         runtime_error(vm, "postgres.query() requires at least 2 arguments: conn, sql [, args]");
         return val_nil();
     }
-    if (args[0].type != VAL_INT) {
+    if (args[base].type != VAL_INT) {
         runtime_error(vm, "postgres.query(): conn must be an integer (connection handle)");
         return val_nil();
     }
-    if (args[1].type != VAL_STRING) {
+    if (args[base + 1].type != VAL_STRING) {
         runtime_error(vm, "postgres.query(): sql must be a string");
         return val_nil();
     }
 
-    PGconn *conn = (PGconn *)(intptr_t)args[0].as.integer;
-    const char *sql = args[1].as.string->chars;
+    PGconn *conn = (PGconn *)(intptr_t)args[base].as.integer;
+    const char *sql = args[base + 1].as.string->chars;
 
     int nParams = 0;
     const char **paramValues = NULL;
     /* temporary storage for stringified param values (owned by us) */
     char **paramBufs = NULL;
 
-    if (arg_count >= 3 && args[2].type == VAL_ARRAY) {
-        ObjArray *arr = args[2].as.array;
+    if (arg_count >= base + 3 && args[base + 2].type == VAL_ARRAY) {
+        ObjArray *arr = args[base + 2].as.array;
         nParams = arr->count;
         if (nParams > 0) {
             paramValues = (const char **)calloc(nParams, sizeof(char *));
@@ -146,12 +148,12 @@ static Value lib_postgres_query(VM *vm, int arg_count, Value *args) {
 }
 
 static Value lib_postgres_close(VM *vm, int arg_count, Value *args) {
-    (void)vm;
-    if (arg_count < 1 || args[0].type != VAL_INT) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || args[base].type != VAL_INT) {
         runtime_error(vm, "postgres.close() requires a connection handle (integer)");
         return val_nil();
     }
-    PGconn *conn = (PGconn *)(intptr_t)args[0].as.integer;
+    PGconn *conn = (PGconn *)(intptr_t)args[base].as.integer;
     PQfinish(conn);
     return val_nil();
 }

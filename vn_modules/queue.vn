@@ -1,26 +1,43 @@
 // queue.vn - Background job queue and cron
 
-fn cron_worker(interval_ms, handler) {
-    while true {
+struct CronJob {
+    stopped: bool
+}
+
+fn cron_worker(interval_ms, handler, job) {
+    while !job.stopped {
         task.sleep(interval_ms)
+        if job.stopped {
+            return null
+        }
         handler()
     }
 }
 
 fn cron(interval_ms, handler) {
-    task.spawn(cron_worker, [interval_ms, handler])
+    let job = CronJob { stopped: false }
+    task.spawn(cron_worker, [interval_ms, handler, job])
+    return job
 }
 
 struct WorkerPool {
     ch: channel,
     count: int,
-    workers: int
+    workers: int,
+    stopped: bool
 }
 
-fn pool_worker(ch) {
-    while true {
+fn pool_worker(ch, pool) {
+    while !pool.stopped {
         let job = <- ch
-        job()
+        if job == null {
+            return null
+        }
+        try {
+            job()
+        } catch e {
+            print("Worker caught error: " + e)
+        }
     }
 }
 
@@ -28,13 +45,24 @@ impl WorkerPool {
     fn spawn(self, worker_count) {
         self.ch = task.channel(1000)
         self.count = worker_count
+        self.stopped = false
         let i = 0
         while i < worker_count {
-            task.spawn(pool_worker, [self.ch])
+            task.spawn(pool_worker, [self.ch, self])
             i = i + 1
         }
     }
     fn submit(self, job_fn) {
+        if self.stopped {
+            return null
+        }
         self.ch <- job_fn
+    }
+    fn stop(self) {
+        self.stopped = true
+        task.close(self.ch)
+    }
+    fn close(self) {
+        self.stop()
     }
 }

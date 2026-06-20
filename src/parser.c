@@ -99,6 +99,29 @@ static void parser_register_struct(Parser *parser, const char *name,
     sd->field_count = field_count;
 }
 
+/* ─── Function signature registry (named arguments) ─── */
+static FunctionSig *parser_find_function(Parser *parser, const char *name) {
+    for (int i = 0; i < parser->function_count; i++) {
+        if (strcmp(parser->functions[i].name, name) == 0)
+            return &parser->functions[i];
+    }
+    return NULL;
+}
+
+static void parser_register_function(Parser *parser, const char *name,
+                                      char **param_names, int param_count) {
+    if (parser->function_count >= 256) return;
+    FunctionSig *fs = &parser->functions[parser->function_count++];
+    fs->name = (char *)malloc(strlen(name) + 1);
+    strcpy(fs->name, name);
+    fs->param_names = (char **)malloc(sizeof(char *) * (size_t)(param_count > 0 ? param_count : 1));
+    for (int i = 0; i < param_count; i++) {
+        fs->param_names[i] = (char *)malloc(strlen(param_names[i]) + 1);
+        strcpy(fs->param_names[i], param_names[i]);
+    }
+    fs->param_count = param_count;
+}
+
 /* ─── Enum registry ─── */
 static EnumDef *parser_find_enum(Parser *parser, const char *name) {
     for (int i = 0; i < parser->enum_count; i++) {
@@ -217,6 +240,13 @@ static Type *parse_primitive_type(Parser *parser) {
 
 static Type *parse_type(Parser *parser) {
     Type *t = parse_type_inner(parser);
+    /* Union type: string | int | null. Like every other type annotation in
+     * this language, it's parsed for documentation/tooling purposes only --
+     * no runtime member, no behavior change. Only the first member is kept
+     * as the AST's Type; the rest are consumed and discarded. */
+    while (match(parser, TOKEN_PIPE)) {
+        parse_type_inner(parser);
+    }
     match(parser, TOKEN_QUESTION);
     return t;
 }
@@ -285,6 +315,14 @@ static Type *parse_type_inner(Parser *parser) {
         check(parser, TOKEN_TYPE_BYTE) || check(parser, TOKEN_TYPE_VOID)) {
         advance(parser);
         return parse_primitive_type(parser);
+    }
+
+    /* `null` as a type (almost always seen in a union: T | null) -- type
+     * annotations are discarded at runtime regardless, so this just needs
+     * to parse without error, not carry any real meaning. */
+    if (check(parser, TOKEN_NULL)) {
+        advance(parser);
+        return type_primitive(parser->arena, PRIMITIVE_VOID);
     }
 
     if (check(parser, TOKEN_IDENTIFIER)) {
@@ -497,6 +535,8 @@ static AstNode *parse_fn_decl(Parser *parser) {
         body->block.stmts[0] = return_stmt;
         body->block.stmt_count = 1;
     }
+
+    parser_register_function(parser, name, param_names, param_count);
 
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
                         param_names, param_count,
@@ -1426,8 +1466,14 @@ static AstNode *parse_stmt(Parser *parser) {
         if (decorator_count > 0) {
             /* Parse fn with decorators */
             AstNode *fn = parse_fn_decl(parser);
-            fn->fn_decl.decorator_keys = decorator_keys;
-            fn->fn_decl.decorator_values = decorator_values;
+            fn->fn_decl.decorator_keys = (char **)arena_alloc(parser->arena, sizeof(char *) * decorator_count);
+            fn->fn_decl.decorator_values = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * decorator_count);
+            for (int i = 0; i < decorator_count; i++) {
+                fn->fn_decl.decorator_keys[i] = (char *)arena_alloc(parser->arena, strlen(decorator_keys[i]) + 1);
+                strcpy(fn->fn_decl.decorator_keys[i], decorator_keys[i]);
+                free(decorator_keys[i]);
+                fn->fn_decl.decorator_values[i] = decorator_values[i];
+            }
             fn->fn_decl.decorator_count = decorator_count;
             return fn;
         }
@@ -1817,7 +1863,9 @@ static AstNode *parse_unary(Parser *parser) {
 
 static AstNode *finish_call(Parser *parser, AstNode *callee) {
     AstNode *args[256];
+    char *arg_names[256];
     int arg_count = 0;
+    bool any_named = false;
 
     if (!check(parser, TOKEN_RPAREN)) {
         do {
@@ -1825,12 +1873,75 @@ static AstNode *finish_call(Parser *parser, AstNode *callee) {
                 parser_error(parser, "Too many arguments");
                 break;
             }
-            args[arg_count++] = parse_expr(parser);
+            AstNode *e = parse_expr(parser);
+            char *pname = NULL;
+            /* Named argument: IDENTIFIER ':' expr -- a bare identifier is
+             * never otherwise followed directly by ':' in expression
+             * position, so this is unambiguous without extra lookahead. */
+            if (e->kind == NODE_IDENTIFIER && check(parser, TOKEN_COLON)) {
+                advance(parser);
+                pname = e->identifier.name;
+                e = parse_expr(parser);
+                any_named = true;
+            }
+            args[arg_count] = e;
+            arg_names[arg_count] = pname;
+            arg_count++;
         } while (match(parser, TOKEN_COMMA));
     }
 
     consume(parser, TOKEN_RPAREN, "Expected ')' after arguments");
-    return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+
+    if (!any_named)
+        return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+
+    /* Named arguments only work calling a plain `fn` by name -- impl
+     * methods/lambdas go through NODE_DISPATCH_CALL, a separate path. */
+    if (callee->kind != NODE_IDENTIFIER) {
+        parser_error(parser, "Named arguments are only supported when calling a function by name");
+        return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+    }
+    FunctionSig *sig = parser_find_function(parser, callee->identifier.name);
+    if (!sig) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Unknown function '%s' for named arguments", callee->identifier.name);
+        parser_error(parser, msg);
+        return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+    }
+
+    AstNode *ordered[64];
+    for (int i = 0; i < sig->param_count; i++) ordered[i] = NULL;
+    for (int i = 0; i < arg_count; i++) {
+        if (!arg_names[i]) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Cannot mix positional and named arguments in call to '%s'",
+                     callee->identifier.name);
+            parser_error(parser, msg);
+            return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+        }
+        int found = -1;
+        for (int j = 0; j < sig->param_count; j++) {
+            if (strcmp(sig->param_names[j], arg_names[i]) == 0) { found = j; break; }
+        }
+        if (found < 0) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Unknown parameter '%s' for function '%s'",
+                     arg_names[i], callee->identifier.name);
+            parser_error(parser, msg);
+            return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+        }
+        ordered[found] = args[i];
+    }
+    for (int i = 0; i < sig->param_count; i++) {
+        if (!ordered[i]) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "Missing argument for parameter '%s' in call to '%s'",
+                     sig->param_names[i], callee->identifier.name);
+            parser_error(parser, msg);
+            return ast_call(parser->arena, current_loc(parser), callee, args, arg_count);
+        }
+    }
+    return ast_call(parser->arena, current_loc(parser), callee, ordered, sig->param_count);
 }
 
 static AstNode *parse_call(Parser *parser) {
@@ -2182,12 +2293,16 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
     parser->struct_count = 0;
     parser->enum_count = 0;
     parser->method_count = 0;
+    parser->function_count = 0;
 
     /* Pre-register built-in method names so parser emits BC_DISPATCH for them */
     {
         const char *builtin_methods[] = {
             "len", "upper", "lower", "substring", "trim", "spawn",
             "serve", "serve_with_routes", "push", "split", "starts_with", "replace",
+            "write_socket", "close_socket", "read_socket", "code_at", "from_codes",
+            "sha1_base64", "hash_password", "verify_password",
+            "bit_and", "bit_or", "bit_xor",
         };
         int n = sizeof(builtin_methods) / sizeof(builtin_methods[0]);
         for (int i = 0; i < n && i < 256; i++) {

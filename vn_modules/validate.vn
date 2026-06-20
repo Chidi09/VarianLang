@@ -1,0 +1,225 @@
+// Request Validation & Sanitization Module for Varian
+
+// Helper to check if a value is nil or string
+fn _validate_is_string(v) {
+    try {
+        _validate.min_len(v, 0)
+        return true
+    } catch e {
+        return false
+    }
+}
+
+struct Validator {
+    _type_check: string,
+    _checks: array,
+    _transforms: array,
+    _optional: bool
+}
+
+impl Validator {
+    fn optional(self) {
+        self._optional = true
+        return self
+    }
+
+    // String checks
+    fn is_email(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_email(v)) { return null }
+            return "Invalid email address"
+        })
+        return self
+    }
+
+    fn is_url(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_url(v)) { return null }
+            return "Invalid URL"
+        })
+        return self
+    }
+
+    fn is_alphanumeric(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_alphanumeric(v)) { return null }
+            return "Must be alphanumeric"
+        })
+        return self
+    }
+
+    fn is_uuid(self) {
+        self._checks = self._checks.push(|v| {
+            if (_validate.is_uuid(v)) { return null }
+            return "Invalid UUID"
+        })
+        return self
+    }
+
+    fn min(self, limit) {
+        self._checks = self._checks.push(|v| {
+            if (self._type_check == "string") {
+                if (_validate.min_len(v, limit)) { return null }
+                return "Length must be at least " + limit
+            } else if (self._type_check == "number") {
+                if (v >= limit) { return null }
+                return "Must be at least " + limit
+            }
+            return "Unsupported min check"
+        })
+        return self
+    }
+
+    fn max(self, limit) {
+        self._checks = self._checks.push(|v| {
+            if (self._type_check == "string") {
+                if (_validate.max_len(v, limit)) { return null }
+                return "Length must be at most " + limit
+            } else if (self._type_check == "number") {
+                if (v <= limit) { return null }
+                return "Must be at most " + limit
+            }
+            return "Unsupported max check"
+        })
+        return self
+    }
+
+    // Sanitization/Transforms
+    fn strip_html(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.strip_html(v)
+        })
+        return self
+    }
+
+    fn escape_html(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.escape_html(v)
+        })
+        return self
+    }
+
+    fn trim(self) {
+        self._transforms = self._transforms.push(|v| {
+            return _sanitize.trim(v)
+        })
+        return self
+    }
+
+    fn parse(self, v) {
+        if (v == null) {
+            if (self._optional) {
+                return http.create_struct(["success", "data"], [true, null])
+            }
+            return http.create_struct(["success", "error"], [false, "Value is required"])
+        }
+
+        // Type verification
+        if (self._type_check == "string") {
+            if (!_validate_is_string(v)) {
+                return http.create_struct(["success", "error"], [false, "Expected string"])
+            }
+        } else if (self._type_check == "number") {
+            try {
+                let dummy = v + 0
+            } catch e {
+                return http.create_struct(["success", "error"], [false, "Expected number"])
+            }
+        }
+
+        // Apply transforms (sanitization)
+        let current = v
+        let i = 0
+        while (i < self._transforms.len()) {
+            let transform = self._transforms[i]
+            current = transform(current)
+            i = i + 1
+        }
+
+        // Apply checks
+        let j = 0
+        while (j < self._checks.len()) {
+            let check = self._checks[j]
+            let err = check(current)
+            if (err != null) {
+                return http.create_struct(["success", "error"], [false, err])
+            }
+            j = j + 1
+        }
+
+        return http.create_struct(["success", "data"], [true, current])
+    }
+}
+
+struct ObjectValidator {
+    _fields: any,
+    _optional: bool
+}
+
+impl ObjectValidator {
+    fn optional(self) {
+        self._optional = true
+        return self
+    }
+
+    fn parse(self, v) {
+        if (v == null) {
+            if (self._optional) {
+                return http.create_struct(["success", "data"], [true, null])
+            }
+            return http.create_struct(["success", "error"], [false, "Value is required"])
+        }
+
+        // Verify it is actually a struct/object by calling _validate.get_keys
+        let is_struct = true
+        try {
+            _validate.get_keys(v)
+        } catch e {
+            is_struct = false
+        }
+        if (!is_struct) {
+            return http.create_struct(["success", "error"], [false, "Expected object"])
+        }
+
+        let schema_keys = _validate.get_keys(self._fields)
+        let out_keys = []
+        let out_vals = []
+
+        let i = 0
+        while (i < schema_keys.len()) {
+            let key = schema_keys[i]
+            let field_validator = _validate.get_field(self._fields, key)
+            let val = _validate.get_field(v, key)
+
+            let res = field_validator.parse(val)
+            if (!res.success) {
+                return http.create_struct(["success", "error"], [false, key + ": " + res.error])
+            }
+
+            out_keys = out_keys.push(key)
+            out_vals = out_vals.push(res.data)
+            i = i + 1
+        }
+
+        let validated_struct = http.create_struct(out_keys, out_vals)
+        return http.create_struct(["success", "data"], [true, validated_struct])
+    }
+}
+
+let validate = http.create_struct(
+    ["str", "num", "object"],
+    [
+        | | { return Validator { _type_check: "string", _checks: [], _transforms: [], _optional: false } },
+        | | { return Validator { _type_check: "number", _checks: [], _transforms: [], _optional: false } },
+        |fields| { return ObjectValidator { _fields: fields, _optional: false } }
+    ]
+)
+
+let sanitize = http.create_struct(
+    ["strip_html", "escape_html", "trim"],
+    [
+        |v| { return _sanitize.strip_html(v) },
+        |v| { return _sanitize.escape_html(v) },
+        |v| { return _sanitize.trim(v) }
+    ]
+)

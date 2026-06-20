@@ -1,0 +1,13 @@
+// Test vn.storage: local-filesystem-backed key/value blob storage.
+let store = new_storage("/tmp/varian_storage_test")
+
+print(store.put("greeting.txt", "Hello storage!"))
+print(store.exists("greeting.txt"))
+print(store.get("greeting.txt"))
+
+let listing = store.list()
+print(listing.len() > 0)
+
+print(store.delete("greeting.txt"))
+print(store.exists("greeting.txt"))
+print("done")

@@ -1,0 +1,41 @@
+// Test validation library
+
+let schema = validate.object(http.create_struct(
+    ["email", "age", "bio"],
+    [
+        validate.str().is_email(),
+        validate.num().min(18),
+        validate.str().optional().escape_html().trim()
+    ]
+))
+
+// Test 1: Valid input
+let valid_input = http.create_struct(
+    ["email", "age", "bio"],
+    ["test@example.com", 20, "   <p>Hello World</p>   "]
+)
+let res1 = schema.parse(valid_input)
+print("Test 1 success: " + res1.success)
+if (res1.success) {
+    print("Test 1 email: " + res1.data.email)
+    print("Test 1 age: " + res1.data.age)
+    print("Test 1 bio: '" + res1.data.bio + "'") // Expected to be trimmed and HTML-escaped: '&lt;p&gt;Hello World&lt;/p&gt;'
+}
+
+// Test 2: Invalid input (email fails)
+let invalid_input1 = http.create_struct(
+    ["email", "age", "bio"],
+    ["notanemail", 20, null]
+)
+let res2 = schema.parse(invalid_input1)
+print("Test 2 success: " + res2.success)
+print("Test 2 error: " + res2.error)
+
+// Test 3: Invalid input (age too young)
+let invalid_input2 = http.create_struct(
+    ["email", "age", "bio"],
+    ["test@example.com", 16, null]
+)
+let res3 = schema.parse(invalid_input2)
+print("Test 3 success: " + res3.success)
+print("Test 3 error: " + res3.error)

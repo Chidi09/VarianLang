@@ -178,6 +178,15 @@ Value json_decode_value(VM *vm, const char **p) {
         ObjArray *arr = new_array();
         arr->obj.next = vm->objects;
         vm->objects = (Obj *)arr;
+        /* arr isn't reachable from any GC root until it's returned -- the
+         * recursive json_decode_value() call below can allocate (a nested
+         * string/array/object) and trigger a GC cycle, which would
+         * otherwise consider arr (and whatever elements it already holds)
+         * unreachable garbage. Root it on the current task's stack for the
+         * duration of this loop; gc_mark_value() walks elements[0..count)
+         * so elements already stored stay protected as count grows. */
+        Task *self = vm->current_task;
+        self->stack[self->stack_top++] = val_array(arr);
         if (**p != ']') {
             while (1) {
                 Value elem = json_decode_value(vm, p);
@@ -193,24 +202,41 @@ Value json_decode_value(VM *vm, const char **p) {
             }
         }
         if (**p == ']') (*p)++;
+        self->stack_top--;
         return val_array(arr);
     }
     if (**p == '{') {
         (*p)++;
         json_skip_ws(p);
-        char *field_names[64];
-        Value field_values[64];
+        /* No fixed field-count cap (a JSON object with >64 keys used to
+         * silently overflow a stack array here) -- field_names grows as
+         * needed. Each decoded field VALUE is rooted on the current task's
+         * stack the moment it's produced, same reasoning as the array case
+         * above: it isn't reachable from any GC root otherwise (not on a
+         * local C array, which gc_mark_roots never looks at) while
+         * decoding a *later* field can itself allocate and trigger a GC
+         * cycle. */
+        int names_cap = 8;
+        char **field_names = (char **)malloc(sizeof(char *) * (size_t)names_cap);
         int field_count = 0;
+        Task *self = vm->current_task;
+        int stack_base = self->stack_top;
         if (**p != '}') {
             while (1) {
                 json_skip_ws(p);
                 if (**p != '"') break;
-                field_names[field_count] = json_decode_string(p);
-                if (!field_names[field_count]) break;
+                char *name = json_decode_string(p);
+                if (!name) break;
                 json_skip_ws(p);
                 if (**p == ':') (*p)++;
                 json_skip_ws(p);
-                field_values[field_count] = json_decode_value(vm, p);
+                Value v = json_decode_value(vm, p);
+                if (field_count >= names_cap) {
+                    names_cap *= 2;
+                    field_names = (char **)realloc(field_names, sizeof(char *) * (size_t)names_cap);
+                }
+                field_names[field_count] = name;
+                self->stack[self->stack_top++] = v;
                 field_count++;
                 json_skip_ws(p);
                 if (**p == ',') { (*p)++; }
@@ -228,8 +254,10 @@ Value json_decode_value(VM *vm, const char **p) {
         vm->objects = (Obj *)s;
         for (int i = 0; i < field_count; i++) {
             s->field_names[i] = field_names[i];
-            s->fields[i] = field_values[i];
+            s->fields[i] = self->stack[stack_base + i];
         }
+        self->stack_top = stack_base;
+        free(field_names);
         return val_struct(s);
     }
     {

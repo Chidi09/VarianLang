@@ -1,0 +1,6 @@
+// Test vn.mail: raw SMTP send against a local relay (e.g. mailpit/MailHog on
+// 127.0.0.1:1025). Skipped gracefully if nothing is listening on that port.
+let result = send_smtp("127.0.0.1", 1025, "from@varian.dev", "to@example.com",
+                        "Test Subject", "Hello from Varian mail!")
+print(result.ok)
+print("done")

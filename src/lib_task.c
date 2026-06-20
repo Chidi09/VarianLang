@@ -5,22 +5,22 @@
 
 /* ─── task.spawn(self, fn, args) → VAL_TASK ─── */
 static Value lib_task_spawn(VM *vm, int arg_count, Value *args) {
-    /* args[0] = self (module), args[1] = function/closure, args[2] = args array */
-    if (arg_count < 2 || (args[1].type != VAL_FUNCTION && args[1].type != VAL_CLOSURE)) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || (args[base].type != VAL_FUNCTION && args[base].type != VAL_CLOSURE)) {
         runtime_error(vm, "task.spawn() requires a function or closure as first argument");
         return val_nil();
     }
 
-    ObjClosure *closure = (args[1].type == VAL_CLOSURE) ? args[1].as.closure : NULL;
-    ObjFunction *fn = closure ? closure->function : args[1].as.function;
+    ObjClosure *closure = (args[base].type == VAL_CLOSURE) ? args[base].as.closure : NULL;
+    ObjFunction *fn = closure ? closure->function : args[base].as.function;
     int fn_arity = fn->arity;
 
-    /* Extract args from third argument (array) */
+    /* Extract args from the argument after the function */
     Value *spawn_args = NULL;
     int spawn_arg_count = 0;
 
-    if (arg_count >= 3 && args[2].type == VAL_ARRAY) {
-        ObjArray *arr = args[2].as.array;
+    if (arg_count >= base + 2 && args[base + 1].type == VAL_ARRAY) {
+        ObjArray *arr = args[base + 1].as.array;
         spawn_args = arr->elements;
         spawn_arg_count = arr->count;
     }
@@ -58,14 +58,18 @@ static Value lib_task_spawn(VM *vm, int arg_count, Value *args) {
     obj_task->obj.next = vm->objects;
     vm->objects = (Obj *)obj_task;
 
+    /* Register the task in VM scheduler list */
+    vm_register_task(vm, new_t);
+
     return val_task_obj(obj_task);
 }
 
 /* ─── task.channel(capacity) → VAL_CHANNEL ─── */
 static Value lib_task_channel(VM *vm, int arg_count, Value *args) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
     int cap = 1; /* default */
-    if (arg_count >= 1 && args[0].type == VAL_INT) {
-        int req = (int)args[0].as.integer;
+    if (arg_count >= base + 1 && args[base].type == VAL_INT) {
+        int req = (int)args[base].as.integer;
         if (req > 0) cap = req;
     }
 
@@ -85,8 +89,21 @@ static Value lib_task_channel(VM *vm, int arg_count, Value *args) {
     return val_channel(ch);
 }
 
+/* ─── task.close(channel) ─── */
+static Value lib_task_close_channel(VM *vm, int arg_count, Value *args) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || args[base].type != VAL_CHANNEL) {
+        runtime_error(vm, "task.close() requires a channel");
+        return val_nil();
+    }
+    args[base].as.channel->closed = true;
+    return val_nil();
+}
+
 /* ─── task.yield() ─── */
 static Value lib_task_yield(VM *vm, int arg_count, Value *args) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    (void)base;
     (void)arg_count;
     (void)args;
     Task *t = vm->current_task;
@@ -98,11 +115,12 @@ static Value lib_task_yield(VM *vm, int arg_count, Value *args) {
 
 /* ─── task.sleep(ms) — non-blocking sleep ─── */
 static Value lib_task_sleep(VM *vm, int arg_count, Value *args) {
-    if (arg_count < 1 || args[0].type != VAL_INT) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || args[base].type != VAL_INT) {
         runtime_error(vm, "task.sleep() requires a duration in milliseconds");
         return val_nil();
     }
-    double ms = (double)args[0].as.integer;
+    double ms = (double)args[base].as.integer;
     struct timeval tv;
     gettimeofday(&tv, NULL);
     double now = tv.tv_sec + tv.tv_usec / 1000000.0;
@@ -113,10 +131,11 @@ static Value lib_task_sleep(VM *vm, int arg_count, Value *args) {
 
 /* ─── task.id() → int ─── */
 static Value lib_task_id(VM *vm, int arg_count, Value *args) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
     (void)vm;
-    if (arg_count < 1 || args[0].type != VAL_TASK)
+    if (arg_count < base + 1 || args[base].type != VAL_TASK)
         return val_int(-1);
-    return val_int(args[0].as.task_obj->task->id);
+    return val_int(args[base].as.task_obj->task->id);
 }
 
 /* ─── Registration ─── */
@@ -132,4 +151,5 @@ void lib_task_init(VM *vm) {
     vm_register_dispatch(vm, "task", "yield",  val_native_fn((void *)lib_task_yield));
     vm_register_dispatch(vm, "task", "id",     val_native_fn((void *)lib_task_id));
     vm_register_dispatch(vm, "task", "channel", val_native_fn((void *)lib_task_channel));
+    vm_register_dispatch(vm, "task", "close",   val_native_fn((void *)lib_task_close_channel));
 }

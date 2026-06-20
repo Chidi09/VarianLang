@@ -1,0 +1,9 @@
+// Test named arguments: connect(host: "localhost", port: 5432).
+fn connect(host, port, timeout) {
+    print(host, port, timeout)
+}
+
+connect(host: "localhost", port: 5432, timeout: 30)
+connect(timeout: 10, port: 80, host: "reordered")
+connect("positional", 1, 2)
+print("done")

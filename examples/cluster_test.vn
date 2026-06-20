@@ -1,0 +1,16 @@
+// Test multi-process worker clustering: app.listen_cluster(port, workers)
+// forks `workers` OS processes sharing one listening socket, so Zenith can
+// actually use more than one CPU core (the task scheduler itself is
+// single-threaded per process). Run this directly (not via the regression
+// sweep) and hit it with curl/a load tool to see multiple PIDs in the
+// startup log handling requests concurrently:
+//
+//   ./vn examples/cluster_test.vn
+//   curl http://localhost:8300/ping
+//
+// Killing only the master PID cleanly terminates every worker too.
+let app = new_app()
+app.get("/ping", | req | {
+    return Response { status: 200, body: "pong", content_type: "text/plain" }
+}, "ping")
+app.listen_cluster(8300, 4)

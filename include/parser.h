@@ -30,6 +30,16 @@ typedef struct {
     int variant_count;
 } EnumDef;
 
+/* Plain top-level function signature, registered so call sites can use
+ * named arguments: connect(host: "localhost", port: 5432). Only covers
+ * `fn name(...)` declarations -- impl methods/lambdas go through
+ * NODE_DISPATCH_CALL, a separate parse path that doesn't consult this. */
+typedef struct {
+    char *name;
+    char **param_names;
+    int param_count;
+} FunctionSig;
+
 /* ─── Parser State ─── */
 typedef struct {
     Lexer *lexer;
@@ -51,6 +61,9 @@ typedef struct {
     /* Method name registry */
     char *method_names[256];
     int method_count;
+    /* Plain function signature registry (for named arguments) */
+    FunctionSig functions[256];
+    int function_count;
 } Parser;
 
 /* Initialize the parser */

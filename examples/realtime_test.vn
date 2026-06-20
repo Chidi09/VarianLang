@@ -1,0 +1,91 @@
+// examples/realtime_test.vn
+// Test Server-Sent Events (SSE) and WebSockets in Zenith
+
+print("--- Testing WebSocket Handshake Hashing ---")
+// RFC 6455 test key
+let test_key = "dGhlIHNhbXBsZSBub25jZQ=="
+let expected_accept = "s3pPLMBiTxaQ9kYGzzhZRbK+xOo="
+
+let raw_accept_input = test_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
+let actual_accept = auth.sha1_base64(raw_accept_input)
+print("Actual Accept:   " + actual_accept)
+print("Expected Accept: " + expected_accept)
+
+if (actual_accept == expected_accept) {
+    print("WebSocket Handshake SHA-1/Base64: SUCCESS")
+} else {
+    print("WebSocket Handshake SHA-1/Base64: FAILED")
+}
+
+print("\n--- Testing Zenith Real-time Handshakes ---")
+let app = new_app()
+
+app.get("/ws", |req| {
+    let ws = upgrade_websocket(req)
+    if (ws == null) {
+        return Response { status: 400, body: "Bad request", content_type: "text/plain" }
+    }
+    // Return keep open response
+    return Response { status: 101, body: "", content_type: "", _keep_open: true }
+}, "WebSocket upgrade")
+
+app.get("/events", |req| {
+    let sse = sse_handshake(req)
+    return Response { status: 200, body: "", content_type: "text/event-stream", _keep_open: true }
+}, "SSE stream")
+
+// Simulate WebSocket Request
+let ws_headers = http.create_struct(
+    ["sec_websocket_key", "upgrade", "connection"],
+    [test_key, "websocket", "Upgrade"]
+)
+let ws_req = http.test_request("GET", "/ws", "", ws_headers)
+let ws_res = app.handle(ws_req)
+print("WebSocket handle status: " + ws_res.status)
+print("WebSocket keep open: " + ws_res._keep_open)
+
+// Simulate SSE Request
+let sse_headers = http.create_struct(
+    ["accept"],
+    ["text/event-stream"]
+)
+let sse_req = http.test_request("GET", "/events", "", sse_headers)
+let sse_res = app.handle(sse_req)
+print("SSE handle status: " + sse_res.status)
+print("SSE keep open: " + sse_res._keep_open)
+
+print("\n--- Testing WebSocket Frame Decoding and Encoding ---")
+// Let's create a WebSocket wrapper manually and test encode/decode logic
+// Text frame encoding "Hello" from client:
+// FIN=1, Opcode=1, Masked=1, payload_len=5
+// Frame: [129, 133, mask_key[4], payload[5] ^ mask_key]
+let mask_key = [10, 20, 30, 40]
+let text = "Hello"
+let payload_codes = []
+for i in 0..text.len() {
+    payload_codes = payload_codes.push(math.bit_xor(text.code_at(i), mask_key[i % 4]))
+}
+
+let ws_mock_frame_codes = [129, 133]
+ws_mock_frame_codes = ws_mock_frame_codes.push(mask_key[0])
+ws_mock_frame_codes = ws_mock_frame_codes.push(mask_key[1])
+ws_mock_frame_codes = ws_mock_frame_codes.push(mask_key[2])
+ws_mock_frame_codes = ws_mock_frame_codes.push(mask_key[3])
+for i in 0..payload_codes.len() {
+    ws_mock_frame_codes = ws_mock_frame_codes.push(payload_codes[i])
+}
+
+let ws_mock_frame = "".from_codes(ws_mock_frame_codes)
+
+// Mock WebSocket read using our parsed logic
+let ws_conn = WebSocket {
+    socket_fd: -1,
+    _buffer: ws_mock_frame
+}
+let ws_decoded = ws_conn.read()
+print("Decoded WebSocket text frame: " + ws_decoded)
+if (ws_decoded == "Hello") {
+    print("WebSocket Frame Decoding: SUCCESS")
+} else {
+    print("WebSocket Frame Decoding: FAILED")
+}

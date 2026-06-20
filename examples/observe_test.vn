@@ -1,0 +1,10 @@
+// Test vn.observe: structured JSON logging + Prometheus /metrics helper.
+log.info("server started")
+log.warn("disk space low")
+log.error("connection refused")
+log.info_with("request handled", ["status", "path"], [200, "/api/users"])
+
+let names = ["http_requests_total", "errors_total"]
+let values = [42, 3]
+print(metrics_text(names, values))
+print("done")

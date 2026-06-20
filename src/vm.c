@@ -55,7 +55,7 @@ static bool call_validate_function(VM *vm, const char *rule_name, Value value, V
     return result.type == VAL_BOOL && result.as.boolean;
 }
 
-static bool run_struct_validations(VM *vm, ObjStruct *s) {
+bool run_struct_validations(VM *vm, ObjStruct *s) {
     /* Run struct-level validations, passing the whole struct as the value */
     for (int i = 0; i < s->struct_validation_count; i++) {
         ValidationRule *rule = &s->struct_validations[i];
@@ -301,10 +301,61 @@ Value val_actor(ObjActor *a) {
 /* ─── Object Allocation ─── */
 static void gc_collect(VM *vm);
 
-static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
-    if (vm->bytes_allocated >= vm->next_gc_size && vm->next_gc_size > 0) {
-        gc_collect(vm);
+/* Phase 2: per-request arena — general-purpose bump allocator routed from
+ * the task's arena block when use_arena is true. Falls back to malloc when
+ * the arena is exhausted or not enabled. */
+void *task_arena_alloc(Task *t, size_t size) {
+    if (t && t->use_arena && t->arena_base) {
+        size_t aligned = (size + 7) & ~(size_t)7;
+        if (t->arena_offset + aligned <= TASK_ARENA_SIZE) {
+            void *ptr = t->arena_base + t->arena_offset;
+            t->arena_offset += aligned;
+            return ptr;
+        }
     }
+    return malloc(size);
+}
+
+void task_arena_enable(Task *t) {
+    if (!t->arena_base) {
+        t->arena_base = (char *)malloc(TASK_ARENA_SIZE);
+        if (!t->arena_base) return;
+    }
+    t->arena_offset = 0;
+    t->use_arena = true;
+}
+
+static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
+    /* GC no longer self-triggers from inside an allocation. gc_mark_roots()
+     * only scans the stacks of tasks registered in vm->tasks -- if a native
+     * function is mid-construction of an object (built across several
+     * allocating calls before it's stored anywhere a root can see it, e.g.
+     * sqlite.query() building one row struct at a time, or json_decode()
+     * building a nested array), an allocation triggering a sweep right then
+     * can free that not-yet-reachable object out from under its own
+     * constructor. Reproduced as real heap-use-after-free crashes under
+     * load (see the matching comments in lib_sqlite.c/json.c/lib_string.c/
+     * lib_validate.c/lib_http.c -- those are kept as defense in depth, not
+     * because this fix alone wasn't enough). Collection now only happens at
+     * the round-robin scheduler's safepoint (top of the loop in vm_run,
+     * between ticks) where every task is guaranteed to be between
+     * instructions, not mid-construction of anything. */
+    /* Phase 2: per-request arena — DISABLED for AOT debugging */
+    /*{
+        Task *t = vm->current_task;
+        if (t && t->use_arena && t->arena_base) {
+            size_t aligned = (size + 7) & ~(size_t)7;
+            if (t->arena_offset + aligned <= TASK_ARENA_SIZE) {
+                Obj *obj = (Obj *)(t->arena_base + t->arena_offset);
+                t->arena_offset += aligned;
+                memset(obj, 0, size);
+                obj->type = type;
+                obj->is_marked = true;
+                obj->next = NULL;
+                return obj;
+            }
+        }
+    }*/
     Obj *obj = (Obj *)calloc(1, size);
     if (!obj) return NULL;
     obj->type = type;
@@ -315,7 +366,7 @@ static Obj *allocate_object(VM *vm, ValueType type, size_t size) {
     return obj;
 }
 
-static uint32_t hash_string(const char *chars, int length) {
+uint32_t hash_string(const char *chars, int length) {
     uint32_t hash = 2166136261u;
     for (int i = 0; i < length; i++) {
         hash ^= (uint8_t)chars[i];
@@ -341,7 +392,8 @@ ObjString *allocate_string(VM *vm, const char *chars, int length) {
     ObjString *s = (ObjString *)allocate_object(vm, VAL_STRING, sizeof(ObjString));
     if (!s) return NULL;
     s->length = length;
-    s->chars = (char *)malloc(length + 1);
+    s->chars = (char *)malloc((size_t)length + 1);
+    if (!s->chars) return NULL;
     memcpy(s->chars, chars, length);
     s->chars[length] = '\0';
     s->hash = hash_string(chars, length);
@@ -392,6 +444,7 @@ ObjStruct *new_struct(int field_count) {
     s->fields = (Value *)calloc(field_count, sizeof(Value));
     s->field_validations = (ValidationRule **)calloc(field_count, sizeof(ValidationRule *));
     s->field_validation_counts = (int *)calloc(field_count, sizeof(int));
+    /* field_cache zeroed by calloc; field_cache_count = 0 means cold */
     return s;
 }
 
@@ -915,6 +968,11 @@ static void emit_bytes(Compiler *compiler, uint8_t b1, uint8_t b2) {
     emit_byte(compiler, b2);
 }
 
+static void emit_short(Compiler *compiler, uint16_t value) {
+    emit_byte(compiler, (uint8_t)((value >> 8) & 0xFF));
+    emit_byte(compiler, (uint8_t)(value & 0xFF));
+}
+
 static int emit_jump(Compiler *compiler, uint8_t instruction) {
     emit_byte(compiler, instruction);
     emit_byte(compiler, 0xFF);
@@ -941,23 +999,13 @@ static void emit_loop(Compiler *compiler, int loop_start) {
 
 static void emit_constant(Compiler *compiler, Value value) {
     int idx = chunk_add_constant(compiler->chunk, value);
-    if (idx < 256) {
-        emit_bytes(compiler, BC_CONSTANT, (uint8_t)idx);
-    } else {
-        emit_byte(compiler, BC_CONSTANT_LONG);
-        emit_byte(compiler, (uint8_t)((idx >> 8) & 0xFF));
-        emit_byte(compiler, (uint8_t)(idx & 0xFF));
-    }
+    emit_byte(compiler, BC_CONSTANT);
+    emit_short(compiler, (uint16_t)idx);
 }
 
 static void emit_constant_idx(Compiler *compiler, int idx) {
-    if (idx < 256) {
-        emit_bytes(compiler, BC_CONSTANT, (uint8_t)idx);
-    } else {
-        emit_byte(compiler, BC_CONSTANT_LONG);
-        emit_byte(compiler, (uint8_t)((idx >> 8) & 0xFF));
-        emit_byte(compiler, (uint8_t)(idx & 0xFF));
-    }
+    emit_byte(compiler, BC_CONSTANT);
+    emit_short(compiler, (uint16_t)idx);
 }
 
 /* ─── Compilation: Expressions ─── */
@@ -1004,7 +1052,7 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
                     emit_byte(compiler, BC_GET_GLOBAL);
                     ObjString *s = copy_string(node->identifier.name, (int)strlen(node->identifier.name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                    emit_byte(compiler, (uint8_t)idx);
+                    emit_short(compiler, (uint16_t)idx);
                 }
             }
             break;
@@ -1044,7 +1092,7 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
             ObjString *s = copy_string(node->member.member, (int)strlen(node->member.member));
             emit_byte(compiler, BC_MEMBER);
             int idx = chunk_add_constant(compiler->chunk, val_string(s));
-            emit_byte(compiler, (uint8_t)idx);
+            emit_short(compiler, (uint16_t)idx);
             int end_jump = emit_jump(compiler, BC_JUMP);
             patch_jump(compiler, nil_jump);
             emit_byte(compiler, BC_POP);
@@ -1117,7 +1165,7 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
             ObjString *s = copy_string(node->member.member, (int)strlen(node->member.member));
             emit_byte(compiler, BC_MEMBER);
             int idx = chunk_add_constant(compiler->chunk, val_string(s));
-            emit_byte(compiler, (uint8_t)idx);
+            emit_short(compiler, (uint16_t)idx);
             break;
         }
 
@@ -1218,7 +1266,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                         emit_byte(compiler, BC_DEFINE_GLOBAL);
                         ObjString *s = copy_string(name, (int)strlen(name));
                         int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                        emit_byte(compiler, (uint8_t)idx);
+                        emit_short(compiler, (uint16_t)idx);
                     }
                 }
             }
@@ -1331,13 +1379,13 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *ts = copy_string(node->fn_decl.impl_type,
                                                 (int)strlen(node->fn_decl.impl_type));
                     int ti = chunk_add_constant(compiler->chunk, val_string(ts));
-                    emit_byte(compiler, (uint8_t)ti);
+                    emit_short(compiler, (uint16_t)ti);
                 }
                 {
                     ObjString *ms = copy_string(node->fn_decl.name,
                                                 (int)strlen(node->fn_decl.name));
                     int mi = chunk_add_constant(compiler->chunk, val_string(ms));
-                    emit_byte(compiler, (uint8_t)mi);
+                    emit_short(compiler, (uint16_t)mi);
                 }
             }
             /* Lambdas (name "__lambda__") are expressions, not statements —
@@ -1348,7 +1396,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string(node->fn_decl.name,
                                                (int)strlen(node->fn_decl.name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                    emit_byte(compiler, (uint8_t)idx);
+                    emit_short(compiler, (uint16_t)idx);
                 }
             }
             break;
@@ -1503,7 +1551,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string(var_name, (int)strlen(var_name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_DEFINE_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
 
                 compile_expression(compiler, end);
@@ -1511,7 +1559,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string("__end__", 7);
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_DEFINE_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
 
                 int loop_start = compiler->chunk->count;
@@ -1521,13 +1569,13 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string(var_name, (int)strlen(var_name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_GET_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
                 {
                     ObjString *s = copy_string("__end__", 7);
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_GET_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
                 emit_byte(compiler, BC_LESS);
                 int exit_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
@@ -1539,7 +1587,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string(var_name, (int)strlen(var_name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_GET_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
                 int one_idx = chunk_add_constant(compiler->chunk, val_int(1));
                 emit_constant_idx(compiler, one_idx);
@@ -1548,7 +1596,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *s = copy_string(var_name, (int)strlen(var_name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
                     emit_byte(compiler, BC_SET_GLOBAL);
-                    emit_byte(compiler, (uint8_t)(idx & 0xFF));
+                    emit_short(compiler, (uint16_t)idx);
                 }
                 emit_byte(compiler, BC_POP);
 
@@ -1612,7 +1660,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                         ObjString *s = copy_string(node->assign.target->identifier.name,
                                                    (int)strlen(node->assign.target->identifier.name));
                         int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                        emit_byte(compiler, (uint8_t)idx);
+                        emit_short(compiler, (uint16_t)idx);
                     }
                 }
             } else if (node->assign.target->kind == NODE_MEMBER) {
@@ -1622,7 +1670,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 ObjString *s = copy_string(node->assign.target->member.member,
                                            (int)strlen(node->assign.target->member.member));
                 int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                emit_byte(compiler, (uint8_t)idx);
+                emit_short(compiler, (uint16_t)idx);
             } else if (node->assign.target->kind == NODE_INDEX) {
                 compile_expression(compiler, node->assign.target->index.object);
                 compile_expression(compiler, node->assign.target->index.index);
@@ -1713,7 +1761,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                             emit_byte(compiler, BC_DEFINE_GLOBAL);
                             ObjString *s = copy_string(bname, (int)strlen(bname));
                             int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                            emit_byte(compiler, (uint8_t)idx);
+                            emit_short(compiler, (uint16_t)idx);
                         }
                     }
 
@@ -1773,7 +1821,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 ObjString *ts = copy_string(node->struct_decl.name,
                                             (int)strlen(node->struct_decl.name));
                 int ti = chunk_add_constant(compiler->chunk, val_string(ts));
-                emit_byte(compiler, (uint8_t)ti);
+                emit_short(compiler, (uint16_t)ti);
 
                 /* Struct-level validation count */
                 emit_byte(compiler, (uint8_t)node->struct_decl.decorator_count);
@@ -1784,14 +1832,14 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *key = copy_string(node->struct_decl.decorator_keys[i],
                                                  (int)strlen(node->struct_decl.decorator_keys[i]));
                     int ki = chunk_add_constant(compiler->chunk, val_string(key));
-                    emit_byte(compiler, (uint8_t)ki);
+                    emit_short(compiler, (uint16_t)ki);
 
                     Value arg_val = val_bool(true);
                     if (!decorator_literal_to_value(node->struct_decl.decorator_values[i], &arg_val)) {
                         compiler_error(compiler, "Decorator arguments must be literal values");
                     }
                     int ai = chunk_add_constant(compiler->chunk, arg_val);
-                    emit_byte(compiler, (uint8_t)ai);
+                    emit_short(compiler, (uint16_t)ai);
                 }
 
                 /* Field count */
@@ -1802,7 +1850,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     ObjString *fname = copy_string(node->struct_decl.field_names[i],
                                                    (int)strlen(node->struct_decl.field_names[i]));
                     int fi = chunk_add_constant(compiler->chunk, val_string(fname));
-                    emit_byte(compiler, (uint8_t)fi);
+                    emit_short(compiler, (uint16_t)fi);
 
                     int fcount = 0;
                     if (node->struct_decl.field_decorator_counts) {
@@ -1816,14 +1864,14 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                             ObjString *fkey = copy_string(node->struct_decl.field_decorator_keys[i][j],
                                                           (int)strlen(node->struct_decl.field_decorator_keys[i][j]));
                             int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
-                            emit_byte(compiler, (uint8_t)fki);
+                            emit_short(compiler, (uint16_t)fki);
 
                             Value arg_val = val_bool(true);
                             if (!decorator_literal_to_value(node->struct_decl.field_decorator_values[i][j], &arg_val)) {
                                 compiler_error(compiler, "Decorator arguments must be literal values");
                             }
                             int afi = chunk_add_constant(compiler->chunk, arg_val);
-                            emit_byte(compiler, (uint8_t)afi);
+                            emit_short(compiler, (uint16_t)afi);
                         }
                     }
                 }
@@ -1837,13 +1885,13 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             ObjString *ts = copy_string(node->actor_decl.name,
                                         (int)strlen(node->actor_decl.name));
             int ti = chunk_add_constant(compiler->chunk, val_string(ts));
-            emit_byte(compiler, (uint8_t)ti);
+            emit_short(compiler, (uint16_t)ti);
             emit_byte(compiler, (uint8_t)node->actor_decl.field_count);
             for (int i = 0; i < node->actor_decl.field_count; i++) {
                 ObjString *fs = copy_string(node->actor_decl.field_names[i],
                                             (int)strlen(node->actor_decl.field_names[i]));
                 int fi = chunk_add_constant(compiler->chunk, val_string(fs));
-                emit_byte(compiler, (uint8_t)fi);
+                emit_short(compiler, (uint16_t)fi);
             }
             break;
         }
@@ -1856,13 +1904,13 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 ObjString *ts = copy_string(node->struct_literal.name,
                                             (int)strlen(node->struct_literal.name));
                 int ti = chunk_add_constant(compiler->chunk, val_string(ts));
-                emit_byte(compiler, (uint8_t)ti);
+                emit_short(compiler, (uint16_t)ti);
             }
             for (int i = 0; i < node->struct_literal.field_count; i++) {
                 ObjString *s = copy_string(node->struct_literal.field_names[i],
                                            (int)strlen(node->struct_literal.field_names[i]));
                 int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                emit_byte(compiler, (uint8_t)idx);
+                emit_short(compiler, (uint16_t)idx);
             }
             break;
         }
@@ -1940,7 +1988,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 ObjString *s = copy_string(node->dispatch_call.method_name,
                                            (int)strlen(node->dispatch_call.method_name));
                 int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                emit_byte(compiler, (uint8_t)idx);
+                emit_short(compiler, (uint16_t)idx);
             }
             emit_byte(compiler, (uint8_t)node->dispatch_call.arg_count);
             break;
@@ -1987,23 +2035,14 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             fn->rle_counts = tmp_chunk.rle_counts;
             fn->rle_count = tmp_chunk.rle_count;
 
-            /* Store fn in outer constants */
+             /* Store fn in outer constants */
             int fn_idx = chunk_add_constant(compiler->chunk, val_function(fn));
-            if (fn_idx > 255) {
-                compiler_error(compiler, "Too many constants for comptime");
-                break;
-            }
-
             /* Reserve result slot */
             int result_idx = chunk_add_constant(compiler->chunk, val_nil());
-            if (result_idx > 255) {
-                compiler_error(compiler, "Too many constants for comptime result");
-                break;
-            }
 
             emit_byte(compiler, BC_COMPTIME_EXEC);
-            emit_byte(compiler, (uint8_t)result_idx);
-            emit_byte(compiler, (uint8_t)fn_idx);
+            emit_short(compiler, (uint16_t)result_idx);
+            emit_short(compiler, (uint16_t)fn_idx);
             break;
         }
 
@@ -2018,8 +2057,30 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             int offset = compiler->chunk->count - catch_pos - 2;
             compiler->chunk->code[catch_pos] = (offset >> 8) & 0xFF;
             compiler->chunk->code[catch_pos + 1] = offset & 0xFF;
-            if (node->try_stmt.catch_body)
+            if (node->try_stmt.catch_body) {
+                /* The thrown value is already sitting on top of the stack
+                 * when control reaches here (pushed by the unwind code in
+                 * BC_CALL/BC_DISPATCH right before jumping to catch_offset). */
+                bool bound_local = false;
+                int saved_local_count = compiler->local_count;
+                if (node->try_stmt.catch_var && compiler->in_function) {
+                    compiler_add_local(compiler, node->try_stmt.catch_var);
+                    bound_local = true;
+                } else if (node->try_stmt.catch_var) {
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    ObjString *s = copy_string(node->try_stmt.catch_var,
+                                               (int)strlen(node->try_stmt.catch_var));
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_short(compiler, (uint16_t)idx);
+                } else {
+                    emit_byte(compiler, BC_POP);
+                }
                 compile_node(compiler, node->try_stmt.catch_body);
+                if (bound_local) {
+                    emit_byte(compiler, BC_POP);
+                    compiler->local_count = saved_local_count;
+                }
+            }
             patch_jump(compiler, end_jump);
             break;
         }
@@ -2042,7 +2103,7 @@ bool compiler_compile(Compiler *compiler) {
     (task->frames[task->frame_count - 1].ip += 2, \
      (uint16_t)((task->frames[task->frame_count - 1].ip[-2] << 8) | \
                 task->frames[task->frame_count - 1].ip[-1]))
-#define TASK_READ_CONSTANT() (task->frames[task->frame_count - 1].function->constants[TASK_READ_BYTE()])
+#define TASK_READ_CONSTANT() (task->frames[task->frame_count - 1].function->constants[TASK_READ_SHORT()])
 #define TASK_PUSH(v) do { \
     task->stack[task->stack_top] = (v); \
     task->stack_top++; \
@@ -2050,30 +2111,47 @@ bool compiler_compile(Compiler *compiler) {
 #define TASK_POP() (task->stack[--task->stack_top])
 #define TASK_PEEK(n) (task->stack[task->stack_top - 1 - (n)])
 
-/* ─── Task allocation ─── */
+/* ─── Task allocation (with free-list) ─── */
 Task *task_new(VM *vm) {
-    Task *t = (Task *)calloc(1, sizeof(Task));
+    Task *t = vm->free_tasks;
+    if (t) {
+        vm->free_tasks = (Task *)t->http_response_ssl;
+        char *saved_arena = t->arena_base;
+        memset(t, 0, sizeof(Task));
+        t->arena_base = saved_arena;
+        t->arena_offset = 0;
+        t->dead = false;
+        t->http_listen_fd = -1;
+        t->http_response_fd = -1;
+        t->http_response_ssl = NULL;
+        t->http_pending_conns = NULL;
+        t->wakeup_time = 0.0;
+        return t;
+    }
+    t = (Task *)calloc(1, sizeof(Task));
     if (!t) return NULL;
+    t->dead = false;
+    t->http_listen_fd = -1;
+    t->http_response_fd = -1;
+    t->http_response_ssl = NULL;
+    t->http_pending_conns = NULL;
+    t->wakeup_time = 0.0;
+    t->arena_base = NULL;
+    t->arena_offset = 0;
+    t->use_arena = false;
+    return t;
+}
+
+void vm_register_task(VM *vm, Task *t) {
     if (vm->task_count >= vm->task_capacity) {
         int new_cap = vm->task_capacity ? vm->task_capacity * 2 : 8;
         Task **new_tasks = (Task **)realloc(vm->tasks, (size_t)new_cap * sizeof(Task *));
-        if (!new_tasks) { free(t); return NULL; }
+        if (!new_tasks) return;
         vm->tasks = new_tasks;
         vm->task_capacity = new_cap;
     }
     t->id = vm->task_count;
-    t->dead = false;
-    t->yielded = false;
-    t->waiting_actor_reply = false;
-    t->actor_reply_ch = val_nil();
-    t->is_actor_loop = false;
-    t->actor_ref = NULL;
-    t->cache_on_return = false;
-    t->cache_result_key = 0;
-    t->http_listen_fd = -1;
-    t->wakeup_time = 0.0;
     vm->tasks[vm->task_count++] = t;
-    return t;
 }
 
 void vm_init(VM *vm, Compiler *compiler) {
@@ -2089,6 +2167,8 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->suppress_error_print = false;
     vm->last_error[0] = '\0';
     vm->main_fn = NULL;
+    vm->io_activity_this_tick = false;
+    vm->free_tasks = NULL;
     memset(vm->dispatch_occupied, 0, sizeof(vm->dispatch_occupied));
     vm->gray_stack = NULL;
     vm->gray_capacity = 0;
@@ -2197,7 +2277,7 @@ void define_global(VM *vm, ObjString *name, Value value) {
     vm->global_count++;
 }
 
-static Value get_global(VM *vm, ObjString *name) {
+Value get_global(VM *vm, ObjString *name) {
     for (int i = 0; i < vm->global_count; i++) {
         if (strcmp(vm->global_names[i], name->chars) == 0)
             return vm->globals[i];
@@ -2206,7 +2286,7 @@ static Value get_global(VM *vm, ObjString *name) {
     return val_nil();
 }
 
-static void set_global(VM *vm, ObjString *name, Value value) {
+void set_global(VM *vm, ObjString *name, Value value) {
     for (int i = 0; i < vm->global_count; i++) {
         if (strcmp(vm->global_names[i], name->chars) == 0) {
             vm->globals[i] = value;
@@ -2333,7 +2413,7 @@ Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
 bool task_run(VM *vm, Task *task);
 
 /* ─── Channel helpers (used by actor system) ─── */
-static bool channel_try_receive(ObjChannel *ch, Value *result) {
+bool channel_try_receive(ObjChannel *ch, Value *result) {
     if (ch->count > 0) {
         *result = ch->buffer[ch->head];
         ch->head = (ch->head + 1) % ch->capacity;
@@ -2343,7 +2423,7 @@ static bool channel_try_receive(ObjChannel *ch, Value *result) {
     return false;
 }
 
-static bool channel_try_send(ObjChannel *ch, Value val) {
+bool channel_try_send(ObjChannel *ch, Value val) {
     if (ch->count < ch->capacity) {
         ch->buffer[ch->tail] = val;
         ch->tail = (ch->tail + 1) % ch->capacity;
@@ -2410,7 +2490,7 @@ static bool actor_scheduler_process(VM *vm, Task *task) {
 /* actor_spawn_native is registered as the "spawn" method on each actor module.
    It creates the ObjActor, its inner VAL_STRUCT state, inbox channel,
    and background loop task. */
-static Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
+Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
     if (arg_count < 1 || args[0].type != VAL_MODULE) {
         runtime_error(vm, "actor.spawn: expected module as first argument");
         return val_nil();
@@ -2467,6 +2547,7 @@ static Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
     loop_task->is_actor_loop = true;
     loop_task->actor_ref = obj_actor;
     obj_actor->loop_task = loop_task;
+    vm_register_task(vm, loop_task);
 
     return val_actor(obj_actor);
 }
@@ -2505,6 +2586,10 @@ void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name
 }
 
 Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) {
+    /* type_name is NULL for anonymous structs (e.g. http.create_struct()
+     * results) -- never registered in the dispatch table, so this is
+     * always a clean "not found" rather than a NULL-deref in the hash. */
+    if (!type_name) return NULL;
     uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
@@ -2523,26 +2608,31 @@ Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) 
 
 bool vm_run(VM *vm, bool run_tests) {
     vm->test_fail_count = 0;
-    /* Create main script function (not tracked in objects list) */
-    vm->main_fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
-    vm->main_fn->obj.type = VAL_FUNCTION;
-    vm->main_fn->code = vm->compiler->chunk->code;
-    vm->main_fn->code_count = vm->compiler->chunk->count;
-    vm->main_fn->code_capacity = vm->compiler->chunk->capacity;
-    vm->main_fn->constants = vm->compiler->chunk->constants;
-    vm->main_fn->constant_count = vm->compiler->chunk->constant_count;
-    vm->main_fn->constant_capacity = vm->compiler->chunk->constant_capacity;
+    /* Create main script function if not already loaded (e.g. via AOT) */
+    if (!vm->main_fn) {
+        vm->main_fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
+        vm->main_fn->obj.type = VAL_FUNCTION;
+        vm->main_fn->code = vm->compiler->chunk->code;
+        vm->main_fn->code_count = vm->compiler->chunk->count;
+        vm->main_fn->code_capacity = vm->compiler->chunk->capacity;
+        vm->main_fn->constants = vm->compiler->chunk->constants;
+        vm->main_fn->constant_count = vm->compiler->chunk->constant_count;
+        vm->main_fn->constant_capacity = vm->compiler->chunk->constant_capacity;
+    }
 
-    /* Create and set up the initial task */
-    Task *init_task = task_new(vm);
-    if (!init_task) return false;
-    init_task->frames[0].function = vm->main_fn;
-    init_task->frames[0].closure = NULL;
-    init_task->frames[0].ip = vm->main_fn->code;
-    init_task->frames[0].slots = NULL;
-    init_task->frames[0].return_base = 0;
-    init_task->frame_count = 1;
-    vm->current_task = init_task;
+    /* Create and set up the initial task if none registered */
+    if (vm->task_count == 0) {
+        Task *init_task = task_new(vm);
+        if (!init_task) return false;
+        init_task->frames[0].function = vm->main_fn;
+        init_task->frames[0].closure = NULL;
+        init_task->frames[0].ip = vm->main_fn->code;
+        init_task->frames[0].slots = NULL;
+        init_task->frames[0].return_base = 0;
+        init_task->frame_count = 1;
+        vm_register_task(vm, init_task);
+        vm->current_task = init_task;
+    }
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
@@ -2570,6 +2660,8 @@ bool vm_run(VM *vm, bool run_tests) {
         extern void lib_sqlite_init(VM *vm);
         extern void lib_redis_init(VM *vm);
         extern void lib_mock_init(VM *vm);
+        extern void lib_smtp_init(VM *vm);
+        extern void lib_time_init(VM *vm);
         lib_math_init(vm);
         lib_io_init(vm);
         lib_string_init(vm);
@@ -2583,6 +2675,8 @@ bool vm_run(VM *vm, bool run_tests) {
         lib_sqlite_init(vm);
         lib_redis_init(vm);
         lib_mock_init(vm);
+        lib_smtp_init(vm);
+        lib_time_init(vm);
     }
 
 #define BINARY_OP_NUM(op) \
@@ -2605,8 +2699,18 @@ bool vm_run(VM *vm, bool run_tests) {
 
     /* ─── Round-robin scheduler ─── */
     while (true) {
+        /* GC safepoint: every task is between ticks here (none mid-
+         * execution, nothing native-code-constructed-but-not-yet-rooted in
+         * flight) -- see allocate_object()'s comment for why collection
+         * only happens here now instead of self-triggering from inside an
+         * allocation. */
+        if (vm->bytes_allocated >= vm->next_gc_size && vm->next_gc_size > 0) {
+            gc_collect(vm);
+        }
+
         bool any_alive = false;
         bool made_progress = false;
+        vm->io_activity_this_tick = false;
         for (int i = 0; i < vm->task_count; i++) {
             Task *t = vm->tasks[i];
             if (t->dead) continue;
@@ -2638,19 +2742,65 @@ bool vm_run(VM *vm, bool run_tests) {
                     prev_ip = t->frames[t->frame_count - 1].ip;
                 }
                 task_run(vm, t);
+                bool tick_had_error = vm->had_error;
                 if (vm->had_error) {
                     t->dead = true;
+                    vm->had_error = false; /* don't let one task's error kill the next */
+                }
+                if (t->dead && t->http_response_fd >= 0) {
+                    /* A long-lived HTTP handler (WebSocket/SSE) that had to
+                     * yield mid-execution -- see call_handler() in
+                     * lib_http.c -- has now actually finished, normally or
+                     * via an uncaught error partway through (e.g. a bad
+                     * message on an open WebSocket). Either way this must
+                     * not crash the server -- just finalize this one
+                     * connection's response/close. */
+                    extern void http_finalize_deferred_response(Task *t, bool had_error);
+                    http_finalize_deferred_response(t, tick_had_error);
                 }
                 if (t->dead || t->frame_count == 0 || (t->frame_count > 0 && t->frames[t->frame_count - 1].ip != prev_ip)) {
                     made_progress = true;
                 }
             }
         }
+
+        /* Reap every task that died this pass. Nothing previously freed a
+         * Task's memory at all -- every task.spawn()'d task and every HTTP
+         * request handler (see call_handler in lib_http.c) leaked a multi-KB
+         * Task struct (TASK_STACK_SIZE Values + TASK_FRAMES_MAX call frames)
+         * forever, which under sustained request volume is a real
+         * unbounded-memory-growth bug, not a rounding error. Safe to do
+         * here, once per full pass over every task, rather than the instant
+         * a task is noticed dead: anything that still needed a value off a
+         * dying task's stack (e.g. http_finalize_deferred_response reading
+         * the handler's return value, or this same pass's send_http_response
+         * for a synchronously-completed handler) has already finished using
+         * it by the time we get here. */
+        int reap_write = 0;
+        for (int ri = 0; ri < vm->task_count; ri++) {
+            Task *rt = vm->tasks[ri];
+            if (rt->dead) {
+                if (rt->http_pending_conns) {
+                    extern void http_cleanup_pending_conns(Task *t);
+                    http_cleanup_pending_conns(rt); /* closes fds, frees buffers */
+                }
+                /* Push to free-list instead of free() — Phase 1: Task Pooling */
+                /* Phase 2: reset arena (keep the base allocation for reuse) */
+                rt->arena_offset = 0;
+                rt->use_arena = false;
+                rt->http_response_ssl = (void *)vm->free_tasks; /* repurpose as next */
+                vm->free_tasks = rt;
+            } else {
+                vm->tasks[reap_write++] = rt;
+            }
+        }
+        vm->task_count = reap_write;
+
         /* Stop only when no tasks remain alive */
         if (!any_alive) break;
 
-        if (!made_progress) {
-            usleep(1000); // Sleep for 1ms to prevent hot spinning
+        if (!made_progress && !vm->io_activity_this_tick) {
+            usleep(1000); // Sleep for 1ms to prevent hot spinning when truly idle
         }
     }
 
@@ -2661,6 +2811,7 @@ bool vm_run(VM *vm, bool run_tests) {
 
             Task *t = task_new(vm);
             if (!t) continue;
+            vm_register_task(vm, t);
             t->frames[0].function = tr->func;
             t->frames[0].closure = NULL;
             t->frames[0].ip = tr->func->code;
@@ -2723,7 +2874,7 @@ static bool metadata_has(Value metadata, const char *key) {
 }
 
 /* Get the value associated with a metadata key */
-static Value metadata_get(Value metadata, const char *key) {
+Value metadata_get(Value metadata, const char *key) {
     if (metadata.type != VAL_ARRAY) return val_nil();
     ObjArray *arr = metadata.as.array;
     for (int i = 0; i < arr->count; i += 2) {
@@ -2746,7 +2897,7 @@ static int cache_map_find(VM *vm, uint64_t key_hash) {
     return -1;
 }
 
-static void cache_map_put(VM *vm, uint64_t key_hash, Value result) {
+void cache_map_put(VM *vm, uint64_t key_hash, Value result) {
     if (vm->cache_map_count + 2 > vm->cache_map_capacity) {
         int new_cap = vm->cache_map_capacity ? vm->cache_map_capacity * 2 : 16;
         vm->cache_map = (Value *)realloc(vm->cache_map, new_cap * sizeof(Value));
@@ -2781,6 +2932,11 @@ bool task_run(VM *vm, Task *task) {
 
     uint8_t instruction;
     while (!vm->had_error && !t->dead && !t->yielded) {
+        CallFrame *frame = &t->frames[t->frame_count - 1];
+        if (frame->function->aot_func) {
+            frame->function->aot_func(vm, t);
+            continue;
+        }
         instruction = READ_BYTE();
 
         switch (instruction) {
@@ -2800,8 +2956,8 @@ bool task_run(VM *vm, Task *task) {
                  * global defined earlier in the program is already visible —
                  * unlike a startup pre-pass, which would run before any of
                  * the script's own top-level definitions existed. */
-                uint8_t result_idx = READ_BYTE();
-                uint8_t fn_idx = READ_BYTE();
+                uint16_t result_idx = READ_SHORT();
+                uint16_t fn_idx = READ_SHORT();
                 ObjFunction *cur_fn = t->frames[t->frame_count - 1].function;
 
                 if (fn_idx >= cur_fn->constant_count ||
@@ -2828,12 +2984,17 @@ bool task_run(VM *vm, Task *task) {
                 bool ok = task_run(vm, tmp_task);
                 vm->current_task = prev;
 
+
                 if (!ok) return false;
 
                 Value result = val_nil();
                 if (tmp_task->stack_top > 0)
                     result = tmp_task->stack[tmp_task->stack_top - 1];
                 tmp_task->dead = true;
+                tmp_task->arena_offset = 0;
+                tmp_task->use_arena = false;
+                tmp_task->http_response_ssl = (void *)vm->free_tasks;
+                vm->free_tasks = tmp_task;
 
                 cur_fn->constants[result_idx] = result;
                 PUSH(result);
@@ -3062,7 +3223,8 @@ bool task_run(VM *vm, Task *task) {
             }
 
             case BC_DEFINE_GLOBAL: {
-                ObjString *name = READ_CONSTANT().as.string;
+                uint16_t idx = READ_SHORT();
+                ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = PEEK(0);
                 define_global(vm, name, value);
                 (void)POP();
@@ -3102,13 +3264,15 @@ bool task_run(VM *vm, Task *task) {
                 break;
             }
             case BC_GET_GLOBAL: {
-                ObjString *name = READ_CONSTANT().as.string;
+                uint16_t idx = READ_SHORT();
+                ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = get_global(vm, name);
                 PUSH(value);
                 break;
             }
             case BC_SET_GLOBAL: {
-                ObjString *name = READ_CONSTANT().as.string;
+                uint16_t idx = READ_SHORT();
+                ObjString *name = t->frames[t->frame_count - 1].function->constants[idx].as.string;
                 Value value = PEEK(0);
                 set_global(vm, name, value);
                 break;
@@ -3145,6 +3309,20 @@ bool task_run(VM *vm, Task *task) {
                     Value *args = &t->stack[t->stack_top - arg_count];
                     NativeFn fn = (NativeFn)callee.as.native_fn;
                     Value result = fn(vm, arg_count, args);
+                    /* If the native function yielded (e.g. http.serve_tls()
+                     * called directly rather than through BC_DISPATCH -- any
+                     * native fn not in the parser's static method-name
+                     * whitelist goes through plain BC_CALL instead), leave
+                     * the stack untouched so the rewound retry can re-read
+                     * the same callee+args via PEEK(arg_count) again. Popping
+                     * here unconditionally (the old behavior) corrupted the
+                     * stack on retry -- BC_DISPATCH already had the matching
+                     * check below, BC_CALL never did because no native fn
+                     * reachable only via plain BC_CALL had ever needed to
+                     * yield-and-retry before. */
+                    if (t->yielded) {
+                        break;
+                    }
                     t->stack_top -= (arg_count + 1);
                     PUSH(result);
                     if (t->is_throwing) {
@@ -3178,10 +3356,12 @@ bool task_run(VM *vm, Task *task) {
                         }
                         if (t->try_count > 0) {
                             t->try_count--;
+                            int target_frame = t->try_stack[t->try_count].frame_index;
+                            t->frame_count = target_frame + 1;
                             t->stack_top = t->try_stack[t->try_count].stack_depth;
                             PUSH(t->throw_value);
-                            t->frames[t->frame_count - 1].ip =
-                                t->frames[t->frame_count - 1].function->code +
+                            t->frames[target_frame].ip =
+                                t->frames[target_frame].function->code +
                                 t->try_stack[t->try_count].catch_offset;
                         } else {
                             runtime_error(vm, "Unhandled exception");
@@ -3458,8 +3638,9 @@ bool task_run(VM *vm, Task *task) {
                 break;
             }
 
-            case BC_REGISTER_VALIDATIONS: {
-                ObjString *type_name_str = READ_CONSTANT().as.string;
+             case BC_REGISTER_VALIDATIONS: {
+                uint16_t type_name_idx = READ_SHORT();
+                ObjString *type_name_str = t->frames[t->frame_count - 1].function->constants[type_name_idx].as.string;
                 char *type_name = (char *)malloc(type_name_str->length + 1);
                 memcpy(type_name, type_name_str->chars, type_name_str->length);
                 type_name[type_name_str->length] = '\0';
@@ -3469,12 +3650,14 @@ bool task_run(VM *vm, Task *task) {
                 if (struct_validation_count > 0) {
                     struct_validations = (ValidationRule *)calloc(struct_validation_count, sizeof(ValidationRule));
                     for (int i = 0; i < struct_validation_count; i++) {
-                        ObjString *key = READ_CONSTANT().as.string;
+                        uint16_t key_idx = READ_SHORT();
+                        ObjString *key = t->frames[t->frame_count - 1].function->constants[key_idx].as.string;
                         struct_validations[i].rule_name = (char *)malloc(key->length + 1);
                         memcpy(struct_validations[i].rule_name, key->chars, key->length);
                         struct_validations[i].rule_name[key->length] = '\0';
                         struct_validations[i].rule_args = (Value *)malloc(sizeof(Value));
-                        struct_validations[i].rule_args[0] = READ_CONSTANT();
+                        uint16_t arg_idx = READ_SHORT();
+                        struct_validations[i].rule_args[0] = t->frames[t->frame_count - 1].function->constants[arg_idx];
                         struct_validations[i].rule_arg_count = 1;
                     }
                 }
@@ -3485,7 +3668,8 @@ bool task_run(VM *vm, Task *task) {
                 char **field_names = (char **)calloc(field_count, sizeof(char *));
 
                 for (int i = 0; i < field_count; i++) {
-                    ObjString *fname = READ_CONSTANT().as.string;
+                    uint16_t fname_idx = READ_SHORT();
+                    ObjString *fname = t->frames[t->frame_count - 1].function->constants[fname_idx].as.string;
                     field_names[i] = (char *)malloc(fname->length + 1);
                     memcpy(field_names[i], fname->chars, fname->length);
                     field_names[i][fname->length] = '\0';
@@ -3495,12 +3679,14 @@ bool task_run(VM *vm, Task *task) {
                     if (fcount > 0) {
                         field_validations[i] = (ValidationRule *)calloc(fcount, sizeof(ValidationRule));
                         for (int j = 0; j < fcount; j++) {
-                            ObjString *fkey = READ_CONSTANT().as.string;
+                            uint16_t fkey_idx = READ_SHORT();
+                            ObjString *fkey = t->frames[t->frame_count - 1].function->constants[fkey_idx].as.string;
                             field_validations[i][j].rule_name = (char *)malloc(fkey->length + 1);
                             memcpy(field_validations[i][j].rule_name, fkey->chars, fkey->length);
                             field_validations[i][j].rule_name[fkey->length] = '\0';
                             field_validations[i][j].rule_args = (Value *)malloc(sizeof(Value));
-                            field_validations[i][j].rule_args[0] = READ_CONSTANT();
+                            uint16_t farg_idx = READ_SHORT();
+                            field_validations[i][j].rule_args[0] = t->frames[t->frame_count - 1].function->constants[farg_idx];
                             field_validations[i][j].rule_arg_count = 1;
                         }
                     }
@@ -3585,9 +3771,10 @@ bool task_run(VM *vm, Task *task) {
                         /* Push message to actor's inbox */
                         if (!channel_try_send(actor->inbox.as.channel, val_tuple(msg_tuple))) {
                             /* Inbox full — discard msg allocations (GC will collect them)
-                             * and retry from the top */
+                             * and retry from the top. BC_DISPATCH is opcode(1) +
+                             * method_name constant idx(2) + arg_count(1) = 4 bytes. */
                             t->yielded = true;
-                            t->frames[t->frame_count - 1].ip -= 3;
+                            t->frames[t->frame_count - 1].ip -= 4;
                             break;
                         }
 
@@ -3605,9 +3792,9 @@ bool task_run(VM *vm, Task *task) {
                         t->stack_top -= (arg_count + 1);
                         PUSH(result);
                     } else {
-                        /* Not ready yet — yield and retry BC_DISPATCH */
+                        /* Not ready yet — yield and retry BC_DISPATCH (4-byte instruction) */
                         t->yielded = true;
-                        t->frames[t->frame_count - 1].ip -= 3;
+                        t->frames[t->frame_count - 1].ip -= 4;
                     }
                     break;
                 }
@@ -3627,8 +3814,77 @@ bool task_run(VM *vm, Task *task) {
                     return false;
                 }
                 Value *func_val = vm_find_dispatch(vm, type_name, method_name->chars);
+
+                /* Fallback: a VAL_STRUCT with no registered dispatch entry
+                 * but a same-named field holding a function/closure is a
+                 * plain Varian "namespace object" (e.g. built via
+                 * http.create_struct with function-valued fields), not a
+                 * registered impl type -- call the stored value directly
+                 * with just the given args. No implicit `self`: it's a
+                 * stored closure, not a method, so the receiver is dropped
+                 * rather than prepended. */
+                if (!func_val && obj.type == VAL_STRUCT) {
+                    ObjStruct *s = obj.as.structure;
+                    Value field_callee = val_nil();
+                    bool found_field = false;
+                    for (int i = 0; i < s->field_count; i++) {
+                        if (strcmp(s->field_names[i], method_name->chars) == 0 &&
+                            (s->fields[i].type == VAL_FUNCTION || s->fields[i].type == VAL_CLOSURE)) {
+                            field_callee = s->fields[i];
+                            found_field = true;
+                            break;
+                        }
+                    }
+                    if (found_field) {
+                        int obj_idx = t->stack_top - arg_count - 1;
+                        for (int i = 0; i < arg_count; i++) {
+                            t->stack[obj_idx + i] = t->stack[obj_idx + 1 + i];
+                        }
+                        t->stack_top--; /* obj slot removed -- no self for a stored closure */
+                        PUSH(field_callee);
+                        if (field_callee.type == VAL_FUNCTION) {
+                            ObjFunction *fn = field_callee.as.function;
+                            if (fn->arity != arg_count) {
+                                runtime_error(vm, "Function '%s' expects %d arguments but got %d",
+                                              method_name->chars, fn->arity, arg_count);
+                                return false;
+                            }
+                            if (t->frame_count >= TASK_FRAMES_MAX) {
+                                runtime_error(vm, "Stack overflow");
+                                return false;
+                            }
+                            CallFrame *new_frame = &t->frames[t->frame_count++];
+                            new_frame->function = fn;
+                            new_frame->closure = NULL;
+                            new_frame->ip = fn->code;
+                            new_frame->slots = &t->stack[t->stack_top - arg_count - 1];
+                            new_frame->return_base = t->stack_top - arg_count - 1;
+                        } else {
+                            ObjClosure *closure = field_callee.as.closure;
+                            ObjFunction *fn = closure->function;
+                            if (fn->arity != arg_count) {
+                                runtime_error(vm, "Function '%s' expects %d arguments but got %d",
+                                              method_name->chars, fn->arity, arg_count);
+                                return false;
+                            }
+                            if (t->frame_count >= TASK_FRAMES_MAX) {
+                                runtime_error(vm, "Stack overflow");
+                                return false;
+                            }
+                            CallFrame *new_frame = &t->frames[t->frame_count++];
+                            new_frame->function = fn;
+                            new_frame->closure = closure;
+                            new_frame->ip = fn->code;
+                            new_frame->slots = &t->stack[t->stack_top - arg_count - 1];
+                            new_frame->return_base = t->stack_top - arg_count - 1;
+                        }
+                        break;
+                    }
+                }
+
                 if (!func_val) {
-                    runtime_error(vm, "No method '%s' for type '%s'", method_name->chars, type_name);
+                    runtime_error(vm, "No method '%s' for type '%s'", method_name->chars,
+                                  type_name ? type_name : "(anonymous struct)");
                     return false;
                 }
                 Value callee = *func_val;
@@ -3774,10 +4030,12 @@ bool task_run(VM *vm, Task *task) {
 
                 if (t->try_count > 0) {
                     t->try_count--;
+                    int target_frame = t->try_stack[t->try_count].frame_index;
+                    t->frame_count = target_frame + 1;
                     t->stack_top = t->try_stack[t->try_count].stack_depth;
                     PUSH(err);
-                    t->frames[t->frame_count - 1].ip =
-                        t->frames[t->frame_count - 1].function->code +
+                    t->frames[target_frame].ip =
+                        t->frames[target_frame].function->code +
                         t->try_stack[t->try_count].catch_offset;
                 } else {
                     runtime_error(vm, "Unhandled exception");
@@ -3796,6 +4054,7 @@ bool task_run(VM *vm, Task *task) {
                 t->try_stack[t->try_count].catch_offset =
                     (int)(active->ip - active->function->code) + offset;
                 t->try_stack[t->try_count].stack_depth = t->stack_top;
+                t->try_stack[t->try_count].frame_index = t->frame_count - 1;
                 t->try_count++;
                 break;
             }
@@ -3812,10 +4071,26 @@ bool task_run(VM *vm, Task *task) {
                 if (obj.type == VAL_STRUCT) {
                     ObjStruct *s = obj.as.structure;
                     int found = -1;
-                    for (int i = 0; i < s->field_count; i++) {
-                        if (strcmp(s->field_names[i], name->chars) == 0) {
-                            found = i;
+                    /* Phase 3: check field cache first */
+                    uint32_t name_hash = hash_string(name->chars, name->length);
+                    for (int ci = 0; ci < s->field_cache_count; ci++) {
+                        if (s->field_cache[ci].hash == name_hash) {
+                            found = s->field_cache[ci].index;
                             break;
+                        }
+                    }
+                    if (found < 0) {
+                        for (int i = 0; i < s->field_count; i++) {
+                            if (strcmp(s->field_names[i], name->chars) == 0) {
+                                found = i;
+                                /* Cache it */
+                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
+                                    s->field_cache[s->field_cache_count].hash = name_hash;
+                                    s->field_cache[s->field_cache_count].index = i;
+                                    s->field_cache_count++;
+                                }
+                                break;
+                            }
                         }
                     }
                     if (found >= 0) {
@@ -3866,10 +4141,25 @@ bool task_run(VM *vm, Task *task) {
                 if (obj.type == VAL_STRUCT) {
                     ObjStruct *s = obj.as.structure;
                     int found = -1;
-                    for (int i = 0; i < s->field_count; i++) {
-                        if (strcmp(s->field_names[i], name->chars) == 0) {
-                            found = i;
+                    /* Phase 3: check field cache first */
+                    uint32_t name_hash = hash_string(name->chars, name->length);
+                    for (int ci = 0; ci < s->field_cache_count; ci++) {
+                        if (s->field_cache[ci].hash == name_hash) {
+                            found = s->field_cache[ci].index;
                             break;
+                        }
+                    }
+                    if (found < 0) {
+                        for (int i = 0; i < s->field_count; i++) {
+                            if (strcmp(s->field_names[i], name->chars) == 0) {
+                                found = i;
+                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
+                                    s->field_cache[s->field_cache_count].hash = name_hash;
+                                    s->field_cache[s->field_cache_count].index = i;
+                                    s->field_cache_count++;
+                                }
+                                break;
+                            }
                         }
                     }
                     if (found >= 0) {
@@ -4167,4 +4457,26 @@ void vm_free(VM *vm) {
 
     /* Close all loaded FFI library handles */
     ffi_close_all_libs();
+
+    /* Free the task free-list */
+    Task *ft = vm->free_tasks;
+    while (ft) {
+        Task *next = (Task *)ft->http_response_ssl;
+        free(ft->arena_base);
+        free(ft);
+        ft = next;
+    }
+    vm->free_tasks = NULL;
+
+    /* Free arena memory for any live tasks still in the tasks array */
+    for (int i = 0; i < vm->task_count; i++) {
+        free(vm->tasks[i]->arena_base);
+        vm->tasks[i]->arena_base = NULL;
+    }
+
+    /* Free the tasks array itself */
+    free(vm->tasks);
+    vm->tasks = NULL;
+    vm->task_count = 0;
+    vm->task_capacity = 0;
 }

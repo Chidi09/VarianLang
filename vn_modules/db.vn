@@ -59,6 +59,21 @@ fn run_postgres(bound, conn) {
     return postgres.query(conn, bound.sql, bound.params)
 }
 
+// Runs body(conn) inside a transaction that is ALWAYS rolled back, even on
+// success -- so a test can exercise real inserts/updates against a real
+// connection without leaving residue for the next test to trip over.
+fn test_transaction(conn, body) {
+    sqlite.query(conn, "BEGIN")
+    try {
+        let result = body(conn)
+        sqlite.query(conn, "ROLLBACK")
+        return result
+    } catch e {
+        sqlite.query(conn, "ROLLBACK")
+        throw(e)
+    }
+}
+
 // Fluent builder over compile_select — same comptime-safety guarantee:
 // every method only touches shape (table/fields/where field+op/limit/offset),
 // never a bound value, so a full builder chain ending in .build() can be

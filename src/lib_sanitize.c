@@ -80,11 +80,11 @@ static Value lib_sanitize_trim(VM *vm, int arg_count, Value *args) {
 }
 
 void lib_sanitize_init(VM *vm) {
-    ObjModule *mod = new_module("sanitize");
+    ObjModule *mod = new_module("_sanitize");
     mod->obj.next = vm->objects;
     vm->objects = (Obj *)mod;
-    define_global(vm, copy_string("sanitize", 8), val_module(mod));
-    vm_register_dispatch(vm, "sanitize", "strip_html",  val_native_fn((void *)lib_sanitize_strip_html));
-    vm_register_dispatch(vm, "sanitize", "escape_html", val_native_fn((void *)lib_sanitize_escape_html));
-    vm_register_dispatch(vm, "sanitize", "trim",         val_native_fn((void *)lib_sanitize_trim));
+    define_global(vm, copy_string("_sanitize", 9), val_module(mod));
+    vm_register_dispatch(vm, "_sanitize", "strip_html",  val_native_fn((void *)lib_sanitize_strip_html));
+    vm_register_dispatch(vm, "_sanitize", "escape_html", val_native_fn((void *)lib_sanitize_escape_html));
+    vm_register_dispatch(vm, "_sanitize", "trim",         val_native_fn((void *)lib_sanitize_trim));
 }

@@ -1,0 +1,14 @@
+// Cloud object storage (S3/R2/GCS) is intentionally NOT a native module --
+// there's no C code to maintain here. boto3 (or any other cloud SDK) is
+// already reachable through the python.run bridge (see docs/STDLIB.md),
+// so a thin Varian wrapper is all a real integration needs:
+//
+//   fn s3_put(bucket, key, body) {
+//       let s3 = python.run("boto3", "client", ["s3"])
+//       return python.run("boto3", "put_object", [s3, bucket, key, body])
+//   }
+//
+// This file is documentation-only (no live AWS credentials in this sandbox);
+// it intentionally does not execute python.run with real boto3 calls.
+print("see vn_modules/storage.vn for the local-filesystem backend;")
+print("for S3/R2/GCS, wrap python.run(\"boto3\", ...) the same way instead of writing new C.")

@@ -3,33 +3,47 @@
 #include <string.h>
 #include <dlfcn.h>
 #include <stdio.h>
+#include <pthread.h>
 
-/* ─── Library handle cache (linked list) ─── */
+/* ─── Library handle cache (linked list) ───
+ * Process-wide (not per-VM), so every cluster worker thread's independent
+ * VM instance shares this same cache -- a real data race if two worker
+ * threads' top-level scripts both load an FFI library around the same
+ * time during startup. Guarded by a mutex rather than duplicated per-VM
+ * since dlopen() handles are inherently process-global anyway. */
 static FFILibNode *lib_cache = NULL;
+static pthread_mutex_t lib_cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void *ffi_open_lib(const char *lib_name) {
+    pthread_mutex_lock(&lib_cache_lock);
+
     /* Check cache first */
     for (FFILibNode *node = lib_cache; node; node = node->next) {
-        if (strcmp(node->name, lib_name) == 0)
-            return node->handle;
+        if (strcmp(node->name, lib_name) == 0) {
+            void *cached = node->handle;
+            pthread_mutex_unlock(&lib_cache_lock);
+            return cached;
+        }
     }
 
     /* Try to open */
     void *handle = dlopen(lib_name, RTLD_LAZY | RTLD_LOCAL);
     if (!handle) {
         fprintf(stderr, "FFI: dlopen('%s') failed: %s\n", lib_name, dlerror());
+        pthread_mutex_unlock(&lib_cache_lock);
         return NULL;
     }
 
     /* Cache it */
     FFILibNode *node = (FFILibNode *)malloc(sizeof(FFILibNode));
-    if (!node) { dlclose(handle); return NULL; }
+    if (!node) { dlclose(handle); pthread_mutex_unlock(&lib_cache_lock); return NULL; }
     strncpy(node->name, lib_name, MAX_FFI_LIB_NAME - 1);
     node->name[MAX_FFI_LIB_NAME - 1] = '\0';
     node->handle = handle;
     node->next = lib_cache;
     lib_cache = node;
 
+    pthread_mutex_unlock(&lib_cache_lock);
     return handle;
 }
 

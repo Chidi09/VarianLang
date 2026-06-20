@@ -1,0 +1,14 @@
+// Test app.serve_static(prefix, directory): binary-safe file serving with
+// path-traversal protection. Run directly and hit with curl:
+//
+//   mkdir -p /tmp/my_static/css
+//   echo "body { color: orange; }" > /tmp/my_static/css/app.css
+//   ./vn examples/static_files_test.vn
+//   curl http://localhost:8950/static/css/app.css
+//   curl http://localhost:8950/static/../../../etc/passwd   # -> 403
+let app = new_app()
+app.serve_static("/static", "/tmp/my_static")
+app.get("/ping", | req | {
+    return Response { status: 200, body: "pong", content_type: "text/plain" }
+}, "ping")
+app.listen(8950)

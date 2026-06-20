@@ -11,6 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
 
 #ifndef VARIAN_VERSION
 #define VARIAN_VERSION "0.1.0"
@@ -176,12 +178,26 @@ static int run_source(const char *source, const char *filename) {
         for (int i = 0; i < chunk.count; i++) {
             printf("  %3d: 0x%02x", i, chunk.code[i]);
             if (chunk.code[i] == BC_CONSTANT) {
-                printf(" (constant %d)", chunk.code[i + 1]);
-            } else if (chunk.code[i] == BC_GET_GLOBAL || chunk.code[i] == BC_SET_GLOBAL || chunk.code[i] == BC_DEFINE_GLOBAL) {
-                int idx = chunk.code[i + 1];
+                int idx = (chunk.code[i + 1] << 8) | chunk.code[i + 2];
+                printf(" (constant %d)", idx);
+                i += 2;
+            } else if (chunk.code[i] == BC_CONSTANT_LONG) {
+                int idx = (chunk.code[i + 1] << 8) | chunk.code[i + 2];
+                printf(" (constant_long %d)", idx);
+                i += 2;
+            } else if (chunk.code[i] == BC_COMPTIME_EXEC) {
+                int result_idx = (chunk.code[i + 1] << 8) | chunk.code[i + 2];
+                int fn_idx = (chunk.code[i + 3] << 8) | chunk.code[i + 4];
+                printf(" (comptime result_idx=%d fn_idx=%d)", result_idx, fn_idx);
+                i += 4;
+            } else if (chunk.code[i] == BC_GET_GLOBAL || chunk.code[i] == BC_SET_GLOBAL || chunk.code[i] == BC_DEFINE_GLOBAL ||
+                       chunk.code[i] == BC_MEMBER || chunk.code[i] == BC_DISPATCH || chunk.code[i] == BC_REGISTER_METHOD ||
+                       chunk.code[i] == BC_STRUCT) {
+                int idx = (chunk.code[i + 1] << 8) | chunk.code[i + 2];
                 if (idx < chunk.constant_count && chunk.constants[idx].type == VAL_STRING) {
                     printf(" (%s)", chunk.constants[idx].as.string->chars);
                 }
+                i += 2;
             }
             printf("\n");
         }
@@ -248,8 +264,159 @@ static void print_help(const char *prog) {
     printf("  VN_DEBUG_BYTECODE  Print bytecode disassembly\n");
 }
 
+static void collect_fmt_files(const char *dir, char ***files, int *count, int *cap) {
+    DIR *d = opendir(dir);
+    if (!d) return;
+
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (entry->d_name[0] == '.') continue;
+
+        size_t dlen = strlen(dir);
+        size_t nlen = strlen(entry->d_name);
+        char *full = (char *)malloc(dlen + nlen + 2);
+        if (!full) continue;
+        memcpy(full, dir, dlen);
+        full[dlen] = '/';
+        memcpy(full + dlen + 1, entry->d_name, nlen);
+        full[dlen + 1 + nlen] = '\0';
+
+        struct stat st;
+        if (stat(full, &st) == -1) { free(full); continue; }
+
+        if (S_ISDIR(st.st_mode)) {
+            collect_fmt_files(full, files, count, cap);
+            free(full);
+        } else if (S_ISREG(st.st_mode)) {
+            bool matches = false;
+            if (nlen > 3 && strcmp(entry->d_name + nlen - 3, ".vn") == 0) {
+                matches = true;
+            } else if (nlen > 6 && strcmp(entry->d_name + nlen - 6, ".vhtml") == 0) {
+                matches = true;
+            }
+            if (matches) {
+                if (*count >= *cap) {
+                    *cap = *cap ? *cap * 2 : 16;
+                    *files = (char **)realloc(*files, (size_t)(*cap) * sizeof(char *));
+                }
+                (*files)[*count] = full;
+                (*count)++;
+            } else {
+                free(full);
+            }
+        } else {
+            free(full);
+        }
+    }
+    closedir(d);
+}
+
+static int process_fmt_file(const char *path, bool check_only, bool show_diff) {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "fmt: could not open '%s'\n", path);
+        return 1;
+    }
+    fseek(file, 0L, SEEK_END);
+    size_t size = (size_t)ftell(file);
+    rewind(file);
+    char *source = (char *)malloc(size + 1);
+    if (!source) { fclose(file); return 1; }
+    size_t nread = fread(source, 1, size, file);
+    source[nread] = '\0';
+    fclose(file);
+
+    int out_pos = 0;
+    char *out = fmt_format_source(source, size, &out_pos);
+    if (!out) {
+        free(source);
+        return 1;
+    }
+
+    bool is_different = (size != (size_t)out_pos || memcmp(source, out, size) != 0);
+
+    if (is_different) {
+        if (check_only) {
+            printf("%s\n", path);
+        }
+        if (show_diff) {
+            char temp_path[] = "/tmp/vn_fmt_XXXXXX";
+            int temp_fd = mkstemp(temp_path);
+            if (temp_fd != -1) {
+                ssize_t written = write(temp_fd, out, (size_t)out_pos);
+                (void)written;
+                close(temp_fd);
+                char cmd[2048];
+                snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", path, temp_path);
+                int rc = system(cmd);
+                (void)rc;
+                unlink(temp_path);
+            }
+        }
+        if (!check_only && !show_diff) {
+            FILE *outfile = fopen(path, "wb");
+            if (!outfile) {
+                fprintf(stderr, "fmt: could not write '%s'\n", path);
+                free(source);
+                free(out);
+                return 1;
+            }
+            fwrite(out, 1, (size_t)out_pos, outfile);
+            fclose(outfile);
+            printf("formatted %s\n", path);
+        }
+    }
+
+    free(source);
+    free(out);
+    return is_different ? 1 : 0;
+}
+
+static int process_fmt_stdin() {
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = malloc(cap);
+    if (!buf) return 1;
+    int c;
+    while ((c = getchar()) != EOF) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            buf = realloc(buf, cap);
+        }
+        buf[len++] = (char)c;
+    }
+    buf[len] = '\0';
+
+    int out_len = 0;
+    char *formatted = fmt_format_source(buf, len, &out_len);
+    free(buf);
+    if (!formatted) return 1;
+
+    fwrite(formatted, 1, out_len, stdout);
+    free(formatted);
+    return 0;
+}
+
 /* ─── Main ─── */
 int main(int argc, char *argv[]) {
+#ifdef VARIAN_AOT_STANDALONE
+    (void)argc; (void)argv;
+    VM vm;
+    memset(&vm, 0, sizeof(VM));
+    
+    Compiler comp;
+    memset(&comp, 0, sizeof(Compiler));
+    vm_init(&vm, &comp);
+    
+    extern ObjFunction *varian_aot_load(VM *vm);
+    vm.main_fn = varian_aot_load(&vm);
+    
+    bool success = vm_run(&vm, false);
+    
+    vm_free(&vm);
+    if (vm.compiler) free(vm.compiler);
+    return success ? 0 : 1;
+#else
     if (argc == 1) {
         repl();
         return 0;
@@ -261,12 +428,57 @@ int main(int argc, char *argv[]) {
     }
 
     if (strcmp(argv[1], "fmt") == 0) {
-        if (argc != 3) {
-            fprintf(stderr, "Usage: %s fmt <file.vn>\n", argv[0]);
+        const char *path = NULL;
+        bool check_only = false;
+        bool show_diff = false;
+        bool use_stdin = false;
+
+        for (int i = 2; i < argc; i++) {
+            if (strcmp(argv[i], "--check") == 0) {
+                check_only = true;
+            } else if (strcmp(argv[i], "--diff") == 0) {
+                show_diff = true;
+            } else if (strcmp(argv[i], "--stdin") == 0) {
+                use_stdin = true;
+            } else {
+                path = argv[i];
+            }
+        }
+
+        if (use_stdin) {
+            return process_fmt_stdin();
+        }
+
+        if (!path) {
+            path = ".";
+        }
+
+        struct stat st;
+        if (stat(path, &st) == -1) {
+            fprintf(stderr, "fmt: path '%s' does not exist\n", path);
             return 1;
         }
-        int result = fmt_format_file(argv[2]);
-        return result;
+
+        int diff_count = 0;
+        if (S_ISDIR(st.st_mode)) {
+            char **files = NULL;
+            int count = 0;
+            int file_cap = 0;
+            collect_fmt_files(path, &files, &count, &file_cap);
+
+            for (int i = 0; i < count; i++) {
+                diff_count += process_fmt_file(files[i], check_only, show_diff);
+                free(files[i]);
+            }
+            free(files);
+        } else {
+            diff_count += process_fmt_file(path, check_only, show_diff);
+        }
+
+        if (check_only && diff_count > 0) {
+            return 1;
+        }
+        return 0;
     }
 
     if (strcmp(argv[1], "test") == 0) {
@@ -308,6 +520,19 @@ int main(int argc, char *argv[]) {
         return pkg_wrap(argv[2]);
     }
 
+    if (strcmp(argv[1], "compile") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s compile <file.vn> [output.c]\n", argv[0]);
+            return 1;
+        }
+        const char *out_path = (argc >= 4) ? argv[3] : "aot_output.c";
+        char *source = read_file_with_modules(argv[2]);
+        if (!source) return 1;
+        int result = aot_compile(source, argv[2], out_path);
+        free(source);
+        return result;
+    }
+
     if (strcmp(argv[1], "run") == 0) {
         if (argc != 3) {
             fprintf(stderr, "Usage: %s run <file.vn>\n", argv[0]);
@@ -331,4 +556,5 @@ int main(int argc, char *argv[]) {
 
     fprintf(stderr, "Unknown command '%s'. Use '%s --help' for usage.\n", argv[1], argv[0]);
     return 1;
+#endif
 }

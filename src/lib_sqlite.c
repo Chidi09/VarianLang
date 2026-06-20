@@ -83,9 +83,22 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
     }
 
     // Fetch rows
-    int capacity = 8;
-    int count = 0;
-    Value *elements = malloc(sizeof(Value) * (size_t)capacity);
+    /* result_arr and each in-progress row struct are rooted on the current
+     * task's stack for the whole loop below: neither is reachable any other
+     * way (not returned yet, and the old plain-malloc `elements` staging
+     * buffer was never a GC root at all) while allocate_string() per column
+     * can trigger a GC cycle -- which would otherwise free rows already
+     * built (or the row currently being filled in) out from under this very
+     * loop. Reproduced as a real heap-use-after-free crash under load, not
+     * a theoretical concern -- see the matching fix in lib_validate.c. */
+    Task *self = vm->current_task;
+    ObjArray *result_arr = (ObjArray *)calloc(1, sizeof(ObjArray));
+    result_arr->obj.type = VAL_ARRAY;
+    result_arr->obj.next = vm->objects;
+    vm->objects = (Obj *)result_arr;
+    result_arr->capacity = 8;
+    result_arr->elements = malloc(sizeof(Value) * (size_t)result_arr->capacity);
+    self->stack[self->stack_top++] = val_array(result_arr);
 
     int rc = sqlite3_step(stmt);
     int cols = sqlite3_column_count(stmt);
@@ -95,6 +108,7 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
         s->obj.next = vm->objects;
         vm->objects = (Obj *)s;
         s->type_name = NULL;
+        self->stack[self->stack_top++] = val_struct(s);
 
         for (int c = 0; c < cols; c++) {
             s->field_names[c] = strdup(sqlite3_column_name(stmt, c));
@@ -111,30 +125,23 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
                 s->fields[c] = val_string(str);
             }
         }
+        self->stack_top--; /* pop s -- it's about to be rooted via result_arr instead */
 
-        if (count >= capacity) {
-            capacity *= 2;
-            elements = realloc(elements, sizeof(Value) * (size_t)capacity);
+        if (result_arr->count >= result_arr->capacity) {
+            result_arr->capacity *= 2;
+            result_arr->elements = realloc(result_arr->elements, sizeof(Value) * (size_t)result_arr->capacity);
         }
-        elements[count++] = val_struct(s);
+        result_arr->elements[result_arr->count++] = val_struct(s);
         rc = sqlite3_step(stmt);
     }
 
     sqlite3_finalize(stmt);
+    self->stack_top--; /* pop result_arr -- about to be returned (and re-pushed by the caller) */
 
     if (rc != SQLITE_DONE && rc != SQLITE_ROW) {
         runtime_error(vm, "sqlite.query() step failed: %s", sqlite3_errmsg(db));
-        free(elements);
         return val_nil();
     }
-
-    ObjArray *result_arr = (ObjArray *)calloc(1, sizeof(ObjArray));
-    result_arr->obj.type = VAL_ARRAY;
-    result_arr->obj.next = vm->objects;
-    vm->objects = (Obj *)result_arr;
-    result_arr->count = count;
-    result_arr->capacity = capacity;
-    result_arr->elements = elements;
 
     return val_array(result_arr);
 }

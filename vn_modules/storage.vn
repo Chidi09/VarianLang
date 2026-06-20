@@ -1,0 +1,57 @@
+// storage.vn - Key/value blob storage, local filesystem backend.
+//
+// `key` maps directly to a relative path under `base_dir` (default ".storage"),
+// created on first use. For S3/R2/GCS, there's no native module here -- use
+// the existing python.run bridge to call boto3 directly (see
+// examples/storage_s3_test.vn) rather than maintaining cloud SDK bindings in C.
+
+struct Storage { base_dir: string }
+
+fn new_storage(base_dir) {
+    return Storage { base_dir: base_dir }
+}
+
+let default_storage = Storage { base_dir: ".storage" }
+
+impl Storage {
+    fn _path(self, key) {
+        return self.base_dir + "/" + key
+    }
+
+    fn put(self, key, bytes) {
+        io.mkdir(self.base_dir)
+        return io.write_bytes(self._path(key), bytes)
+    }
+
+    fn get(self, key) {
+        return io.read_bytes(self._path(key))
+    }
+
+    fn exists(self, key) {
+        return io.exists(self._path(key))
+    }
+
+    fn delete(self, key) {
+        return io.delete(self._path(key))
+    }
+
+    fn list(self) {
+        let entries = io.list_dir(self.base_dir)
+        if entries == null {
+            return []
+        }
+        return entries
+    }
+}
+
+fn storage_put(key, bytes) {
+    return default_storage.put(key, bytes)
+}
+
+fn storage_get(key) {
+    return default_storage.get(key)
+}
+
+fn storage_delete(key) {
+    return default_storage.delete(key)
+}

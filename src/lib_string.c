@@ -118,6 +118,13 @@ static Value lib_string_split(VM *vm, int arg_count, Value *args) {
     ObjArray *arr = new_array();
     arr->obj.next = vm->objects;
     vm->objects = (Obj *)arr;
+    /* arr isn't reachable from any GC root until returned -- allocate_string
+     * per segment below can trigger a GC cycle that would otherwise free
+     * arr (and segments already split off) mid-loop. This is an extremely
+     * hot path (e.g. every request's path gets string.split("/")'d by
+     * Zenith's router), so it's an easy one to hit under real load. */
+    Task *self = vm->current_task;
+    self->stack[self->stack_top++] = val_array(arr);
     int start = 0;
     while (start <= s->length) {
         int end = start;
@@ -137,6 +144,7 @@ static Value lib_string_split(VM *vm, int arg_count, Value *args) {
         start = end + delim_len;
         if (delim_len == 0) break;
     }
+    self->stack_top--;
     return val_array(arr);
 }
 
@@ -186,6 +194,35 @@ static Value lib_string_replace(VM *vm, int arg_count, Value *args) {
     return val_string(result);
 }
 
+static Value lib_string_code_at(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_INT)
+        return val_nil();
+    ObjString *s = args[0].as.string;
+    int idx = (int)args[1].as.integer;
+    if (idx < 0 || idx >= s->length) return val_nil();
+    return val_int((unsigned char)s->chars[idx]);
+}
+
+static Value lib_string_from_codes(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_ARRAY)
+        return val_nil();
+    ObjArray *arr = args[1].as.array;
+    char *buf = (char *)malloc((size_t)arr->count + 1);
+    if (!buf) return val_nil();
+    for (int i = 0; i < arr->count; i++) {
+        if (arr->elements[i].type == VAL_INT) {
+            buf[i] = (char)(unsigned char)arr->elements[i].as.integer;
+        } else {
+            buf[i] = '\0';
+        }
+    }
+    buf[arr->count] = '\0';
+    ObjString *result = allocate_string(vm, buf, arr->count);
+    free(buf);
+    return val_string(result);
+}
+
 void lib_string_init(VM *vm) {
     vm_register_dispatch(vm, "string", "len",          val_native_fn((void *)lib_string_len));
     vm_register_dispatch(vm, "string", "upper",        val_native_fn((void *)lib_string_upper));
@@ -195,6 +232,8 @@ void lib_string_init(VM *vm) {
     vm_register_dispatch(vm, "string", "split",        val_native_fn((void *)lib_string_split));
     vm_register_dispatch(vm, "string", "starts_with",  val_native_fn((void *)lib_string_starts_with));
     vm_register_dispatch(vm, "string", "replace",      val_native_fn((void *)lib_string_replace));
+    vm_register_dispatch(vm, "string", "code_at",      val_native_fn((void *)lib_string_code_at));
+    vm_register_dispatch(vm, "string", "from_codes",   val_native_fn((void *)lib_string_from_codes));
 
     vm_register_dispatch(vm, "array", "len",  val_native_fn((void *)lib_array_len));
     vm_register_dispatch(vm, "array", "push", val_native_fn((void *)lib_array_push));

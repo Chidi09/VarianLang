@@ -1,0 +1,3 @@
+Zenith running on http://localhost: 18002 with 8 worker process(es)
+  http.serve: listening on port 18002
+  http.serve: 8 worker thread(s) on port 18002 (pid 1961404)

@@ -29,7 +29,11 @@ for i in 0..rows.len() {
 }
 
 // Binding the wrong number of params is rejected before it ever reaches SQL
-let mismatched = bind(compiled, [1])
-print("should not print")
+try {
+    let mismatched = bind(compiled, [1])
+    print("should not print")
+} catch e {
+    print("Caught expected mismatch error:", e)
+}
 
 sqlite.close(conn)

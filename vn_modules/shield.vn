@@ -1,0 +1,143 @@
+// shield.vn - Security and protection middleware for Zenith
+
+fn _join_strings(arr, sep) {
+    let res = ""
+    for i in 0..arr.len() {
+        if i > 0 {
+            res = res + sep
+        }
+        res = res + arr[i]
+    }
+    return res
+}
+
+// ─── CORS Middleware ───
+fn cors(allow_origins, allow_methods, allow_headers) {
+    return |req, next| {
+        let origins_str = _join_strings(allow_origins, ", ")
+        let methods_str = _join_strings(allow_methods, ", ")
+        let headers_str = _join_strings(allow_headers, ", ")
+
+        let cors_headers = http.create_struct(
+            ["access_control_allow_origin", "access_control_allow_methods", "access_control_allow_headers"],
+            [origins_str, methods_str, headers_str]
+        )
+
+        if req.method == "OPTIONS" {
+            return http.create_struct(
+                ["status", "body", "content_type", "headers"],
+                [204, "", "text/plain", cors_headers]
+            )
+        }
+
+        let resp = next(req)
+        
+        return http.create_struct(
+            ["status", "body", "content_type", "headers"],
+            [resp.status, resp.body, resp.content_type, cors_headers]
+        )
+    };
+}
+
+// ─── Rate Limiting Middleware ───
+actor RateLimiterActor {
+    ips: array = [],
+    tokens: array = [],
+    last_updated: array = [],
+    max_tokens: int = 60,
+    window_ms: int = 60000,
+
+    fn init(self, max_t, win_ms) {
+        self.ips = []
+        self.tokens = []
+        self.last_updated = []
+        self.max_tokens = max_t
+        self.window_ms = win_ms
+    }
+
+    fn check_limit(self, ip) -> bool {
+        print("check_limit: entering, ip is " + ip)
+        let now = time.now_ms()
+        let idx = -1
+        print("check_limit: ips len is " + self.ips.len())
+        for i in 0..self.ips.len() {
+            if self.ips[i] == ip {
+                idx = i
+                break
+            }
+        }
+        print("check_limit: idx is " + idx)
+
+        if idx == -1 {
+            print("check_limit: path idx == -1")
+            self.ips = self.ips.push(ip)
+            self.tokens = self.tokens.push(self.max_tokens - 1)
+            self.last_updated = self.last_updated.push(now)
+            print("check_limit: return true from idx == -1")
+            return true
+        }
+
+        print("check_limit: path idx != -1")
+        let elapsed = now - self.last_updated[idx]
+        print("check_limit: elapsed is " + elapsed)
+        let regen = elapsed * self.max_tokens / self.window_ms
+        print("check_limit: regen is " + regen)
+        let current_tokens = self.tokens[idx] + regen
+        print("check_limit: current_tokens is " + current_tokens)
+        if current_tokens > self.max_tokens {
+            current_tokens = self.max_tokens
+        }
+
+        if current_tokens >= 1 {
+            print("check_limit: mutating self.tokens...")
+            self.tokens[idx] = current_tokens - 1
+            print("check_limit: mutating self.last_updated...")
+            self.last_updated[idx] = now
+            print("check_limit: mutations complete, returning true")
+            return true
+        } else {
+            print("check_limit: limit exceeded, returning false")
+            return false
+        }
+    }
+}
+
+fn rate_limit(max_reqs, window_ms) {
+    let limiter = RateLimiterActor.spawn()
+    limiter.init(max_reqs, window_ms)
+
+    return |req, next| {
+        let client_ip = req.ip
+        print("rate_limit: req.ip is " + client_ip)
+        print("rate_limit: limiter is " + limiter)
+        if !limiter.check_limit(client_ip) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [429, "Too Many Requests", "text/plain"]
+            )
+        }
+        return next(req)
+    };
+}
+
+// ─── CSRF Protection Middleware ───
+fn csrf() {
+    return |req, next| {
+        print("csrf: entering, method is " + req.method)
+        if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
+            return next(req)
+        }
+        
+        print("csrf: req.headers is " + req.headers)
+        let token = req.headers?.x_csrf_token
+        print("csrf: token is " + token)
+        if token == null || token == "" {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: Missing CSRF Token", "text/plain"]
+            )
+        }
+        
+        return next(req)
+    };
+}

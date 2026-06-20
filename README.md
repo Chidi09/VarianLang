@@ -6,9 +6,7 @@ A blazing fast, concurrent, systems-level programming language built from scratc
 Varian doesn't force you to rewrite the world. It comes built-in with a zero-overhead **C FFI** and a fully integrated **Python Bridge**. You can import and use any Python package (like NumPy or PyTorch) seamlessly as if it were written in Varian.
 
 ```varian
-import python
-
-fn array(args: any) -> any {
+fn array(args) {
     return python.run("numpy", "array", [args])
 }
 ```
@@ -20,26 +18,30 @@ Say goodbye to mutex locks and race conditions. Varian uses a cooperative spin-y
 
 ```varian
 actor Counter {
-    count: int = 0
-    fn increment() { count += 1 }
-    fn get() -> int { return count }
+    count: int = 0,
+    fn increment(self) { self.count = self.count + 1 }
+    fn get(self) -> int { return self.count }
 }
 
-c = Counter.spawn()
-task.spawn(fn() { c.increment() })
+let c = Counter.spawn()
+c.increment()
+print(c.get())
 ```
 
 ### 🌐 The Zenith Web Framework
-Varian includes `Zenith`, a blazing-fast, non-blocking HTTP web framework powered by native POSIX sockets deeply integrated into Varian's task scheduler.
+
+<p align="center">
+  <img src="docs/zenith_logo.png" alt="Zenith Logo" width="300" />
+</p>
+
+Varian includes `Zenith`, a blazing-fast, non-blocking HTTP web framework powered by native POSIX sockets, `io_uring` for zero-copy I/O, per-request zero-GC arena allocators, and AOT (Ahead-of-Time) compilation. It is deeply integrated into Varian's task scheduler.
 
 ```varian
-import zenith
+let app = new_app()
 
-app = zenith.ZenithApp.spawn()
-
-app.get("/", fn(req) {
-    return "Hello from Zenith!"
-})
+app.get("/", |req| {
+    return Response { status: 200, body: "Hello from Zenith!", content_type: "text/plain" }
+}, "Root endpoint")
 
 app.listen(3000)
 ```
@@ -70,8 +72,19 @@ fn fetch_data() { ... }
 ./vn run app.vn         # Execute a file
 ./vn fmt .              # Format all code
 ./vn test .             # Run the test suite
+./vn lint .             # Static analysis: correctness, security, performance
 ./vn wrap python:math   # Generate a native Varian wrapper for Python's math module
 ```
+
+## Documentation
+
+- [`docs/LANGUAGE.md`](docs/LANGUAGE.md) — core language reference (types, functions/
+  closures, structs, generics, enums, traits, error handling, decorators, comptime, FFI)
+- [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) — tasks, channels, actors
+- [`docs/STDLIB.md`](docs/STDLIB.md) — native modules (`math`, `string`, `sqlite`,
+  `http`, `auth`, `validate`, `json_encode`/`decode`, the Python bridge, FFI)
+- [`docs/ZENITH.md`](docs/ZENITH.md) — the Zenith web framework and the comptime ORM
+- [`docs/TOOLING.md`](docs/TOOLING.md) — the `vn` CLI in full
 
 ## Project Status
 We are currently progressing through the **Varian Architecture Roadmap**:
@@ -80,7 +93,8 @@ We are currently progressing through the **Varian Architecture Roadmap**:
 - [x] **Phase 3:** The Bridge System (FFI & Python)
 - [x] **Phase 4:** Concurrency & Distributed Architecture (Actors/Tasks/Channels)
 - [x] **Phase 5:** The High-Fidelity Toolchain (`vn fmt`, `vn test`, `vn pkg`)
-- [ ] **Phase 6:** Production Readiness & Observability (`vn shield`, CI/CD)
+- [x] **Phase 6:** AOT Compilation & Zenith Ultra Performance (`io_uring`, zero-copy, zero-GC handlers)
+- [ ] **Phase 7:** Production Readiness & Observability (`vn shield`, CI/CD)
 
 ## Architecture
 

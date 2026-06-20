@@ -1,0 +1,20 @@
+// Fixture for `vn lint --only style` (D4): unused parameter, long function,
+// deep nesting. Deliberate violations -- this file is not meant to "pass".
+
+fn greet(name, unused_title) {
+    print("Hello, " + name)
+}
+
+fn deeply_nested(x) {
+    if x > 0 {
+        if x > 1 {
+            if x > 2 {
+                if x > 3 {
+                    if x > 4 {
+                        print("very nested")
+                    }
+                }
+            }
+        }
+    }
+}

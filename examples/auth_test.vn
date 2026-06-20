@@ -1,16 +1,52 @@
-// Test auth module: hashing and JWT
-let hash = auth.hash_sha256("hello")
-print("SHA256: " + hash)
+// Test Authentication Module
 
-struct Payload {
-    user_id: int,
-    role: string
-}
-let payload = Payload { user_id: 42, role: "admin" }
-let token = auth.sign_jwt(payload, "mysecret")
+// Test 1: Password hashing and verification
+let pass = "my_super_secret_password"
+print("Hashing password...")
+let hash = zenith_auth.hash_password(pass)
+print("Hash: " + hash)
+
+let valid = zenith_auth.verify_password(pass, hash)
+let invalid = zenith_auth.verify_password("wrong_password", hash)
+print("Verify valid password: " + valid)
+print("Verify invalid password: " + invalid)
+
+// Test 2: JWT signing and verification
+let secret = "jwt_secret_key_12345"
+let payload = http.create_struct(
+    ["user_id", "username", "role"],
+    [101, "johndoe", "admin"]
+)
+print("Signing JWT...")
+let token = auth.sign_jwt(payload, secret)
 print("JWT: " + token)
 
-let decoded = auth.verify_jwt(token, "mysecret")
-print(decoded.role)
-print(decoded.user_id)
-print("auth module: all tests passed")
+let verified_payload = auth.verify_jwt(token, secret)
+if (verified_payload != null) {
+    print("JWT Verified!")
+    print("Username: " + verified_payload.username)
+    print("Role: " + verified_payload.role)
+} else {
+    print("JWT Verification failed!")
+}
+
+// Test 3: JWT Middleware integration
+let jwt_mw = zenith_auth.jwt(secret)
+
+// Simulated request with valid token
+let mock_headers = http.create_struct(
+    ["authorization"],
+    ["Bearer " + token]
+)
+let req = http.test_request("GET", "/protected", "", mock_headers)
+
+let next_mw = |r| {
+    print("Inside protected route handler.")
+    print("Authenticated User: " + r.user.username)
+    print("Authenticated Role: " + r.user.role)
+    return http.create_struct(["status", "body"], [200, "OK"])
+}
+
+print("Running JWT Middleware...")
+let res = jwt_mw(req, next_mw)
+print("Response status: " + res.status)

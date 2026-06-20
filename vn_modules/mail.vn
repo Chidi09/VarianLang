@@ -1,0 +1,31 @@
+// mail.vn - Send email two ways:
+//   1. mail.send_smtp(...) -- raw SMTP, for a local dev relay (mailpit/MailHog)
+//      or an internal unauthenticated relay. No TLS/AUTH support.
+//   2. mail.send_resend(...) -- HTTP API via Resend, using http.post. This is
+//      the path for any real provider (Resend, SendGrid, Postmark, ...) since
+//      they all just want a POST with a Bearer token and a JSON body — the
+//      mechanism doesn't need new native code, just a different vn_modules
+//      wrapper per provider built on the same http.post primitive.
+
+struct MailResult { ok: bool, body }
+
+fn send_smtp(host, port, from, to, subject, body) {
+    let ok = smtp.send(host, port, from, to, subject, body)
+    return MailResult { ok: ok, body: null }
+}
+
+// Resend's HTTP API. http.post doesn't expose the response status code, so
+// `ok` here only means "got a response back" -- inspect `.body` yourself for
+// Resend's own success/error shape (a real `id` field vs. an error message).
+fn send_resend(api_key, from, to, subject, body) {
+    let headers = [
+        "Authorization: Bearer " + api_key,
+        "Content-Type: application/json"
+    ]
+    let payload = http.create_struct(
+        ["from", "to", "subject", "text"],
+        [from, [to], subject, body]
+    )
+    let resp = http.post("https://api.resend.com/emails", headers, json_encode(payload))
+    return MailResult { ok: resp != null, body: resp }
+}

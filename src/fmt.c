@@ -302,22 +302,7 @@ static bool fmt_is_opening_brace_keyword(const char *start, int length) {
 }
 
 /* ─── Formatter Engine ─── */
-int fmt_format_file(const char *path) {
-    /* Read source */
-    FILE *file = fopen(path, "rb");
-    if (!file) {
-        fprintf(stderr, "fmt: could not open '%s'\n", path);
-        return 1;
-    }
-    fseek(file, 0L, SEEK_END);
-    size_t size = (size_t)ftell(file);
-    rewind(file);
-    char *source = (char *)malloc(size + 1);
-    if (!source) { fclose(file); return 1; }
-    size_t nread = fread(source, 1, size, file);
-    source[nread] = '\0';
-    fclose(file);
-
+char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
     /* Scan all tokens first */
     FmtScanner scanner;
     fmt_scanner_init(&scanner, source);
@@ -334,6 +319,7 @@ int fmt_format_file(const char *path) {
     /* Build output */
     size_t out_cap = size * 2 + 4096;
     char *out = (char *)calloc(out_cap, 1);
+    if (!out) return NULL;
     int out_pos = 0;
     int indent = 0;
     bool need_indent = true;
@@ -342,6 +328,7 @@ int fmt_format_file(const char *path) {
 
     /* Track previous significant token for spacing */
     FmtToken prev;
+
     prev.type = FMT_NEWLINE;
     prev.start = NULL;
     prev.length = 0;
@@ -734,18 +721,38 @@ int fmt_format_file(const char *path) {
     if (out_pos > 0 && out[out_pos - 1] == '\n') out_pos--;
     EMITS("\n");
 
-    /* Write output back to file */
+    *out_pos_ret = out_pos;
+    return out;
+}
+
+int fmt_format_file(const char *path) {
+    FILE *file = fopen(path, "rb");
+    if (!file) {
+        fprintf(stderr, "fmt: could not open '%s'\n", path);
+        return 1;
+    }
+    fseek(file, 0L, SEEK_END);
+    size_t size = (size_t)ftell(file);
+    rewind(file);
+    char *source = (char *)malloc(size + 1);
+    if (!source) { fclose(file); return 1; }
+    size_t nread = fread(source, 1, size, file);
+    source[nread] = '\0';
+    fclose(file);
+
+    int out_pos = 0;
+    char *out = fmt_format_source(source, size, &out_pos);
+    free(source);
+    if (!out) return 1;
+
     FILE *outfile = fopen(path, "wb");
     if (!outfile) {
         fprintf(stderr, "fmt: could not write '%s'\n", path);
-        free(source);
         free(out);
         return 1;
     }
     fwrite(out, 1, (size_t)out_pos, outfile);
     fclose(outfile);
-
-    free(source);
     free(out);
     printf("formatted %s\n", path);
     return 0;

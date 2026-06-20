@@ -192,6 +192,10 @@ struct ObjTuple {
     int count;
 };
 
+struct VM;
+struct Task;
+typedef void (*AotFunc)(struct VM *vm, struct Task *t);
+
 struct ObjFunction {
     Obj obj;
     int arity;
@@ -207,6 +211,7 @@ struct ObjFunction {
     int *rle_lines;
     int *rle_counts;
     int rle_count;
+    AotFunc aot_func;
 };
 
 struct ObjClosure {
@@ -304,6 +309,14 @@ typedef struct {
     int rule_arg_count;
 } ValidationRule;
 
+/* ─── Struct field cache (Phase 3: O(1) property access) ─── */
+#define STRUCT_CACHE_SIZE 32
+
+typedef struct {
+    uint32_t hash;
+    int index;
+} FieldCacheEntry;
+
 /* ─── Struct ─── */
 struct ObjStruct {
     Obj obj;
@@ -311,6 +324,8 @@ struct ObjStruct {
     Value *fields;
     int field_count;
     char *type_name;  /* for method dispatch */
+    FieldCacheEntry field_cache[STRUCT_CACHE_SIZE]; /* Phase 3: O(1) field lookup */
+    int field_cache_count;
     /* Validation metadata */
     ValidationRule **field_validations;  /* parallel to field_names, array of ValidationRule* per field */
     int *field_validation_counts;        /* number of validation rules per field */
@@ -392,6 +407,7 @@ bool compiler_compile(Compiler *compiler);
 typedef struct {
     int catch_offset;
     int stack_depth;
+    int frame_index;
 } TryInfo;
 
 typedef struct {
@@ -432,6 +448,30 @@ struct Task {
     uint64_t cache_result_key;
     int    http_listen_fd;   /* -1 = not an HTTP server, otherwise listen socket fd */
     double wakeup_time;      /* 0 = not waiting, otherwise absolute time to wake */
+    int    http_response_fd; /* -1 = not a long-lived HTTP handler task; otherwise the
+                                 client fd to finalize (send response if not _keep_open,
+                                 then close) once this task actually finishes -- see
+                                 call_handler()/the round-robin loop's finalization check
+                                 in vm_run for why a handler that calls task.yield()
+                                 (e.g. a WebSocket read loop) needs this instead of being
+                                 torn down as soon as the first task_run() call yields. */
+    void  *http_response_ssl; /* opaque to the VM (an OpenSSL SSL*, cast by lib_http.c) --
+                                 companion to http_response_fd for a deferred handler on a
+                                 TLS connection; NULL for plain HTTP. */
+    void  *http_pending_conns; /* opaque to the VM -- owned and cast by lib_http.c.
+                                  Holds the set of accepted-but-not-yet-fully-read or
+                                  kept-alive connections this task's http.serve() is
+                                  multiplexing, so a slow client or a persistent
+                                  connection's gap between requests never blocks any
+                                  other connection (or the rest of the VM). */
+    /* Phase 2: per-request arena allocator — a fixed-size bump arena that
+     * bypasses malloc/free and the GC entirely for ephemeral objects created
+     * during HTTP handler execution. Reset to zero when the task is recycled
+     * to the free-list. */
+#define TASK_ARENA_SIZE (64 * 1024)  /* 64KB per-task arena */
+    char  *arena_base;
+    size_t arena_offset;
+    bool   use_arena;
 };
 
 /* ─── Actor Field Registry (populated at runtime) ─── */
@@ -464,7 +504,7 @@ typedef struct {
 #define STACK_MAX 4096
 #define FRAMES_MAX 256
 
-typedef struct {
+typedef struct VM {
     Task **tasks;
     int    task_count;
     int    task_capacity;
@@ -516,6 +556,22 @@ typedef struct {
     int test_fail_count;
     /* Validation registry */
     ValidationRegistry validation_registry;
+    /* Set by a native function (e.g. http.serve()'s poll/accept loop) when
+     * it did real I/O work this tick -- a native event-loop function like
+     * http.serve() yields by rewinding its own bytecode IP back to the same
+     * retry instruction every tick, so the round-robin scheduler's normal
+     * "did this task's IP move" progress check can never see it as having
+     * done anything, even when it just accepted connections and served a
+     * full batch of requests. Without this flag the scheduler falls back
+     * to its idle-backoff sleep on literally every tick, capping throughput
+     * to the sleep interval regardless of load -- this was a real, measured
+     * ~40ms-per-request latency floor under wrk, not a rounding error. */
+    bool io_activity_this_tick;
+
+    /* ─── Phase 1: Task free-list ───
+     * Linked list of dead Task structs ready for reuse, avoiding calloc/free
+     * churn on every request handler invocation. */
+    Task *free_tasks;
 } VM;
 
 void vm_init(VM *vm, Compiler *compiler);
@@ -523,6 +579,7 @@ void vm_init(VM *vm, Compiler *compiler);
 /* Run a chunk of bytecode.  If run_tests is true, also execute registered tests.
    Returns true if no errors occurred during main execution AND all tests passed. */
 bool vm_run(VM *vm, bool run_tests);
+int aot_compile(const char *source, const char *filename, const char *out_path);
 
 /* Execute a task's bytecode synchronously (used by native functions). */
 bool task_run(VM *vm, Task *task);
@@ -530,19 +587,41 @@ bool task_run(VM *vm, Task *task);
 /* Free heap objects */
 void vm_free(VM *vm);
 
+/* Set by main.c before the top-level vm_run() for "vn <file>"/"vn run <file>".
+ * Used by lib_http.c's cluster worker threads to independently re-parse and
+ * re-compile the same script into their own private VM instance (each
+ * worker thread gets a fully isolated heap/GC -- no shared mutable VM
+ * state across threads at all, so no locking is needed anywhere). */
+extern const char *g_varian_script_path;
+
 /* Native function type: receives arg array, returns Value */
 typedef Value (*NativeFn)(VM *vm, int arg_count, Value *args);
 
 /* Allocation / task management (requires VM to be fully defined) */
 ObjString *allocate_string(VM *vm, const char *chars, int length);
 Task *task_new(VM *vm);
+void vm_register_task(VM *vm, Task *t);
+
+/* Phase 2: per-request arena (used by lib_http.c and vm.c) */
+void *task_arena_alloc(Task *t, size_t size);
+void  task_arena_enable(Task *t);
 
 /* Error reporting (used by lib_*.c) */
 void runtime_error(VM *vm, const char *format, ...);
 
 /* Module / dispatch registration (used by lib_*.c) */
 void define_global(VM *vm, ObjString *name, Value value);
+Value get_global(VM *vm, ObjString *name);
+void set_global(VM *vm, ObjString *name, Value value);
 void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func);
 Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
+
+Value metadata_get(Value metadata, const char *key);
+bool channel_try_send(ObjChannel *ch, Value val);
+bool channel_try_receive(ObjChannel *ch, Value *result);
+Value actor_spawn_native(VM *vm, int arg_count, Value *args);
+void cache_map_put(VM *vm, uint64_t key_hash, Value result);
+uint32_t hash_string(const char *key, int length);
+bool run_struct_validations(VM *vm, ObjStruct *s);
 
 #endif /* VM_H */

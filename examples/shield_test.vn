@@ -1,0 +1,73 @@
+// examples/shield_test.vn - Test CORS, Rate Limiting, and CSRF middlewares
+
+let app = new_app()
+
+// 1. Add CORS middleware
+app.add_middleware(cors(["http://localhost:3000"], ["GET", "POST"], ["Content-Type", "X-CSRF-Token"]))
+
+let global_limiter = RateLimiterActor.spawn()
+global_limiter.init(3, 10000)
+
+app.add_middleware(|req, next| {
+    let client_ip = req.ip
+    if !global_limiter.check_limit(client_ip) {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [429, "Too Many Requests", "text/plain"]
+        )
+    }
+    return next(req)
+})
+
+// 3. Add CSRF protection
+app.add_middleware(csrf())
+
+app.get("/", |req| {
+    return Response { status: 200, body: "Success", content_type: "text/plain" }
+}, "Root")
+
+app.post("/mutate", |req| {
+    print("handler: entering /mutate")
+    return Response { status: 200, body: "Mutated", content_type: "text/plain" }
+}, "Mutate")
+
+// ─── Test CORS ───
+print("--- Testing CORS ---")
+// Test OPTIONS preflight
+let options_req = http.test_request("OPTIONS", "/", "", null)
+let options_resp = app.handle(options_req)
+print("OPTIONS Status: " + options_resp.status)
+print("CORS Allow Origin: " + options_resp.headers.access_control_allow_origin)
+
+// Test GET response CORS headers
+let get_req = http.test_request("GET", "/", "", null)
+let get_resp = app.handle(get_req)
+print("GET Status: " + get_resp.status)
+print("GET CORS Header: " + get_resp.headers.access_control_allow_origin)
+
+// ─── Testing CSRF ───
+print("--- Testing CSRF ---")
+// POST without CSRF token
+let post_req1 = http.test_request("POST", "/mutate", "", null)
+let post_resp1 = app.handle(post_req1)
+print("POST No Token Status: " + post_resp1.status)
+
+// POST with CSRF token
+print("Creating csrf_headers...")
+let csrf_headers = http.create_struct(["x_csrf_token"], ["my_secret_token"])
+print("Creating post_req2...")
+let post_req2 = http.test_request("POST", "/mutate", "", csrf_headers)
+print("Handling post_req2...")
+let post_resp2 = app.handle(post_req2)
+print("POST With Token Status: " + post_resp2.status)
+
+// ─── Testing Rate Limiting ───
+print("--- Testing Rate Limiting ---")
+// We have made:
+// 1. GET / (1/3)
+// 2. POST /mutate (no token, blocked by CSRF but consumes rate limit rate) (2/3)
+// 3. POST /mutate (token, allowed, 3/3)
+// Next request should hit 429
+let get_req2 = http.test_request("GET", "/", "", null)
+let get_resp2 = app.handle(get_req2)
+print("GET 4th Request Status: " + get_resp2.status)

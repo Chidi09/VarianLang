@@ -1,0 +1,80 @@
+// observe.vn - Structured logging + a Prometheus /metrics route helper.
+// Pure Varian: logging is JSON lines to stdout, metrics formatting is plain
+// string building. No native code needed -- this is a documented pattern on
+// top of time.now_iso8601() / json_encode() / http.create_struct(), all of
+// which already exist.
+
+struct Logger { name: string }
+
+fn new_logger(name) {
+    return Logger { name: name }
+}
+
+let log = Logger { name: "app" }
+
+impl Logger {
+    fn _emit(self, level, msg, field_keys, field_values) {
+        let keys = ["level", "logger", "msg", "ts"]
+        let values = [level, self.name, msg, time.now_iso8601()]
+        for i in 0..field_keys.len() {
+            keys = keys.push(field_keys[i])
+            values = values.push(field_values[i])
+        }
+        print(json_encode(http.create_struct(keys, values)))
+    }
+
+    fn info(self, msg) {
+        self._emit("info", msg, [], [])
+    }
+    fn warn(self, msg) {
+        self._emit("warn", msg, [], [])
+    }
+    fn error(self, msg) {
+        self._emit("error", msg, [], [])
+    }
+
+    // Structured variants: extra context as parallel key/value arrays,
+    // e.g. log.info_with("request handled", ["status", "path"], [200, "/"])
+    fn info_with(self, msg, field_keys, field_values) {
+        self._emit("info", msg, field_keys, field_values)
+    }
+    fn warn_with(self, msg, field_keys, field_values) {
+        self._emit("warn", msg, field_keys, field_values)
+    }
+    fn error_with(self, msg, field_keys, field_values) {
+        self._emit("error", msg, field_keys, field_values)
+    }
+}
+
+// ─── Prometheus /metrics ───
+//
+// counter_names/counter_values are parallel arrays -- build them from
+// whatever in-memory struct or Actor you're already tracking counts with.
+fn metrics_text(counter_names, counter_values) {
+    let out = ""
+    for i in 0..counter_names.len() {
+        let name = counter_names[i]
+        out = out + "# HELP " + name + " " + name + " total\n"
+        out = out + "# TYPE " + name + " counter\n"
+        out = out + name + " " + counter_values[i] + "\n"
+    }
+    return out
+}
+
+// Drop straight into a ZenithApp: app.get("/metrics", metrics_handler(names, values), "Prometheus metrics")
+//
+// Built via http.create_struct rather than a `Response { ... }` literal:
+// vn_modules/*.vn files are concatenated alphabetically (see docs/TOOLING.md),
+// so observe.vn loads before zenith.vn -- a literal naming the `Response`
+// struct here would reference a type that isn't registered with the parser
+// yet. http.create_struct sidesteps that since http.serve()'s response
+// writer only looks at field names ("status"/"body"/"content_type"), not
+// the struct's type name.
+fn metrics_handler(counter_names, counter_values) {
+    return | req | {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [200, metrics_text(counter_names, counter_values), "text/plain; version=0.0.4"]
+        )
+    }
+}

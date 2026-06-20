@@ -1,8 +1,9 @@
 #ifndef FMT_H
 #define FMT_H
 
-/* Format a Varian source file in-place.
-   Returns 0 on success, 1 on error. */
+#include <stddef.h>
+
+char *fmt_format_source(const char *source, size_t size, int *out_pos_ret);
 int fmt_format_file(const char *path);
 
 #endif /* FMT_H */

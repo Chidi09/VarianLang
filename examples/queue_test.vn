@@ -1,12 +1,12 @@
 // Test queue module: cron and WorkerPool
 
 // Start a cron job that prints every 200ms
-cron(200, | | {
+let job = cron(200, | | {
     print("tick")
 })
 
 // Initialize a WorkerPool with 3 workers
-let pool = WorkerPool { ch: task.channel(1), count: 0, workers: 0 }
+let pool = WorkerPool { ch: task.channel(1), count: 0, workers: 0, stopped: false }
 pool.spawn(3)
 
 // Submit 10 jobs
@@ -19,3 +19,9 @@ while submitted < 10 {
 }
 
 print("all submitted")
+
+// Give workers and cron job time to process and tick, then clean up
+task.sleep(500)
+job.stopped = true
+pool.stop()
+print("done")

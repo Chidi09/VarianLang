@@ -1,0 +1,154 @@
+// Authentication Module for Varian & Zenith
+
+// JWT Verification Middleware
+fn jwt_middleware(secret) {
+    return |req, next| {
+        let auth_header = req.headers?.authorization
+        if (auth_header == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Missing Authorization header", "text/plain"]
+            )
+        }
+        if (!auth_header.starts_with("Bearer ")) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid Authorization header format", "text/plain"]
+            )
+        }
+        let token = auth_header.substring(7, auth_header.len())
+        let payload = auth.verify_jwt(token, secret)
+        if (payload == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid or expired token", "text/plain"]
+            )
+        }
+
+        // Attach payload to req as req.user
+        let keys = _validate.get_keys(req)
+        let vals = []
+        let i = 0
+        while (i < keys.len()) {
+            vals = vals.push(_validate.get_field(req, keys[i]))
+            i = i + 1
+        }
+        keys = keys.push("user")
+        vals = vals.push(payload)
+        
+        let req_with_user = http.create_struct(keys, vals)
+        return next(req_with_user)
+    }
+}
+
+// Session Actor
+actor SessionStore {
+    sessions: any // Map/Struct created dynamically
+}
+
+fn session_store_actor(self) {
+    self.sessions = http.create_struct([], [])
+    while (true) {
+        let msg = receive()
+        let action = _validate.get_field(msg, "action")
+        let sid = _validate.get_field(msg, "sid")
+        if (action == "get") {
+            let user = _validate.get_field(self.sessions, sid)
+            let reply_to = _validate.get_field(msg, "reply_to")
+            reply_to <- user
+        } else if (action == "set") {
+            let user = _validate.get_field(msg, "user")
+            // Update sessions by creating a new struct with new key/value
+            let keys = _validate.get_keys(self.sessions)
+            let vals = []
+            let i = 0
+            let replaced = false
+            while (i < keys.len()) {
+                if (keys[i] == sid) {
+                    vals = vals.push(user)
+                    replaced = true
+                } else {
+                    vals = vals.push(_validate.get_field(self.sessions, keys[i]))
+                }
+                i = i + 1
+            }
+            if (!replaced) {
+                keys = keys.push(sid)
+                vals = vals.push(user)
+            }
+            self.sessions = http.create_struct(keys, vals)
+        } else if (action == "delete") {
+            let keys = _validate.get_keys(self.sessions)
+            let new_keys = []
+            let new_vals = []
+            let i = 0
+            while (i < keys.len()) {
+                if (keys[i] != sid) {
+                    new_keys = new_keys.push(keys[i])
+                    new_vals = new_vals.push(_validate.get_field(self.sessions, keys[i]))
+                }
+                i = i + 1
+            }
+            self.sessions = http.create_struct(new_keys, new_vals)
+        }
+    }
+}
+
+// Helper to extract cookie value
+fn _extract_cookie(cookie_header, name) {
+    if (cookie_header == null) { return null }
+    let parts = cookie_header.split(";")
+    let i = 0
+    while (i < parts.len()) {
+        let part = _sanitize.trim(parts[i])
+        if (part.starts_with(name + "=")) {
+            return part.substring(name.len() + 1, part.len())
+        }
+        i = i + 1
+    }
+    return null
+}
+
+// Session Middleware Builder
+fn session_middleware(store_pid, cookie_name) {
+    return |req, next| {
+        let cookie_header = req.headers?.cookie
+        let sid = _extract_cookie(cookie_header, cookie_name)
+        let user = null
+
+        if (sid != null) {
+            let reply = task.channel(1)
+            store_pid <- http.create_struct(
+                ["action", "sid", "reply_to"],
+                ["get", sid, reply]
+            )
+            user = <- reply
+        }
+
+        // Attach user (or null) to req.user
+        let keys = _validate.get_keys(req)
+        let vals = []
+        let i = 0
+        while (i < keys.len()) {
+            vals = vals.push(_validate.get_field(req, keys[i]))
+            i = i + 1
+        }
+        keys = keys.push("user")
+        vals = vals.push(user)
+        
+        let req_with_user = http.create_struct(keys, vals)
+        return next(req_with_user)
+    }
+}
+
+// Global zenith_auth namespace object
+let zenith_auth = http.create_struct(
+    ["jwt", "session_store", "session", "hash_password", "verify_password"],
+    [
+        |secret| { return jwt_middleware(secret) },
+        | | { return task.spawn(session_store_actor, []) },
+        |store_pid, cookie_name| { return session_middleware(store_pid, cookie_name) },
+        |password| { return auth.hash_password(password) },
+        |password, hash| { return auth.verify_password(password, hash) }
+    ]
+)

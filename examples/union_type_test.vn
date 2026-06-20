@@ -1,0 +1,12 @@
+// Test union type syntax: parsed and discarded like every other type
+// annotation in this language -- no runtime enforcement, just documentation.
+fn handle(x: string | int) -> string | null {
+    print(x)
+    return "ok"
+}
+
+let y: string | int | null = "hello"
+print(y)
+print(handle(42))
+print(handle("text"))
+print("done")

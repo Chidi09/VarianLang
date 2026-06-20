@@ -1,0 +1,19 @@
+// Test app.listen_tls(port, cert_path, key_path): real HTTPS via OpenSSL,
+// non-blocking handshake integrated into the same connection pool that
+// handles keep-alive and slowloris protection for plain HTTP.
+//
+// Generate a local self-signed cert first:
+//   openssl req -x509 -newkey rsa:2048 -keyout /tmp/key.pem -out /tmp/cert.pem \
+//       -days 365 -nodes -subj "/CN=localhost"
+//
+// Then run this and test with curl (-k skips self-signed cert verification):
+//   ./vn examples/tls_test.vn
+//   curl -k https://localhost:8943/ping
+//
+// Known gap: WebSocket/SSE upgrades aren't TLS-aware yet (wss:// isn't
+// supported, only https:// request/response, including serve_static()).
+let app = new_app()
+app.get("/ping", | req | {
+    return Response { status: 200, body: "pong", content_type: "text/plain" }
+}, "ping")
+app.listen_tls(8943, "/tmp/cert.pem", "/tmp/key.pem")
