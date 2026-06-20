@@ -90,7 +90,7 @@ static char *read_directory_sources(const char *dir_path) {
     return result;
 }
 
-static char *read_file_with_modules(const char *path) {
+static char *test_runner_read_file_with_modules(const char *path) {
     char *main_source = read_file(path);
     if (!main_source) return NULL;
 
@@ -155,7 +155,7 @@ static void collect_test_files(const char *dir, char ***files, int *count, int *
 /* ─── Run a single test file ─── */
 /* Returns: 0 on success (all tests pass), 1 on failure */
 static int run_test_file(const char *path) {
-    char *source = read_file_with_modules(path);
+    char *source = test_runner_read_file_with_modules(path);
     if (!source) return 1;
 
     Lexer lexer;

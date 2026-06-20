@@ -13,6 +13,11 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <curl/curl.h>
+
+/* Set before vm_run() for "vn <file>"/"vn run <file>" so lib_http.c's
+ * cluster worker threads can independently re-load the same script. */
+const char *g_varian_script_path = NULL;
 
 #ifndef VARIAN_VERSION
 #define VARIAN_VERSION "0.1.0"
@@ -118,7 +123,7 @@ static char *read_directory_sources(const char *dir_path) {
 }
 
 /* ─── Read source with module prelude from vn_modules/ ─── */
-static char *read_file_with_modules(const char *path) {
+char *read_file_with_modules(const char *path) {
     char *main_source = read_file(path);
     if (!main_source) return NULL;
 
@@ -399,6 +404,11 @@ static int process_fmt_stdin() {
 
 /* ─── Main ─── */
 int main(int argc, char *argv[]) {
+    /* Must happen once, before any thread (incl. cluster worker threads
+     * spawned later by lib_http.c) can call into libcurl -- curl_easy_init()
+     * does this lazily on first use otherwise, which is not safe if two
+     * threads race to be the "first" caller. */
+    curl_global_init(CURL_GLOBAL_ALL);
 #ifdef VARIAN_AOT_STANDALONE
     (void)argc; (void)argv;
     VM vm;
@@ -540,6 +550,7 @@ int main(int argc, char *argv[]) {
         }
         char *source = read_file_with_modules(argv[2]);
         if (!source) return 1;
+        g_varian_script_path = argv[2];
         int result = run_source(source, argv[2]);
         free(source);
         return result;
@@ -549,6 +560,7 @@ int main(int argc, char *argv[]) {
     if (argc == 2) {
         char *source = read_file_with_modules(argv[1]);
         if (!source) return 1;
+        g_varian_script_path = argv[1];
         int result = run_source(source, argv[1]);
         free(source);
         return result;
