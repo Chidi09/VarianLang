@@ -84,7 +84,7 @@ If a captured value is itself a struct or array (heap-allocated, reference seman
 see below), mutations made through that reference after capture are still visible,
 since the closure copies the *pointer*, not a deep copy of the data.
 
-## Mutation semantics — read this before you get surprised
+## Mutation semantics and Struct Arena allocation
 
 **Structs mutate in place** when you call a method on them — there is no need to
 reassign:
@@ -99,6 +99,12 @@ b.bump()
 print(b.val)   // 2 — bump() mutated the same object `b` refers to
 ```
 
+### The Struct Arena & Escape Safety
+
+To optimize heap allocations, structs created within HTTP handler tasks (or tasks where `task_arena_enable()` is called) are allocated inside a **64KB task-local bump arena**. These structs bypass the general heap and the GC completely. They are bulk-reclaimed instantly when the handler task is recycled.
+
+If an arena-backed struct needs to outlive the request (e.g., if you store it in a global variable, send it to a channel, or write it to an actor mailbox), the Varian runtime automatically invokes an **escape-safety write barrier** (`escape_promote`). This deep-copies the struct recursively onto the garbage-collected heap at the moment of escape, preventing dangling references.
+
 **Arrays are copy-on-write** via `.push()` — it always returns a *new* array and never
 mutates the original:
 
@@ -109,10 +115,7 @@ print(a.len())   // 3 — unchanged
 print(b.len())   // 4
 ```
 
-This asymmetry is real and currently undocumented anywhere else — the idiom for
-"appending" to a struct field that holds an array is always `self.field =
-self.field.push(x)`, reassigning the field (which *does* persist, since that's a struct
-mutation), not mutating the array value itself.
+This asymmetry is real — the idiom for "appending" to a struct field that holds an array is always `self.field = self.field.push(x)`, reassigning the field (which *does* persist, since that's a struct mutation), not mutating the array value itself.
 
 Index assignment (`arr[i] = x`) works correctly and mutates in place.
 

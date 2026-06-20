@@ -98,9 +98,12 @@ http.serve(8080, |req| {
 
 `http.get(url)` returns the response body as a string. `http.serve(port, handler)`
 starts a blocking HTTP server, calling `handler(req)` per request — this is what
-`ZenithApp.listen()` wraps (see `docs/ZENITH.md`). `http.create_struct(keys_array,
-values_array)` builds a struct dynamically from parallel arrays — used throughout Zenith
-to build request/params objects with field sets not known until runtime.
+`ZenithApp.listen()` wraps (see `docs/ZENITH.md`). 
+
+> [!TIP]
+> Under the hood, `http.serve` configures each connection request handler task with a **per-task struct arena** via `task_arena_enable()`. This avoids GC and heap allocation overhead entirely for request/response structs, reclaiming them in bulk upon completion.
+
+`http.create_struct(keys_array, values_array)` builds a struct dynamically from parallel arrays — used throughout Zenith to build request/params objects with field sets not known until runtime.
 
 ## `auth`
 
