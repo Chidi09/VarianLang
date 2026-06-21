@@ -493,6 +493,14 @@ fn lumen_component(state_fn, render_fn, handler_names, handler_fns) {
     )
 }
 
+// M7 DX: render a component against its initial state to an HTML string.
+// Snapshot-friendly: tests can assert on lumen_snapshot(component) directly,
+// and it drives any child components through the normal composition pass.
+fn lumen_snapshot(component) {
+    _lumen_active_child_states = {}
+    return (component.render_fn)((component.state_fn)())
+}
+
 // Resolve a handler by name against the registered set ONLY.  Returns null if
 // the name isn't registered — the caller must then silently ignore the event.
 // This is the security gate: never dispatch an arbitrary name from the wire.
@@ -570,6 +578,14 @@ fn _lumen_send_update(ws, prev, html) {
     return html
 }
 
+// M7 DX: turn a caught handler error into a friendly dev overlay message.
+// errors.explain() gives a what/fix block; fall back to the raw value.
+fn _lumen_error_msg(e) {
+    let detail = errors.explain(e)
+    if detail == null { return "" + e }
+    return detail
+}
+
 // Per-connection event loop.
 // ws.read() is NON-BLOCKING (returns "" on EAGAIN, null on close).
 // The loop yields via task.yield() when no message is available so the
@@ -606,25 +622,33 @@ fn _lumen_live_loop(ws, component) {
                         if comp != null {
                             let handler = _lumen_handler(comp, child_hname)
                             if handler != null {
-                                let new_child_state = handler(child_state, value)
-                                new_child_state = _tpl_bind(new_child_state, "_comp", comp_name)
-                                new_child_state = _tpl_bind(new_child_state, "_id", child_id)
-                                child_states = _tpl_bind(child_states, child_id, new_child_state)
-                                _lumen_active_child_states = child_states
-                                
-                                let html = (component.render_fn)(state)
-                                child_states = _lumen_active_child_states
-                                prev = _lumen_send_update(ws, prev, html)
+                                try {
+                                    let new_child_state = handler(child_state, value)
+                                    new_child_state = _tpl_bind(new_child_state, "_comp", comp_name)
+                                    new_child_state = _tpl_bind(new_child_state, "_id", child_id)
+                                    child_states = _tpl_bind(child_states, child_id, new_child_state)
+                                    _lumen_active_child_states = child_states
+
+                                    let html = (component.render_fn)(state)
+                                    child_states = _lumen_active_child_states
+                                    prev = _lumen_send_update(ws, prev, html)
+                                } catch e {
+                                    ws.write(json_encode({ t: "error", msg: _lumen_error_msg(e) }))
+                                }
                             }
                         }
                     }
                 } else {
                     let handler = _lumen_handler(component, hname)
                     if handler != null {
-                        state = handler(state, value)
-                        let html = (component.render_fn)(state)
-                        child_states = _lumen_active_child_states
-                        prev = _lumen_send_update(ws, prev, html)
+                        try {
+                            state = handler(state, value)
+                            let html = (component.render_fn)(state)
+                            child_states = _lumen_active_child_states
+                            prev = _lumen_send_update(ws, prev, html)
+                        } catch e {
+                            ws.write(json_encode({ t: "error", msg: _lumen_error_msg(e) }))
+                        }
                     }
                 }
             }
@@ -645,5 +669,5 @@ fn _lumen_shell(inner, ws_path) {
 // Embedded client JavaScript as a Varian string.
 // Every brace is escaped as \{/\} so Varian's {expr} interpolation doesn't eat it.
 fn _lumen_client_js() {
-    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,EV=['click','input','change','submit','keydown','keyup','blur','focus'];function c()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}\};w.onclose=function()\{setTimeout(c,1000)\}\}EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\}))\},true)\});function morph(a,h)\{var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild)\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}c()\})();"
+    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,EV=['click','input','change','submit','keydown','keyup','blur','focus'];function c()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}\};w.onclose=function()\{setTimeout(c,1000)\}\}EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\}))\},true)\});function morph(a,h)\{var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild)\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}c()\})();"
 }

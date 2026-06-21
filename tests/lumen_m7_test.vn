@@ -1,0 +1,54 @@
+// tests/lumen_m7_test.vn
+// Milestone 7: DX — friendly live errors + snapshot rendering.
+
+let _boom = lumen_component(
+    | | { return { count: 0 } },
+    |s| { return lumen_render("<p>\{\{ count \}\}</p>", s) },
+    ["boom"],
+    [ |s, v| { let a = [1]; let x = a[99]; return s } ]
+)
+
+let _greet = lumen_component(
+    | | { return { who: "world" } },
+    |s| { return lumen_render("<h1>Hello \{\{ who \}\}</h1>", s) },
+    [], []
+)
+
+fn _drive_once(comp, hname) {
+    let cap = { msg: "" }
+    let reads = { n: 0 }
+    let ws = http.create_struct(
+        ["read", "write"],
+        [ | | {
+              if reads.n == 0 { reads.n = 1
+                  return "{" + "\"t\":\"event\",\"h\":\"" + hname + "\",\"v\":null" + "}" }
+              return null
+          },
+          |m| { cap.msg = m } ]
+    )
+    _lumen_live_loop(ws, comp)
+    return cap.msg
+}
+
+test "a throwing handler is caught and sent as a friendly error message" {
+    let out = _drive_once(_boom, "boom")
+    let msg = json_decode(out)
+    assert_eq(_validate.get_field(msg, "t"), "error")
+    let detail = _validate.get_field(msg, "msg")
+    // Friendly: classified kind + what + fix, not a raw crash.
+    assert_ne(detail.index_of("IndexOutOfBounds"), -1)
+    assert_ne(detail.index_of("what:"), -1)
+    assert_ne(detail.index_of("fix:"), -1)
+}
+
+test "the live shell embeds the branded overlay + logo, no tagline" {
+    let shell = _lumen_shell("<div>x</div>", "/live")
+    assert_ne(shell.index_of("function showErr"), -1)
+    assert_ne(shell.index_of("LUMEN"), -1)
+    assert_ne(shell.index_of("M26 7 L15 27"), -1)   // logo bolt path
+    assert_eq(shell.index_of("BRILLIANT"), -1)       // tagline removed
+}
+
+test "lumen_snapshot renders a component's initial state" {
+    assert_eq(lumen_snapshot(_greet), "<h1>Hello world</h1>")
+}
