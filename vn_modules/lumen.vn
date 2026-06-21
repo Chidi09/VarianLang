@@ -168,12 +168,283 @@ fn _lumen_do_each(tpl, pos, stop, ctx, header) {
     return http.create_struct(["out", "pos"], [out, body_end])
 }
 
+let _lumen_active_child_states = null
+let _lumen_component_names = []
+let _lumen_components = []
+
+fn lumen_register_component(name, component) {
+    _lumen_component_names = _lumen_component_names.push(name)
+    _lumen_components = _lumen_components.push(component)
+}
+
+fn _lumen_get_component(name) {
+    for i in 0.._lumen_component_names.len() {
+        if _lumen_component_names[i] == name {
+            return _lumen_components[i]
+        }
+    }
+    return null
+}
+
+fn _lumen_parse_attrs(attr_str) {
+    let keys = []
+    let vals = []
+    let i = 0
+    let n = attr_str.len()
+    while i < n {
+        while i < n and attr_str.code_at(i) <= 32 { i = i + 1 }
+        if i >= n { break }
+        let eq = attr_str.index_of("=", i)
+        if eq < 0 { break }
+        let key = _sanitize.trim(attr_str.substring(i, eq))
+        let quote_pos = eq + 1
+        while quote_pos < n and attr_str.code_at(quote_pos) <= 32 { quote_pos = quote_pos + 1 }
+        if quote_pos >= n { break }
+        let quote_char = attr_str.substring(quote_pos, quote_pos + 1)
+        if quote_char != "\"" and quote_char != "'" { break }
+        let close_quote = attr_str.index_of(quote_char, quote_pos + 1)
+        if close_quote < 0 { break }
+        let val = attr_str.substring(quote_pos + 1, close_quote)
+        keys = keys.push(key)
+        vals = vals.push(val)
+        i = close_quote + 1
+    }
+    return http.create_struct(keys, vals)
+}
+
+fn _lumen_rewrite_child_events(html, child_id) {
+    let events = ["click", "input", "change", "submit", "keydown", "keyup", "blur", "focus", "mouseover", "mouseout"]
+    let out = html
+    for i in 0..events.len() {
+        let attr = "data-lumen-" + events[i] + "=\""
+        out = _lumen_replace(out, attr, attr + child_id + ":")
+    }
+    return out
+}
+
+fn _lumen_process_composition(html, state) {
+    let out = ""
+    let i = 0
+    let n = html.len()
+    let child_counts = {}
+    
+    while i < n {
+        let tag_start = html.index_of("<", i)
+        if tag_start < 0 {
+            out = out + html.substring(i, n)
+            break
+        }
+        out = out + html.substring(i, tag_start)
+        
+        let is_comp = false
+        if tag_start + 1 < n {
+            let next_char = html.code_at(tag_start + 1)
+            if next_char >= 65 and next_char <= 90 {
+                is_comp = true
+            }
+        }
+        
+        if is_comp == false {
+            out = out + "<"
+            i = tag_start + 1
+            continue
+        }
+        
+        let tag_end = html.index_of(">", tag_start)
+        if tag_end < 0 {
+            out = out + html.substring(tag_start, n)
+            break
+        }
+        
+        let tag_content = html.substring(tag_start + 1, tag_end)
+        let is_self_closing = false
+        if tag_content.ends_with("/") {
+            is_self_closing = true
+            tag_content = tag_content.substring(0, tag_content.len() - 1)
+        }
+        
+        let space_pos = tag_content.index_of(" ")
+        let comp_name = ""
+        let attrs_str = ""
+        if space_pos < 0 {
+            comp_name = _sanitize.trim(tag_content)
+        } else {
+            comp_name = _sanitize.trim(tag_content.substring(0, space_pos))
+            attrs_str = tag_content.substring(space_pos + 1, tag_content.len())
+        }
+        
+        let comp = _lumen_get_component(comp_name)
+        if comp == null {
+            let slash_str = ""
+            if is_self_closing { slash_str = "/" }
+            out = out + "<" + tag_content + slash_str + ">"
+            i = tag_end + 1
+            continue
+        }
+        
+        let raw_attrs = _lumen_parse_attrs(attrs_str)
+        let child_id = _validate.get_field(raw_attrs, "id")
+        if child_id == null {
+            let current_count = _validate.get_field(child_counts, comp_name)
+            if current_count == null { current_count = 0 }
+            child_id = comp_name + "_" + current_count
+            child_counts = _tpl_bind(child_counts, comp_name, current_count + 1)
+        }
+        
+        if _lumen_active_child_states == null {
+            _lumen_active_child_states = {}
+        }
+        let child_state = _validate.get_field(_lumen_active_child_states, child_id)
+        if child_state == null {
+            child_state = (comp.state_fn)()
+            child_state = _tpl_bind(child_state, "_comp", comp_name)
+            child_state = _tpl_bind(child_state, "_id", child_id)
+        }
+        
+        let attr_keys = _validate.get_keys(raw_attrs)
+        for k in 0..attr_keys.len() {
+            let key = attr_keys[k]
+            if key != "id" {
+                let val = _validate.get_field(raw_attrs, key)
+                child_state = _tpl_bind(child_state, key, val)
+            }
+        }
+        _lumen_active_child_states = _tpl_bind(_lumen_active_child_states, child_id, child_state)
+        
+        let child_html = (comp.render_fn)(child_state)
+        let child_html_rewritten = _lumen_rewrite_child_events(child_html, child_id)
+        out = out + child_html_rewritten
+        
+        if is_self_closing == false {
+            let close_tag = "</" + comp_name + ">"
+            let close_tag_pos = html.index_of(close_tag, tag_end)
+            if close_tag_pos >= 0 {
+                i = close_tag_pos + close_tag.len()
+            } else {
+                i = tag_end + 1
+            }
+        } else {
+            i = tag_end + 1
+        }
+    }
+    return out
+}
+
+fn _lumen_escape_string(s) {
+    let out = ""
+    let i = 0
+    let n = s.len()
+    while i < n {
+        let c = s.substring(i, i + 1)
+        if c == "\\" {
+            out = out + "\\\\"
+        } else if c == "\"" {
+            out = out + "\\\""
+        } else if c == "{" {
+            out = out + "\\{"
+        } else if c == "}" {
+            out = out + "\\}"
+        } else if c == "\n" {
+            out = out + "\\n"
+        } else if c == "\r" {
+            out = out + "\\r"
+        } else if c == "\t" {
+            out = out + "\\t"
+        } else {
+            out = out + c
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn _lumen_extract_fns(script) {
+    let names = []
+    let i = 0
+    let n = script.len()
+    while i < n {
+        let fn_pos = script.index_of("fn ", i)
+        if fn_pos < 0 { break }
+        let name_start = fn_pos + 3
+        let open_paren = script.index_of("(", name_start)
+        if open_paren > name_start {
+            let name = _sanitize.trim(script.substring(name_start, open_paren))
+            if name != "state" and name != "" {
+                names = names.push(name)
+            }
+        }
+        i = fn_pos + 3
+    }
+    return names
+}
+
+fn lumen_compile_source(name, lumen_src) {
+    let temp_start = lumen_src.index_of("<template>")
+    let temp_end = lumen_src.index_of("</template>")
+    let script_start = lumen_src.index_of("<script>")
+    let script_end = lumen_src.index_of("</script>")
+    
+    if temp_start < 0 or temp_end < 0 or script_start < 0 or script_end < 0 {
+        throw("Invalid .lumen file structure: must contain <template> and <script> tags")
+    }
+    
+    let template = lumen_src.substring(temp_start + 10, temp_end)
+    let script = lumen_src.substring(script_start + 8, script_end)
+    let escaped_tpl = _lumen_escape_string(template)
+    
+    let names = _lumen_extract_fns(script)
+    let name_str = ""
+    let fn_str = ""
+    for idx in 0..names.len() {
+        if idx > 0 {
+            name_str = name_str + ", "
+            fn_str = fn_str + ", "
+        }
+        name_str = name_str + "\"" + names[idx] + "\""
+        fn_str = fn_str + names[idx]
+    }
+    
+    // Braces meant to appear literally in the GENERATED Varian source are
+    // written as \{ / \} here, otherwise Varian's lexer would treat them as
+    // string interpolation in *this* file before they ever reach the output.
+    let out = "// Auto-generated by Lumen compiler from " + name + "\n"
+    out = out + "fn _lumen_init_component_" + name + "() \{\n"
+    out = out + "    let _tpl = \"" + escaped_tpl + "\"\n"
+    out = out + script + "\n"
+    out = out + "    return lumen_component(\n"
+    out = out + "        state,\n"
+    out = out + "        |s| \{ return lumen_render(_tpl, s) \},\n"
+    out = out + "        [" + name_str + "],\n"
+    out = out + "        [" + fn_str + "]\n"
+    out = out + "    )\n"
+    out = out + "\}\n"
+    out = out + "lumen_register_component(\"" + name + "\", _lumen_init_component_" + name + "())\n"
+    return out
+}
+
+fn lumen_compile_file(lumen_path, vn_path) {
+    let src = io.read_text(lumen_path)
+    if src == null {
+        throw("Could not read .lumen file: " + lumen_path)
+    }
+    let slash = lumen_path.last_index_of("/")
+    let file_part = lumen_path
+    if slash >= 0 {
+        file_part = lumen_path.substring(slash + 1, lumen_path.len())
+    }
+    let dot = file_part.index_of(".lumen")
+    let name = file_part.substring(0, dot)
+    let code = lumen_compile_source(name, src)
+    io.write_text(vn_path, code)
+}
+
 // ─── Public API (Milestone 1) ───
 
 // Render a Lumen template string against a context struct -> HTML string.
 fn lumen_render(template, ctx) {
     let res = _lumen_render_region(template, 0, template.len(), ctx, null)
-    return _lumen_bind_events(_validate.get_field(res, "out"))
+    let raw_html = _lumen_bind_events(_validate.get_field(res, "out"))
+    return _lumen_process_composition(raw_html, ctx)
 }
 
 // Convenience: a 200 text/html Response from a rendered Lumen template.
@@ -225,6 +496,7 @@ fn lumen_mount(app, path, component) {
     let ws_path = path + "/live"
     let page = |req| {
         let state = (component.state_fn)()
+        _lumen_active_child_states = {}
         let inner = (component.render_fn)(state)
         let html = _lumen_shell(inner, ws_path)
         return http.create_struct(["status","body","content_type"], [200, html, "text/html"])
@@ -247,6 +519,11 @@ fn lumen_mount(app, path, component) {
 // cooperative scheduler can service other connections.
 fn _lumen_live_loop(ws, component) {
     let state = (component.state_fn)()
+    // Initial render discovers and registers any child components so their
+    // state exists before the first event referencing them arrives.
+    _lumen_active_child_states = {}
+    let _initial = (component.render_fn)(state)
+    let child_states = _lumen_active_child_states
     let alive = true
     while alive {
         let msg = ws.read()
@@ -258,11 +535,39 @@ fn _lumen_live_loop(ws, component) {
             if kind == "event" {
                 let hname = _validate.get_field(ev, "h")
                 let value = _validate.get_field(ev, "v")
-                let handler = _lumen_handler(component, hname)
-                if handler != null {
-                    state = handler(state, value)
-                    let html = (component.render_fn)(state)
-                    ws.write(json_encode({ t: "html", html: html }))
+                _lumen_active_child_states = child_states
+                
+                let colon_pos = hname.index_of(":")
+                if colon_pos >= 0 {
+                    let child_id = hname.substring(0, colon_pos)
+                    let child_hname = hname.substring(colon_pos + 1, hname.len())
+                    let child_state = _validate.get_field(child_states, child_id)
+                    if child_state != null {
+                        let comp_name = child_state._comp
+                        let comp = _lumen_get_component(comp_name)
+                        if comp != null {
+                            let handler = _lumen_handler(comp, child_hname)
+                            if handler != null {
+                                let new_child_state = handler(child_state, value)
+                                new_child_state = _tpl_bind(new_child_state, "_comp", comp_name)
+                                new_child_state = _tpl_bind(new_child_state, "_id", child_id)
+                                child_states = _tpl_bind(child_states, child_id, new_child_state)
+                                _lumen_active_child_states = child_states
+                                
+                                let html = (component.render_fn)(state)
+                                child_states = _lumen_active_child_states
+                                ws.write(json_encode({ t: "html", html: html }))
+                            }
+                        }
+                    }
+                } else {
+                    let handler = _lumen_handler(component, hname)
+                    if handler != null {
+                        state = handler(state, value)
+                        let html = (component.render_fn)(state)
+                        child_states = _lumen_active_child_states
+                        ws.write(json_encode({ t: "html", html: html }))
+                    }
                 }
             }
         } else {

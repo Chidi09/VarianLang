@@ -816,7 +816,8 @@ static void handle_completion(int id, const char *json, const char *uri) {
         "postgres", "redis", "auth", "validate", "sanitize", "crypto",
         /* Common methods */
         "len", "push", "get", "post", "query", "split", "trim", "replace",
-        "contains", "starts_with", "substring", "upper", "lower",
+        "contains", "starts_with", "ends_with", "index_of", "last_index_of",
+        "substring", "upper", "lower",
         "read_text", "write_text", "read_bytes", "write_bytes",
         "exists", "delete", "list_dir", "mkdir",
     };

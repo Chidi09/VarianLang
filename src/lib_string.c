@@ -159,6 +159,36 @@ static Value lib_string_starts_with(VM *vm, int arg_count, Value *args) {
     return val_bool(strncmp(s->chars, prefix->chars, (size_t)prefix->length) == 0);
 }
 
+/* ─── string.ends_with(suffix) ─── */
+static Value lib_string_ends_with(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+        return val_bool(false);
+    ObjString *s = args[0].as.string;
+    ObjString *suffix = args[1].as.string;
+    if (suffix->length > s->length) return val_bool(false);
+    return val_bool(strncmp(s->chars + (s->length - suffix->length),
+                            suffix->chars, (size_t)suffix->length) == 0);
+}
+
+/* ─── string.last_index_of(needle) -- last occurrence's index, or -1 ─── */
+static Value lib_string_last_index_of(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_STRING)
+        return val_int(-1);
+    ObjString *s = args[0].as.string;
+    ObjString *needle = args[1].as.string;
+    if (needle->length == 0) return val_int(s->length);
+    const char *found = NULL;
+    const char *pos = s->chars;
+    while ((pos = strstr(pos, needle->chars)) != NULL) {
+        found = pos;
+        pos += 1;
+    }
+    if (!found) return val_int(-1);
+    return val_int((int64_t)(found - s->chars));
+}
+
 /* ─── string.index_of(needle) -- first occurrence's index, or -1 ─── */
 static Value lib_string_index_of(VM *vm, int arg_count, Value *args) {
     (void)vm;
@@ -166,8 +196,15 @@ static Value lib_string_index_of(VM *vm, int arg_count, Value *args) {
         return val_int(-1);
     ObjString *s = args[0].as.string;
     ObjString *needle = args[1].as.string;
-    if (needle->length == 0) return val_int(0);
-    const char *found = strstr(s->chars, needle->chars);
+    /* Optional start offset: s.index_of(needle, start). Clamped to [0, len]. */
+    int start = 0;
+    if (arg_count >= 3 && args[2].type == VAL_INT) {
+        start = (int)args[2].as.integer;
+        if (start < 0) start = 0;
+        if (start > s->length) start = s->length;
+    }
+    if (needle->length == 0) return val_int(start);
+    const char *found = strstr(s->chars + start, needle->chars);
     if (!found) return val_int(-1);
     return val_int((int64_t)(found - s->chars));
 }
@@ -255,6 +292,8 @@ void lib_string_init(VM *vm) {
     vm_register_dispatch(vm, "string", "trim",         val_native_fn((void *)lib_string_trim));
     vm_register_dispatch(vm, "string", "split",        val_native_fn((void *)lib_string_split));
     vm_register_dispatch(vm, "string", "starts_with",  val_native_fn((void *)lib_string_starts_with));
+    vm_register_dispatch(vm, "string", "ends_with",    val_native_fn((void *)lib_string_ends_with));
+    vm_register_dispatch(vm, "string", "last_index_of",val_native_fn((void *)lib_string_last_index_of));
     vm_register_dispatch(vm, "string", "index_of",     val_native_fn((void *)lib_string_index_of));
     vm_register_dispatch(vm, "string", "contains",     val_native_fn((void *)lib_string_contains));
     vm_register_dispatch(vm, "string", "replace",      val_native_fn((void *)lib_string_replace));

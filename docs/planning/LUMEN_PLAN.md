@@ -66,15 +66,46 @@ in `.lumen` files read from disk, where `{{ }}` is written plainly.
   VM requires `task.yield()` in the live loop. Tested in `tests/lumen_live_test.vn`
   (dispatch + route registration, no browser needed). Example in
   `examples/lumen_counter.vn`.
-- **M3 — `.lumen` single-file components.** A `.lumen` file = `<template>` markup + a Varian
-  `<script>` logic block (state + handlers). Loader/compiler that registers a component by
-  name and wires its handlers to the live layer. `<UserCard ... />` composition.
-- **M4 — DX to beat TS.** Friendly `.lumen` errors via the `errors` module + dev browser
-  overlay; `vn fmt`/`vn lint` understand `.lumen` (unescaped-input + N+1-in-loop warnings);
-  snapshot testing of component output; auto CSRF token in forms; HMR ("hot reload without
-  page refresh").
-- **M5 — perf.** Push the hot render/diff path from `vn_modules/lumen.vn` into C (the same
-  Varian-first-then-native path Zenith took), and cache static template segments.
+- **M3 — `.lumen` single-file components (DONE).** A `.lumen` file = `<template>` markup + a
+  Varian `<script>` logic block (`state` + handlers). `lumen_compile_source`/`lumen_compile_file`
+  emit a backing `.vn` that calls `lumen_register_component(name, ...)`; `<UserCard id=".." prop=".." />`
+  composition with per-child state, prop binding, and `id:handler` namespaced event routing
+  through the live loop. Required new string primitives `ends_with` / `last_index_of` and a
+  start-offset on `index_of` (registered in the parser builtin-method gate). Tested in
+  `tests/lumen_m3_test.vn`; real example `examples/lumen/UserCard.lumen`.
+
+### Roadmap from here (M4+) — assessed against "powerful but simple"
+
+Ordered by value-to-complexity. Each must pass the charter test: does it remove a TS/React
+papercut *without* adding a new concept users have to learn?
+
+- **M4 — DOM patch protocol (perf, invisible to users).** Today the server sends the full
+  re-rendered HTML (`{"t":"html",...}`) and the client morphs it. Keep the morph as the
+  fallback, but add a server-side diff that emits `{"t":"patch","ops":[...]}` (text/attr/child
+  ops keyed by a stable path) so only the changed bytes cross the wire. Biggest perf upgrade,
+  and it changes **nothing** in the authoring model — purely under the hood. **Recommended next.**
+- **M5 — reactive state helpers (DX).** Normal field updates already read cleanly
+  (`s.count = s.count + 1; return s`). The rough edge is *adding/dynamic* keys (today
+  `_tpl_bind`). Add an ergonomic state API — `s.set("k", v)` returning the new state, and a
+  read sugar — so handlers never touch `_tpl_bind`. No signals/effects (those reintroduce the
+  reactivity footguns the charter rejects); state stays plain server-side data.
+- **M6 — slots / children.** `<Card> <h1>Hi</h1> </Card>`: capture inner markup as a `children`
+  region a component renders with `{{! children }}`. High value, moderate parser work; composes
+  with M3's prop binding.
+- **M7 — DX to beat TS.** Friendly `.lumen` errors via the `errors` module + dev browser error
+  overlay; `vn fmt`/`vn lint` understand `.lumen` (unescaped-input, N+1-in-loop); component
+  snapshot testing; auto CSRF token in `.lumen` forms; HMR.
+- **M8 — client islands (opt-in).** `<Chart client />` runs a component in the browser while the
+  rest stays server-driven. Powerful but the highest-complexity item (needs a real client
+  payload) — deliberately last, and strictly opt-in so the default model stays server-driven.
+- **M9 — native perf port.** Move the hot render/diff path from `vn_modules/lumen.vn` into C
+  (the Varian-first-then-native path Zenith took); cache static template segments.
+
+CSS, SSR/SPA: **not separate milestones — already covered by the model.** Server-driven-live
+*is* SSR by construction (server renders real HTML on every change; SPA-grade interactivity
+comes from the WS morph — no separate hydration). CSS today is plain `<style>`/`class=` in
+`.lumen` templates; a scoped-CSS sugar (auto-prefix a component's selectors) can ride along
+with M6/M7 if wanted, but global CSS already works with zero new concepts.
 
 ## Open decisions (revisit when reached)
 

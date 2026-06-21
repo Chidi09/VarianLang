@@ -1,0 +1,16 @@
+<template>
+<div class="card">
+  <h3>{{ name }}</h3>
+  <p>Likes: {{ likes }}</p>
+  <button @click="like">👍 Like</button>
+</div>
+</template>
+<script>
+fn state() {
+  return { likes: 0 }
+}
+fn like(s, v) {
+  s.likes = s.likes + 1
+  return s
+}
+</script>

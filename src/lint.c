@@ -158,6 +158,7 @@ static const char *known_native_methods[] = {
     "write_text", "abs", "ceil", "cos", "floor", "sin", "sqrt", "intercept",
     "restore", "close", "connect", "query", "run", "cmd", "escape_html",
     "strip_html", "trim", "split", "lower", "replace", "starts_with",
+    "ends_with", "index_of", "last_index_of", "contains",
     "substring", "upper", "channel", "id", "sleep", "spawn", "yield",
     "now_iso8601", "now_ms", "is_alphanumeric", "is_email", "is_url",
     "is_uuid", "max_len", "min_len", "write_socket", "close_socket",
