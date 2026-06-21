@@ -92,6 +92,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_TRUE: return "TOKEN_TRUE";
         case TOKEN_FALSE: return "TOKEN_FALSE";
         case TOKEN_NULL: return "TOKEN_NULL";
+        case TOKEN_AS: return "TOKEN_AS";
         case TOKEN_TYPE_BOOL: return "TOKEN_TYPE_BOOL";
         case TOKEN_TYPE_INT: return "TOKEN_TYPE_INT";
         case TOKEN_TYPE_FLOAT: return "TOKEN_TYPE_FLOAT";
@@ -144,6 +145,7 @@ static KeywordEntry keywords[] = {
     {"true",   TOKEN_TRUE},
     {"false",  TOKEN_FALSE},
     {"null",   TOKEN_NULL},
+    {"as",     TOKEN_AS},
     /* Word-form logical operators -- aliases for && || ! so conditions can
      * read `a and b`, `x or y`, `not done`. Same tokens, same precedence. */
     {"and",    TOKEN_AMPERSAND_AMPERSAND},

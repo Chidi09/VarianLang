@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <dirent.h>
 
 /* ─── Forward declarations ─── */
 static AstNode *parse_stmt(Parser *parser);
@@ -61,8 +62,11 @@ static void parser_error(Parser *parser, const char *message) {
 static char *parser_read_file(Parser *parser, const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) return NULL;
+    /* Reject directories — fopen("rb") succeeds on a dir on some libc's, and a
+     * package name like "lumen-ui" must fall through to package resolution. */
     fseek(f, 0, SEEK_END);
     long size = ftell(f);
+    if (size < 0) { fclose(f); return NULL; }
     fseek(f, 0, SEEK_SET);
     char *buf = (char *)arena_alloc(parser->arena, size + 1);
     if (buf) {
@@ -71,6 +75,101 @@ static char *parser_read_file(Parser *parser, const char *path) {
     }
     fclose(f);
     return buf;
+}
+
+/* Concatenate every *.vn file (sorted, for deterministic order) under a
+ * Constellation package directory into one arena buffer. Returns NULL if the
+ * directory has no .vn files. This is how `use "<pkg>"` pulls in a vendored
+ * package: vn_modules/<pkg>/ is a subdir, so the ambient prelude (which globs
+ * only top-level vn_modules/*.vn) never auto-loads it — it loads only on use. */
+static char *parser_read_package_dir(Parser *parser, const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return NULL;
+
+    char *names[256];
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && n < 256) {
+        size_t len = strlen(e->d_name);
+        if (len > 3 && strcmp(e->d_name + len - 3, ".vn") == 0)
+            names[n++] = strdup(e->d_name);
+    }
+    closedir(d);
+    if (n == 0) return NULL;
+
+    for (int i = 0; i < n - 1; i++)
+        for (int j = i + 1; j < n; j++)
+            if (strcmp(names[i], names[j]) > 0) {
+                char *t = names[i]; names[i] = names[j]; names[j] = t;
+            }
+
+    /* First pass: total size. Second pass: copy into one arena buffer, each
+     * file separated by a newline so a missing trailing newline can't fuse two
+     * files' tokens together. */
+    size_t total = 1;
+    for (int i = 0; i < n; i++) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+        FILE *f = fopen(path, "rb");
+        if (f) { fseek(f, 0, SEEK_END); long s = ftell(f); if (s > 0) total += (size_t)s + 1; fclose(f); }
+    }
+    char *buf = (char *)arena_alloc(parser->arena, total);
+    size_t off = 0;
+    for (int i = 0; i < n; i++) {
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dir, names[i]);
+        FILE *f = fopen(path, "rb");
+        if (f) {
+            fseek(f, 0, SEEK_END); long s = ftell(f); fseek(f, 0, SEEK_SET);
+            if (s > 0) {
+                off += fread(buf + off, 1, (size_t)s, f);
+                buf[off++] = '\n';
+            }
+            fclose(f);
+        }
+        free(names[i]);
+    }
+    buf[off] = '\0';
+    return buf;
+}
+
+/* Resolve a `use "X"` target to source. Order: (1) a literal file path, so
+ * `use "lib/util.vn"` keeps working; (2) a vendored package ./vn_modules/X/;
+ * (3) $VARIAN_HOME/vn_modules/X/. Returns NULL if nothing matched. */
+static char *parser_resolve_use(Parser *parser, const char *name) {
+    char *content = parser_read_file(parser, name);
+    if (content) return content;
+
+    char dir[1024];
+    snprintf(dir, sizeof(dir), "vn_modules/%s", name);
+    content = parser_read_package_dir(parser, dir);
+    if (content) return content;
+
+    const char *home = getenv("VARIAN_HOME");
+    if (home && *home) {
+        snprintf(dir, sizeof(dir), "%s/vn_modules/%s", home, name);
+        content = parser_read_package_dir(parser, dir);
+        if (content) return content;
+    }
+    return NULL;
+}
+
+/* Dedup set for `use`, shared across the whole (recursive) parse so a package
+ * pulled in from two places — directly and transitively — is included once.
+ * Reset at the outermost parser_parse via the depth guard. */
+static char g_use_included[256][128];
+static int  g_use_included_count = 0;
+static int  g_use_depth = 0;
+
+static bool use_already_included(const char *name) {
+    for (int i = 0; i < g_use_included_count; i++)
+        if (strcmp(g_use_included[i], name) == 0) return true;
+    if (g_use_included_count < 256) {
+        strncpy(g_use_included[g_use_included_count], name, 127);
+        g_use_included[g_use_included_count][127] = '\0';
+        g_use_included_count++;
+    }
+    return false;
 }
 
 static void parser_error_at(Parser *parser, Token *token, const char *message) {
@@ -2401,6 +2500,11 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
 extern char *parser_read_file(Parser *parser, const char *path);
 
 AstNode *parser_parse(Parser *parser) {
+    /* The `use` dedup set spans the whole recursive parse; clear it only when
+     * the outermost parse begins (depth 0), not on each nested sub-parse. */
+    if (g_use_depth == 0) g_use_included_count = 0;
+    g_use_depth++;
+
     AstNode *program = ast_program(parser->arena, current_loc(parser));
 
     AstNode **stmts = NULL;
@@ -2409,19 +2513,72 @@ AstNode *parser_parse(Parser *parser) {
 
     while (!check(parser, TOKEN_EOF) && !parser->had_error) {
         if (match(parser, TOKEN_USE)) {
-            consume(parser, TOKEN_STRING, "Expected file path after 'use'");
+            consume(parser, TOKEN_STRING, "Expected a package name or file path after 'use'");
             char *path = token_str(parser, &parser->previous);
             int len = strlen(path);
             char *clean_path = (char *)arena_alloc(parser->arena, len);
             strncpy(clean_path, path + 1, len - 2);
             clean_path[len - 2] = '\0';
 
-            char *content = parser_read_file(parser, clean_path);
+            SourceLoc loc = current_loc(parser);
+            bool has_as = false;
+            char *alias_name = NULL;
+            if (match(parser, TOKEN_AS)) {
+                consume(parser, TOKEN_IDENTIFIER, "Expected an alias identifier after 'as'");
+                alias_name = token_strdup(&parser->previous);
+                has_as = true;
+            }
+
+            char mangled_name[256];
+            snprintf(mangled_name, sizeof(mangled_name), "__module_init_");
+            int m_len = (int)strlen(mangled_name);
+            for (int i = 0; clean_path[i] != '\0' && m_len < 250; i++) {
+                char c = clean_path[i];
+                if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+                    mangled_name[m_len++] = c;
+                } else {
+                    mangled_name[m_len++] = '_';
+                }
+            }
+            mangled_name[m_len] = '\0';
+
+            /* Include each target at most once per translation unit. */
+            if (use_already_included(clean_path)) {
+                if (has_as) {
+                    char **let_names = (char **)arena_alloc(parser->arena, sizeof(char *));
+                    let_names[0] = (char *)arena_alloc(parser->arena, strlen(alias_name) + 1);
+                    strcpy(let_names[0], alias_name);
+                    free(alias_name);
+
+                    AstNode *callee = ast_identifier(parser->arena, loc, mangled_name);
+                    AstNode *init_call = ast_call(parser->arena, loc, callee, NULL, 0);
+                    AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false);
+
+                    if (stmt_count >= stmt_capacity) {
+                        stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
+                        stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
+                    }
+                    stmts[stmt_count++] = let_stmt;
+                }
+                continue;
+            }
+
+            char *content = parser_resolve_use(parser, clean_path);
             if (!content) {
                 char err_buf[512];
-                snprintf(err_buf, sizeof(err_buf), "Could not read included file: %s", clean_path);
+                snprintf(err_buf, sizeof(err_buf),
+                         "Could not resolve 'use \"%s\"': no such file or package. "
+                         "If it's a dependency, run `vn add %s`.", clean_path, clean_path);
                 parser_error(parser, err_buf);
+                if (has_as) free(alias_name);
             } else {
+                /* Top-level functions visible before this package loads — any
+                 * name the package re-defines would silently shadow one of
+                 * these (stdlib or an earlier package). That's the collision a
+                 * real namespace prevents; until per-package namespacing lands,
+                 * we at least turn the silent shadow into a loud error. */
+                int fn_before = parser->function_count;
+
                 Lexer sub_lexer;
                 lexer_init(&sub_lexer, content, clean_path);
 
@@ -2442,22 +2599,145 @@ AstNode *parser_parse(Parser *parser) {
                 for(int i=0; i<parser->struct_count; i++) parser->structs[i] = sub_parser.structs[i];
                 parser->enum_count = sub_parser.enum_count;
                 for(int i=0; i<parser->enum_count; i++) parser->enums[i] = sub_parser.enums[i];
-                parser->function_count = sub_parser.function_count;
-                for(int i=0; i<parser->function_count; i++) parser->functions[i] = sub_parser.functions[i];
+                if (!has_as) {
+                    parser->function_count = sub_parser.function_count;
+                    for(int i=0; i<parser->function_count; i++) parser->functions[i] = sub_parser.functions[i];
+                }
                 parser->method_count = sub_parser.method_count;
                 for(int i=0; i<parser->method_count; i++) parser->method_names[i] = sub_parser.method_names[i];
 
-                if (sub_prog && !sub_parser.had_error) {
-                    for (int i = 0; i < sub_prog->program.stmt_count; i++) {
+                /* Reject a package symbol that collides with one already in
+                 * scope (the functions the package added are [fn_before, count)). */
+                if (!has_as) {
+                    for (int ni = fn_before; ni < parser->function_count && !parser->had_error; ni++) {
+                        const char *nm = parser->functions[ni].name;
+                        if (!nm) continue;
+                        for (int oi = 0; oi < fn_before; oi++) {
+                            if (parser->functions[oi].name && strcmp(parser->functions[oi].name, nm) == 0) {
+                                char eb[512];
+                                snprintf(eb, sizeof(eb),
+                                         "package '%s' defines '%s', which already exists in scope. "
+                                         "Rename it (packages conventionally prefix their symbols, e.g. %s_%s).",
+                                         clean_path, nm, clean_path, nm);
+                                parser_error(parser, eb);
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if (parser->had_error) {
+                    /* A collision error was already recorded above — keep it
+                     * (don't overwrite with the sub-parser's empty message). */
+                    if (has_as) free(alias_name);
+                } else if (sub_prog && !sub_parser.had_error) {
+                    if (has_as) {
+                        /* Scan sub_prog for public names and construct export struct */
+                        char *export_names[1024];
+                        AstNode *export_values[1024];
+                        int export_count = 0;
+
+                        for (int i = 0; i < sub_prog->program.stmt_count; i++) {
+                            AstNode *stmt = sub_prog->program.stmts[i];
+                            if (!stmt) continue;
+
+                            if (stmt->kind == NODE_FN_DECL) {
+                                const char *name = stmt->fn_decl.name;
+                                if (name && name[0] != '_') {
+                                    if (export_count < 1024) {
+                                        export_names[export_count] = (char *)name;
+                                        export_values[export_count] = ast_identifier(parser->arena, stmt->loc, name);
+                                        export_count++;
+                                    }
+                                }
+                            } else if (stmt->kind == NODE_LET_DECL || stmt->kind == NODE_CONST_DECL) {
+                                for (int j = 0; j < stmt->let_decl.name_count; j++) {
+                                    const char *name = stmt->let_decl.names[j];
+                                    if (name && name[0] != '_') {
+                                        if (export_count < 1024) {
+                                            export_names[export_count] = (char *)name;
+                                            export_values[export_count] = ast_identifier(parser->arena, stmt->loc, name);
+                                            export_count++;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        /* Build export struct literal */
+                        char **field_names = (char **)arena_alloc(parser->arena, sizeof(char *) * export_count);
+                        AstNode **field_values = (AstNode **)arena_alloc(parser->arena, sizeof(AstNode *) * export_count);
+                        for (int i = 0; i < export_count; i++) {
+                            field_names[i] = (char *)arena_alloc(parser->arena, strlen(export_names[i]) + 1);
+                            strcpy(field_names[i], export_names[i]);
+                            field_values[i] = export_values[i];
+                        }
+
+                        AstNode *export_struct = ast_struct_literal(parser->arena, loc, "Object",
+                                                                    field_names, field_values, export_count);
+
+                        /* Return statement */
+                        AstNode *return_stmt = ast_return_one(parser->arena, loc, export_struct);
+
+                        /* Wrap in module-init function body block */
+                        AstNode *body_block = ast_block(parser->arena, loc);
+                        for (int i = 0; i < sub_prog->program.stmt_count; i++) {
+                            ast_block_add_stmt(body_block, sub_prog->program.stmts[i]);
+                        }
+                        ast_block_add_stmt(body_block, return_stmt);
+
+                        /* Synthesize fn declaration */
+                        AstNode *fn_decl_node = ast_fn_decl(parser->arena, loc, mangled_name, NULL,
+                                                           NULL, 0, NULL, 0,
+                                                           body_block, false, false, false, NULL,
+                                                           NULL, NULL, 0);
+                        fn_decl_node->fn_decl.is_module_init = true;
+
+                        /* Synthesize alias variable binding */
+                        char **let_names = (char **)arena_alloc(parser->arena, sizeof(char *));
+                        let_names[0] = (char *)arena_alloc(parser->arena, strlen(alias_name) + 1);
+                        strcpy(let_names[0], alias_name);
+                        free(alias_name);
+
+                        AstNode *callee = ast_identifier(parser->arena, loc, mangled_name);
+                        AstNode *init_call = ast_call(parser->arena, loc, callee, NULL, 0);
+                        AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false);
+
+                        /* Append fn declaration and let binding to main program stmts */
                         if (stmt_count >= stmt_capacity) {
                             stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
                             stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
                         }
-                        stmts[stmt_count++] = sub_prog->program.stmts[i];
+                        stmts[stmt_count++] = fn_decl_node;
+
+                        if (stmt_count >= stmt_capacity) {
+                            stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
+                            stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
+                        }
+                        stmts[stmt_count++] = let_stmt;
+
+                        /* Free sub_parser functions since we didn't copy them back to parser */
+                        for (int i = fn_before; i < sub_parser.function_count; i++) {
+                            free(sub_parser.functions[i].name);
+                            for (int j = 0; j < sub_parser.functions[i].param_count; j++) {
+                                free(sub_parser.functions[i].param_names[j]);
+                            }
+                            free(sub_parser.functions[i].param_names);
+                        }
+                    } else {
+                        /* Original splice code */
+                        for (int i = 0; i < sub_prog->program.stmt_count; i++) {
+                            if (stmt_count >= stmt_capacity) {
+                                stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
+                                stmts = (AstNode **)realloc(stmts, sizeof(AstNode *) * stmt_capacity);
+                            }
+                            stmts[stmt_count++] = sub_prog->program.stmts[i];
+                        }
                     }
                 } else {
                     parser->had_error = true;
                     strcpy(parser->error_message, sub_parser.error_message);
+                    if (has_as) free(alias_name);
                 }
             }
             continue;
@@ -2475,6 +2755,7 @@ AstNode *parser_parse(Parser *parser) {
 
     if (parser->had_error) {
         if (stmts) free(stmts);
+        g_use_depth--;
         return NULL;
     }
 
@@ -2485,6 +2766,7 @@ AstNode *parser_parse(Parser *parser) {
     }
     program->program.stmt_count = stmt_count;
     program->program.stmt_capacity = stmt_count;
+    g_use_depth--;
     return program;
 }
 

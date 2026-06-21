@@ -660,9 +660,12 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                 size = 3;
             } else if (op == BC_GET_LOCAL || op == BC_SET_LOCAL || op == BC_CALL ||
                        op == BC_RETURN_N || op == BC_GET_UPVALUE || op == BC_SET_UPVALUE ||
-                       op == BC_CLOSURE || op == BC_ARRAY || op == BC_TUPLE ||
+                       op == BC_ARRAY || op == BC_TUPLE ||
                        op == BC_TAG_EQ || op == BC_BUILD_STRING) {
                 size = 2;
+            } else if (op == BC_CLOSURE) {
+                uint8_t upvalue_count = fn->code[offset + 1];
+                size = 2 + upvalue_count * 2;
             } else if (op == BC_COMPTIME_EXEC || op == BC_REGISTER_METHOD) {
                 size = 5;
             } else if (op == BC_DISPATCH) {
@@ -883,6 +886,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "                t->cache_on_return = false;\n");
                     fprintf(out, "            }\n");
                     fprintf(out, "            CallFrame *curr_frame = &t->frames[t->frame_count - 1];\n");
+                    if (fn->is_module_init)
+                        fprintf(out, "            close_upvalues(vm, curr_frame);\n");
                     fprintf(out, "            int base = curr_frame->return_base;\n");
                     fprintf(out, "            t->frame_count--;\n");
                     fprintf(out, "            if (t->frame_count == 0) {\n");
@@ -907,6 +912,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "            for (int i = 0; i < copy_count; i++)\n");
                     fprintf(out, "                tmp_vals[i] = t->stack[t->stack_top - rcount + i];\n");
                     fprintf(out, "            CallFrame *curr_frame = &t->frames[t->frame_count - 1];\n");
+                    if (fn->is_module_init)
+                        fprintf(out, "            close_upvalues(vm, curr_frame);\n");
                     fprintf(out, "            int base = curr_frame->return_base;\n");
                     fprintf(out, "            t->frame_count--;\n");
                     fprintf(out, "            if (t->frame_count == 0) {\n");
@@ -942,14 +949,27 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "            ObjClosure *closure = new_closure(NULL, %d);\n", upvalue_count);
                     fprintf(out, "            closure->obj.next = vm->objects;\n");
                     fprintf(out, "            vm->objects = (Obj*)closure;\n");
-                    fprintf(out, "            for (int i = %d - 1; i >= 0; i--) {\n", upvalue_count);
-                    fprintf(out, "                closure->captured[i] = POP();\n");
-                    fprintf(out, "            }\n");
+                    fprintf(out, "            closure->captured_slots = (int *)malloc(sizeof(int) * %d);\n", upvalue_count);
+                    fprintf(out, "            closure->captured_owner = frame->slots;\n");
+                    int meta_offset = offset + 2;
+                    for (int i = 0; i < upvalue_count; i++) {
+                        uint8_t is_local = fn->code[meta_offset + i * 2];
+                        uint8_t index = fn->code[meta_offset + i * 2 + 1];
+                        if (is_local) {
+                            /* Defer the close only for module initializers (see
+                             * vm.c BC_CLOSURE) — everything else captures by value. */
+                            fprintf(out, "            closure->captured_slots[%d] = %d;\n", i, fn->is_module_init ? index : -1);
+                            fprintf(out, "            closure->captured[%d] = frame->slots[%d];\n", i, index);
+                        } else {
+                            fprintf(out, "            closure->captured_slots[%d] = -1;\n", i);
+                            fprintf(out, "            closure->captured[%d] = frame->closure->captured[%d];\n", i, index);
+                        }
+                    }
                     fprintf(out, "            Value fn_val = POP();\n");
                     fprintf(out, "            closure->function = fn_val.as.function;\n");
                     fprintf(out, "            PUSH(val_closure(closure));\n");
                     fprintf(out, "        }\n");
-                    offset += 2;
+                    offset += 2 + upvalue_count * 2;
                     break;
                 }
                 case BC_ARRAY: {
@@ -1590,6 +1610,17 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
             if (j % 16 == 15) fprintf(out, "\n    ");
         }
         fprintf(out, "\n};\n\n");
+
+        /* Run-length-encoded source line table, so a runtime error in the
+         * compiled binary reports a real line instead of [line 0]. */
+        if (fn->rle_count > 0) {
+            fprintf(out, "static const int fn_rlelines_%d[%d] = {", i, fn->rle_count);
+            for (int j = 0; j < fn->rle_count; j++) fprintf(out, "%d,", fn->rle_lines[j]);
+            fprintf(out, "};\n");
+            fprintf(out, "static const int fn_rlecounts_%d[%d] = {", i, fn->rle_count);
+            for (int j = 0; j < fn->rle_count; j++) fprintf(out, "%d,", fn->rle_counts[j]);
+            fprintf(out, "};\n\n");
+        }
     }
 
     // Loader Function
@@ -1603,6 +1634,11 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
         fprintf(out, "    fn_%d->code = (uint8_t *)fn_code_%d;\n", i, i);
         fprintf(out, "    fn_%d->code_count = %d;\n", i, funcs[i]->code_count);
         fprintf(out, "    fn_%d->aot_func = (AotFunc)varian_aot_fn_%d;\n", i, i);
+        if (funcs[i]->rle_count > 0) {
+            fprintf(out, "    fn_%d->rle_lines = (int *)fn_rlelines_%d;\n", i, i);
+            fprintf(out, "    fn_%d->rle_counts = (int *)fn_rlecounts_%d;\n", i, i);
+            fprintf(out, "    fn_%d->rle_count = %d;\n", i, funcs[i]->rle_count);
+        }
     }
     fprintf(out, "\n");
 

@@ -753,6 +753,7 @@ static size_t gc_sweep(VM *vm) {
                 case VAL_CLOSURE: {
                     ObjClosure *c = (ObjClosure *)obj;
                     free(c->captured);
+                    if (c->captured_slots) free(c->captured_slots);
                     obj_size = sizeof(ObjClosure);
                     break;
                 }
@@ -1347,7 +1348,10 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     if (strcmp(name, "_") == 0) {
                         emit_byte(compiler, BC_POP);
                     } else {
-                        int idx = compiler_add_local(compiler, name);
+                        int idx = compiler_find_local(compiler, name);
+                        if (idx < 0 || compiler->local_depths[idx] < compiler->scope_depth) {
+                            idx = compiler_add_local(compiler, name);
+                        }
                         emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)idx);
                         /* Don't pop — the value protects the local slot
                          * from being overwritten by the next eval push */
@@ -1398,6 +1402,26 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 compiler_add_local(&fn_compiler, node->fn_decl.param_names[i]);
             }
 
+            /* Pass 1 — Hoisting pass for module-init functions */
+            if (node->fn_decl.is_module_init && node->fn_decl.body) {
+                AstNode *body_block = node->fn_decl.body;
+                for (int i = 0; i < body_block->block.stmt_count; i++) {
+                    AstNode *stmt = body_block->block.stmts[i];
+                    if (stmt) {
+                        if (stmt->kind == NODE_FN_DECL) {
+                            compiler_add_local(&fn_compiler, stmt->fn_decl.name);
+                        } else if (stmt->kind == NODE_LET_DECL || stmt->kind == NODE_CONST_DECL) {
+                            for (int j = 0; j < stmt->let_decl.name_count; j++) {
+                                const char *name = stmt->let_decl.names[j];
+                                if (strcmp(name, "_") != 0) {
+                                    compiler_add_local(&fn_compiler, name);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
             if (node->fn_decl.body) {
                 for (int i = 0; i < node->fn_decl.body->block.stmt_count; i++)
                     compile_node(&fn_compiler, node->fn_decl.body->block.stmts[i]);
@@ -1418,6 +1442,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             ObjFunction *func = (ObjFunction *)calloc(1, sizeof(ObjFunction));
             func->obj.type = VAL_FUNCTION;
             func->arity = node->fn_decl.param_count;
+            func->is_module_init = node->fn_decl.is_module_init;
             func->code = fn_chunk.code;
             func->code_count = fn_chunk.count;
             func->code_capacity = fn_chunk.capacity;
@@ -1461,14 +1486,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
             emit_constant(compiler, val_function(func));
             if (fn_compiler.upvalue_count > 0) {
-                for (int i = 0; i < fn_compiler.upvalue_count; i++) {
-                    if (fn_compiler.upvalue_is_local[i]) {
-                        emit_bytes(compiler, BC_GET_LOCAL, fn_compiler.upvalue_index[i]);
-                    } else {
-                        emit_bytes(compiler, BC_GET_UPVALUE, fn_compiler.upvalue_index[i]);
-                    }
-                }
                 emit_bytes(compiler, BC_CLOSURE, (uint8_t)fn_compiler.upvalue_count);
+                for (int i = 0; i < fn_compiler.upvalue_count; i++) {
+                    emit_byte(compiler, fn_compiler.upvalue_is_local[i] ? 1 : 0);
+                    emit_byte(compiler, fn_compiler.upvalue_index[i]);
+                }
             }
             if (node->fn_decl.is_method && node->fn_decl.impl_type) {
                 emit_byte(compiler, BC_REGISTER_METHOD);
@@ -1486,14 +1508,22 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 }
             }
             /* Lambdas (name "__lambda__") are expressions, not statements —
-             * skip BC_DEFINE_GLOBAL so the function value stays on the stack. */
+             * skip binding so the function value stays on the stack. */
             if (strcmp(node->fn_decl.name, "__lambda__") != 0) {
-                emit_byte(compiler, BC_DEFINE_GLOBAL);
-                {
-                    ObjString *s = copy_string(node->fn_decl.name,
-                                               (int)strlen(node->fn_decl.name));
-                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
-                    emit_short(compiler, (uint16_t)idx);
+                if (compiler->in_function) {
+                    int idx = compiler_find_local(compiler, node->fn_decl.name);
+                    if (idx < 0 || compiler->local_depths[idx] < compiler->scope_depth) {
+                        idx = compiler_add_local(compiler, node->fn_decl.name);
+                    }
+                    emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)idx);
+                } else {
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    {
+                        ObjString *s = copy_string(node->fn_decl.name,
+                                                   (int)strlen(node->fn_decl.name));
+                        int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                        emit_short(compiler, (uint16_t)idx);
+                    }
                 }
             }
             break;
@@ -2282,6 +2312,8 @@ void vm_init(VM *vm, Compiler *compiler) {
     memset(vm->globals, 0, sizeof(vm->globals));
     vm->ffi_entries = NULL;
     vm->ffi_entry_count = 0;
+    vm->assets = NULL;
+    vm->asset_count = 0;
     vm->actor_field_count = 0;
     vm->cache_map = NULL;
     vm->cache_map_count = 0;
@@ -2302,6 +2334,7 @@ void vm_init(VM *vm, Compiler *compiler) {
 /* Called at the start of vm_run to resolve all FFI declarations */
 static bool vm_resolve_ffi(VM *vm) {
     Compiler *compiler = vm->compiler;
+    if (!compiler) return true;
     if (compiler->ffi_decl_count == 0) return true;
 
     vm->ffi_entries = (VMFFIEntry *)calloc((size_t)compiler->ffi_decl_count, sizeof(VMFFIEntry));
@@ -2350,10 +2383,15 @@ void runtime_error(VM *vm, const char *format, ...) {
             int offset = (int)(frame->ip - frame->function->code - 1);
             if (offset < 0) offset = 0;
             int line = 0;
-            if (frame->function == vm->main_fn) {
+            ObjFunction *fn = frame->function;
+            /* The source-run path keeps main_fn's line table in the live
+             * compiler chunk; the bundle (.vnb) and AOT paths have no compiler
+             * but every ObjFunction carries its own RLE table — fall back to it
+             * so a runtime error in a built artifact reports a line instead of
+             * dereferencing a NULL compiler. */
+            if (fn == vm->main_fn && vm->compiler && vm->compiler->chunk) {
                 line = chunk_get_line(vm->compiler->chunk, offset);
             } else {
-                ObjFunction *fn = frame->function;
                 int pos = 0;
                 for (int j = 0; j < fn->rle_count; j++) {
                     pos += fn->rle_counts[j];
@@ -2367,7 +2405,10 @@ void runtime_error(VM *vm, const char *format, ...) {
                  * module, so keep the raw number. */
                 int disp_line = line - vm->prelude_line_count;
                 if (disp_line <= 0) disp_line = line;
-                fprintf(stderr, "[line %d] in script\n", disp_line);
+                /* A natively-compiled (AOT) frame has no bytecode position, so
+                 * `line` can be 0 — don't print a misleading "[line 0]". */
+                if (line >= 1) fprintf(stderr, "[line %d] in script\n", disp_line);
+                else           fprintf(stderr, "in script (compiled binary)\n");
                 if (vm->source && line >= 1) {
                     const char *p = vm->source;
                     int cur = 1;
@@ -2752,6 +2793,24 @@ Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) 
         }
     }
     return NULL;
+}
+
+void close_upvalues(VM *vm, CallFrame *frame) {
+    for (Obj *obj = vm->objects; obj != NULL; obj = obj->next) {
+        if (obj->type == VAL_CLOSURE) {
+            ObjClosure *closure = (ObjClosure *)obj;
+            /* Only snapshot closures that captured locals of THIS frame — the
+             * slot indices are meaningless against any other frame's slots. */
+            if (closure->captured_slots && closure->captured_owner == frame->slots) {
+                for (int i = 0; i < closure->captured_count; i++) {
+                    if (closure->captured_slots[i] >= 0) {
+                        closure->captured[i] = frame->slots[closure->captured_slots[i]];
+                        closure->captured_slots[i] = -1;
+                    }
+                }
+            }
+        }
+    }
 }
 
 /* ─── Forward declarations ─── */
@@ -3628,9 +3687,28 @@ L_BC_LOOP_TOP:
                 ObjClosure *closure = new_closure(NULL, upvalue_count);
                 closure->obj.next = vm->objects;
                 vm->objects = (Obj*)closure;
-                for (int i = upvalue_count - 1; i >= 0; i--) {
-                    closure->captured[i] = POP();
+                
+                closure->captured_slots = (int *)malloc(sizeof(int) * upvalue_count);
+                CallFrame *frame = &t->frames[t->frame_count - 1];
+                closure->captured_owner = frame->slots;  /* identity for close_upvalues */
+                /* Only a module initializer defers its captures: its hoisted
+                 * siblings are captured before assignment, so they must be
+                 * snapshotted at frame return. Every other function captures by
+                 * value right here (slot marked -1 = already closed), which is
+                 * the correct, footgun-free semantics for loops and currying. */
+                bool defer = (frame->function && frame->function->is_module_init);
+                for (int i = 0; i < upvalue_count; i++) {
+                    uint8_t is_local = READ_BYTE();
+                    uint8_t index = READ_BYTE();
+                    if (is_local) {
+                        closure->captured_slots[i] = defer ? index : -1;
+                        closure->captured[i] = frame->slots[index];
+                    } else {
+                        closure->captured_slots[i] = -1;
+                        closure->captured[i] = frame->closure->captured[index];
+                    }
                 }
+                
                 Value fn_val = POP();
                 closure->function = fn_val.as.function;
                 PUSH(val_closure(closure));
@@ -3856,6 +3934,8 @@ L_BC_LOOP_TOP:
                     t->cache_on_return = false;
                 }
                 CallFrame *frame = &t->frames[t->frame_count - 1];
+                if (frame->function && frame->function->is_module_init)
+                    close_upvalues(vm, frame);   /* only modules defer-close */
                 /* Reset to the call site's recorded base, discarding args
                  * AND any locals/temporaries pushed during the function
                  * body (e.g. for-loop counters) that an early `return` from
@@ -3891,6 +3971,8 @@ L_BC_LOOP_TOP:
                     tmp_vals[i] = t->stack[t->stack_top - rcount + i];
 
                 CallFrame *frame = &t->frames[t->frame_count - 1];
+                if (frame->function && frame->function->is_module_init)
+                    close_upvalues(vm, frame);   /* only modules defer-close */
                 /* See BC_RETURN for why this uses the recorded base. */
                 int base = frame->return_base;
                 t->frame_count--;
@@ -4930,6 +5012,17 @@ void vm_free(VM *vm) {
     vm->ffi_entries = NULL;
     vm->ffi_entry_count = 0;
 
+    /* Free Virtual Assets */
+    if (vm->assets) {
+        for (int i = 0; i < vm->asset_count; i++) {
+            free(vm->assets[i].path);
+            free(vm->assets[i].data);
+        }
+        free(vm->assets);
+        vm->assets = NULL;
+        vm->asset_count = 0;
+    }
+
     /* Close all loaded FFI library handles */
     ffi_close_all_libs();
 
@@ -4954,4 +5047,25 @@ void vm_free(VM *vm) {
     vm->tasks = NULL;
     vm->task_count = 0;
     vm->task_capacity = 0;
+}
+
+const unsigned char *vm_lookup_asset(VM *vm, const char *path, int *out_size) {
+    if (!vm || !vm->assets || !path) return NULL;
+    
+    // Normalize path by stripping leading "./" or "/"
+    const char *norm = path;
+    if (norm[0] == '.' && norm[1] == '/') norm += 2;
+    else if (norm[0] == '/') norm += 1;
+    
+    for (int i = 0; i < vm->asset_count; i++) {
+        const char *ap = vm->assets[i].path;
+        if (ap[0] == '.' && ap[1] == '/') ap += 2;
+        else if (ap[0] == '/') ap += 1;
+        
+        if (strcmp(ap, norm) == 0) {
+            *out_size = vm->assets[i].size;
+            return vm->assets[i].data;
+        }
+    }
+    return NULL;
 }

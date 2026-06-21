@@ -9,10 +9,12 @@ BUILDDIR = build
 SRCS = $(wildcard $(SRCDIR)/*.c)
 OBJS = $(patsubst $(SRCDIR)/%.c, $(BUILDDIR)/%.o, $(SRCS))
 TARGET = vn
+LIB_TARGET = libvarian.a
+LIB_OBJS = $(filter-out $(BUILDDIR)/main.o, $(OBJS))
 
 .PHONY: all clean test run
 
-all: $(BUILDDIR) $(TARGET)
+all: $(BUILDDIR) $(TARGET) $(LIB_TARGET)
 
 $(BUILDDIR):
 	mkdir -p $(BUILDDIR)
@@ -22,6 +24,9 @@ $(BUILDDIR)/%.o: $(SRCDIR)/%.c $(INCDIR)/*.h | $(BUILDDIR)
 
 $(TARGET): $(OBJS)
 	$(CC) $(CFLAGS) $^ -o $@ $(LDFLAGS)
+
+$(LIB_TARGET): $(LIB_OBJS)
+	ar rcs $@ $^
 
 test: $(TARGET)
 	@echo "Running lexer/parser tests..."
@@ -52,7 +57,7 @@ asan: LDFLAGS += -fsanitize=address,undefined
 asan: clean $(TARGET)
 
 clean:
-	rm -rf $(BUILDDIR) $(TARGET)
+	rm -rf $(BUILDDIR) $(TARGET) $(LIB_TARGET)
 
 # Example test files
 .PHONY: examples

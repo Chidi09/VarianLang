@@ -1,0 +1,46 @@
+// Closure capture semantics. The module-init deferral (used by `use "pkg" as ns`)
+// must NOT change ordinary closures: a closure captures by value at creation, so
+// a loop variable is captured per-iteration, not shared.
+
+fn build_loop_closures() {
+    let fns = []
+    for i in 0..3 {
+        fns = fns.push(|x| { return i })
+    }
+    return fns
+}
+
+fn build_curry() {
+    let out = []
+    for k in 0..3 {
+        out = out.push(|y| { return k + y })
+    }
+    return out
+}
+
+fn make_counter() {
+    let n = 0
+    return |inc| { n = n + inc; return n }
+}
+
+let _loop = build_loop_closures()
+let _curry = build_curry()
+let _counter = make_counter()
+
+test "loop variable is captured per iteration, not shared" {
+    assert_eq(_loop[0](0), 0)
+    assert_eq(_loop[1](0), 1)
+    assert_eq(_loop[2](0), 2)
+}
+
+test "each closure in a loop keeps its own captured value" {
+    assert_eq(_curry[0](100), 100)
+    assert_eq(_curry[1](100), 101)
+    assert_eq(_curry[2](100), 102)
+}
+
+test "a closure can mutate its own captured cell across calls" {
+    assert_eq(_counter(1), 1)
+    assert_eq(_counter(1), 2)
+    assert_eq(_counter(5), 7)
+}

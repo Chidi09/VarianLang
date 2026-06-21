@@ -126,6 +126,7 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     node->fn_decl.is_pub = is_pub;
     node->fn_decl.is_async = is_async;
     node->fn_decl.is_method = is_method;
+    node->fn_decl.is_module_init = false;
     if (impl_type) {
         node->fn_decl.impl_type = (char *)arena_alloc(arena, strlen(impl_type) + 1);
         strcpy(node->fn_decl.impl_type, impl_type);

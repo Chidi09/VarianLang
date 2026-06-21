@@ -217,6 +217,13 @@ struct ObjFunction {
     int *rle_counts;
     int rle_count;
     AotFunc aot_func;
+    /* True only for a synthesized `use "pkg" as ns` module initializer. Its
+     * hoisted sibling functions capture each other before assignment, so their
+     * upvalues must be snapshotted at this frame's return (deferred close).
+     * Every other function captures by value at creation — so ordinary closures
+     * (loops, currying) keep clox-free value semantics and `close_upvalues`
+     * never runs on their returns. */
+    bool is_module_init;
 };
 
 struct ObjClosure {
@@ -224,6 +231,11 @@ struct ObjClosure {
     ObjFunction *function;
     Value *captured;       /* copied by value at creation time, not live cells */
     int captured_count;
+    int *captured_slots;
+    Value *captured_owner; /* slot-base of the frame whose locals this closure
+                            * captured; close_upvalues() closes only a matching
+                            * frame, so a returning frame can't corrupt the
+                            * upvalues of unrelated closures. */
 };
 
 /* ─── Chunk (bytecode sequence) ─── */
@@ -509,6 +521,12 @@ typedef struct {
 #define STACK_MAX 4096
 #define FRAMES_MAX 256
 
+typedef struct {
+    char *path;
+    unsigned char *data;
+    int size;
+} VMAsset;
+
 typedef struct VM {
     Task **tasks;
     int    task_count;
@@ -548,6 +566,9 @@ typedef struct VM {
     /* FFI registry */
     VMFFIEntry *ffi_entries;
     int ffi_entry_count;
+    /* Virtual assets */
+    VMAsset *assets;
+    int asset_count;
     /* Actor field registry */
     ActorFieldInfo actor_fields[MAX_ACTOR_TYPES];
     int actor_field_count;
@@ -603,6 +624,7 @@ void vm_init(VM *vm, Compiler *compiler);
 /* Run a chunk of bytecode.  If run_tests is true, also execute registered tests.
    Returns true if no errors occurred during main execution AND all tests passed. */
 bool vm_run(VM *vm, bool run_tests);
+void close_upvalues(VM *vm, CallFrame *frame);
 int aot_compile(const char *source, const char *filename, const char *out_path);
 
 /* Execute a task's bytecode synchronously (used by native functions). */
@@ -610,6 +632,7 @@ bool task_run(VM *vm, Task *task);
 
 /* Free heap objects */
 void vm_free(VM *vm);
+const unsigned char *vm_lookup_asset(VM *vm, const char *path, int *out_size);
 
 /* Set by main.c before the top-level vm_run() for "vn <file>"/"vn run <file>".
  * Used by lib_http.c's cluster worker threads to independently re-parse and

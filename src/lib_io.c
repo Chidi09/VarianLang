@@ -22,6 +22,13 @@ static Value lib_io_read_text(VM *vm, int arg_count, Value *args) {
 
     const char *path = args[base].as.string->chars;
 
+    int asset_size = 0;
+    const unsigned char *asset_data = vm_lookup_asset(vm, path, &asset_size);
+    if (asset_data) {
+        ObjString *s = allocate_string(vm, (const char *)asset_data, asset_size);
+        return val_string(s);
+    }
+
     FILE *f = fopen(path, "rb");
     if (!f) return val_nil();
 
@@ -69,6 +76,13 @@ static Value lib_io_read_bytes(VM *vm, int arg_count, Value *args) {
         return val_nil();
 
     const char *path = args[base].as.string->chars;
+
+    int asset_size = 0;
+    const unsigned char *asset_data = vm_lookup_asset(vm, path, &asset_size);
+    if (asset_data) {
+        ObjString *s = allocate_string(vm, (const char *)asset_data, asset_size);
+        return val_string(s);
+    }
 
     FILE *f = fopen(path, "rb");
     if (!f) return val_nil();

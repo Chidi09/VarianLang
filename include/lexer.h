@@ -76,7 +76,7 @@ typedef enum {
     TOKEN_TRY, TOKEN_CATCH,
     TOKEN_ASSERT, TOKEN_TEST,
     TOKEN_TRUE, TOKEN_FALSE,
-    TOKEN_NULL,
+    TOKEN_NULL, TOKEN_AS,
 
     /* Type keywords */
     TOKEN_TYPE_BOOL,

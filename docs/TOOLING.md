@@ -95,25 +95,61 @@ pipeline `vn run`/`vn test` use). Output is one line per finding:
 `--only <category>` filters to one category; `--format json` emits machine-readable
 output instead of the plain-text lines above.
 
-## `vn add` / `vn wrap` — package scaffolding
+## Package Management & Registry (`vn add`, `vn remove`, `vn install`, `vn update`, `vn search`)
 
-```
-vn add some-package
-```
+For detailed information on Varian's package registry architecture, transitive resolution, capabilities, and version ranges, see **[Constellation Documentation](file:///root/dev/VarianLang/docs/CONSTELLATION.md)**.
 
-Appends `some-package = "latest"` to `varian.pkg` (creating it with a `[deps]` header if
-it doesn't exist yet) and creates `vn_modules/` if missing. This is bookkeeping only —
-there is no registry, fetch, or version resolution implemented; it just records intent.
+* **Add a package dependency**:
+  ```
+  vn add <pkg_name>
+  ```
+  Appends `<pkg_name> = "latest"` to `constellation.toml` (initializing a new manifest if missing).
 
-```
-vn wrap python:requests
-```
+* **Remove a dependency**:
+  ```
+  vn remove <pkg_name>
+  ```
+  Removes the package from the manifest, prunes its directory and any unused transitive dependencies under `vn_modules/`, and updates the lockfile.
 
-The only currently-supported wrap target is `python:<module>`: it introspects the named
-Python module (spawning Python to list its public functions) and writes
-`vn_modules/<module>.vn`, a generated wrapper whose functions call through to
-`python.run(module, fn, args)` (see `docs/STDLIB.md`) so the rest of your Varian code can
-call it like any other module without spelling out `python.run` every time.
+* **Install dependencies**:
+  ```
+  vn install [--frozen]
+  ```
+  Fetches direct Git and index-resolved dependencies recursively, extracts them to `vn_modules/`, and writes the `constellation.lock` file. The `--frozen` flag prevents index updates and fails if the lockfile is out of sync.
+
+* **Update dependencies**:
+  ```
+  vn update
+  ```
+  Forces fresh queries to Git/registry index to re-resolve matching versions, computes updated SHA-256 integrity hashes, and rewrites the lockfile.
+
+* **Search registry**:
+  ```
+  vn search <query>
+  ```
+  Queries the registry index for packages matching `<query>` (or `"*"` for all) and lists their registered versions.
+
+* **Wrapping foreign libraries**:
+  ```
+  vn wrap python:requests
+  ```
+  Introspects a Python module and writes `vn_modules/<module>.vn` wrapper functions calling `python.run(module, fn, args)` (see **[Standard Library Docs](file:///root/dev/VarianLang/docs/STDLIB.md)**).
+
+## Build Orchestration (Kiln — `vn build`)
+
+Varian applications are assembled and compiled using Kiln. For detailed information on bytecode container formats, native AOT compile harnesses, and compilation caching, see **[Kiln Documentation](file:///root/dev/VarianLang/docs/KILN.md)**.
+
+* **Build a portable bytecode bundle**:
+  ```
+  vn build
+  ```
+  Assembles all source files and compiles them into a fast, portable `app.vnb` bytecode container (executable directly via `vn app.vnb`).
+  
+* **Build a native standalone binary**:
+  ```
+  vn build --release
+  ```
+  Compiles Varian code directly to optimized C via AOT, compiles it with the host compiler, and links it against `libvarian.a` to produce a standalone executable binary.
 
 ## Building from source
 

@@ -17,6 +17,12 @@ aot_test
 *.db
 *.bak
 
+# Kiln build artifacts
+.kiln/
+*.vnb
+.lumen-build.vn
+.lumen-boot.vn
+
 # Scratch / experiments
 scratch/
 test_stack*.vn

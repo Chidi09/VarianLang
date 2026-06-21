@@ -11,11 +11,42 @@
 #include <stdbool.h>
 #include <ctype.h>
 
+#include <ctype.h>
+
+static bool is_lumen_file(const char *uri) {
+    if (!uri) return false;
+    size_t len = strlen(uri);
+    return (len > 6 && strcmp(uri + len - 6, ".lumen") == 0);
+}
+
+static char *blank_lumen_html(const char *text) {
+    char *res = strdup(text);
+    const char *start = strstr(res, "<script>");
+    if (!start) {
+        for (char *p = res; *p; p++) {
+            if (*p != '\n' && *p != '\r') *p = ' ';
+        }
+        return res;
+    }
+    start += 8;
+    const char *end = strstr(start, "</script>");
+    if (!end) end = res + strlen(res);
+    for (char *p = res; p < start; p++) {
+        if (*p != '\n' && *p != '\r') *p = ' ';
+    }
+    for (char *p = (char*)end; *p; p++) {
+        if (*p != '\n' && *p != '\r') *p = ' ';
+    }
+    return res;
+}
+
 #define MAX_DOCS 32
 static struct {
     char *uri;
     char *text;
 } g_docs[MAX_DOCS];
+
+static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out, int *out_line_offset);
 static int g_doc_count = 0;
 
 static void update_doc(const char *uri, const char *text) {
@@ -209,7 +240,64 @@ static void run_lint_and_publish(const char *uri, const char *text) {
     ctx.sink = lsp_lint_sink;
     ctx.sink_ud = &sink;
     
-    lint_buffer(text, uri, &ctx);
+    char *processed = is_lumen_file(uri) ? blank_lumen_html(text) : strdup(text);
+    lint_buffer(processed, uri, &ctx);
+    
+    /* Cross-check Lumen <template> bindings against the <script> AST */
+    if (is_lumen_file(uri)) {
+        int line_offset = 0;
+        Arena *arena = NULL;
+        AstNode *program = parse_doc(processed, uri, &arena, &line_offset);
+        if (program) {
+            int handler_count = 0;
+            const char *handlers[128];
+            for (int i = 0; i < program->program.stmt_count; i++) {
+                AstNode *s = program->program.stmts[i];
+                if (s->kind == NODE_FN_DECL && strcmp(s->fn_decl.name, "state") != 0) {
+                    if (handler_count < 128) {
+                        handlers[handler_count++] = s->fn_decl.name;
+                    }
+                }
+            }
+            
+            const char *tpl = strstr(text, "<template>");
+            if (tpl) {
+                const char *tpl_end = strstr(tpl, "</template>");
+                if (tpl_end) {
+                    const char *p = tpl;
+                    while ((p = strchr(p, '@')) != NULL && p < tpl_end) {
+                        p++;
+                        while (*p && isalpha(*p)) p++;
+                        if (*p == '=' && p[1] == '"') {
+                            p += 2;
+                            const char *h_start = p;
+                            while (*p && *p != '"') p++;
+                            int h_len = p - h_start;
+                            if (h_len > 0) {
+                                bool found = false;
+                                for (int i = 0; i < handler_count; i++) {
+                                    if (strlen(handlers[i]) == (size_t)h_len && strncmp(handlers[i], h_start, h_len) == 0) {
+                                        found = true; break;
+                                    }
+                                }
+                                if (!found) {
+                                    int l = 0, c = 0;
+                                    for (const char *q = text; q < h_start; q++) {
+                                        if (*q == '\n') { l++; c = 0; } else { c++; }
+                                    }
+                                    char msg[256];
+                                    snprintf(msg, sizeof(msg), "Lumen error: Handler '%.*s' is bound in template but not defined in <script>", h_len, h_start);
+                                    lsp_lint_sink(&sink, l + 1, c + 1, "syntax", msg);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            arena_destroy(arena);
+        }
+    }
+    free(processed);
     
     char *uri_enc = encode_json_string(uri);
     size_t out_cap = sink.diags_len + strlen(uri_enc) + 256;
@@ -233,8 +321,46 @@ static void handle_formatting(int id, const char *uri) {
         return;
     }
     
+    int sl = 0, sc = 0;
+    int el = 0, ec = 0;
+    char *to_format = NULL;
+    size_t len = 0;
+
+    if (is_lumen_file(uri)) {
+        const char *tag = strstr(text, "<script>");
+        if (!tag) {
+            char buf[256];
+            snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+            send_response(buf);
+            return;
+        }
+        const char *script_start = tag + 8;
+        const char *script_end = strstr(script_start, "</script>");
+        if (!script_end) script_end = text + strlen(text);
+        
+        for (const char *p = text; p < script_start; p++) {
+            if (*p == '\n') { sl++; sc = 0; } else { sc++; }
+        }
+        el = sl; ec = sc;
+        for (const char *p = script_start; p < script_end; p++) {
+            if (*p == '\n') { el++; ec = 0; } else { ec++; }
+        }
+        len = script_end - script_start;
+        to_format = malloc(len + 1);
+        memcpy(to_format, script_start, len);
+        to_format[len] = '\0';
+    } else {
+        to_format = strdup(text);
+        len = strlen(to_format);
+        for (const char *p = to_format; *p; p++) {
+            if (*p == '\n') { el++; ec = 0; } else { ec++; }
+        }
+    }
+    
     int out_pos = 0;
-    char *formatted = fmt_format_source(text, strlen(text), &out_pos);
+    char *formatted = fmt_format_source(to_format, len, &out_pos);
+    free(to_format);
+
     if (!formatted) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -246,17 +372,12 @@ static void handle_formatting(int id, const char *uri) {
     memcpy(safe_fmt, formatted, out_pos);
     safe_fmt[out_pos] = '\0';
     
-    int lines = 0;
-    for (const char *p = text; *p; p++) {
-        if (*p == '\n') lines++;
-    }
-    
     char *fmt_enc = encode_json_string(safe_fmt);
     size_t out_cap = strlen(fmt_enc) + 512;
     char *out_json = malloc(out_cap);
     snprintf(out_json, out_cap,
-             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[{\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":%d,\"character\":0}},\"newText\":%s}]}",
-             id, lines + 1, fmt_enc);
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":%s}]}",
+             id, sl, sc, el, ec, fmt_enc);
     send_response(out_json);
     
     free(safe_fmt);
@@ -644,7 +765,7 @@ static AstNode *parse_doc(const char *source, const char *path, Arena **arena_ou
         memcpy(full_source + plen + 1, source, olen);
         full_source[plen + 1 + olen] = '\0';
     } else {
-        full_source = strdup(source);
+        full_source = is_lumen_file(path) ? blank_lumen_html(source) : strdup(source);
     }
 
     Lexer lexer;
@@ -664,6 +785,61 @@ static AstNode *parse_doc(const char *source, const char *path, Arena **arena_ou
     free(full_source);
     if (out_line_offset) *out_line_offset = line_offset;
     return program;
+}
+
+static char *extract_docstring(const char *source, int decl_line, int line_offset) {
+    int target_line = decl_line - 1 - line_offset;
+    if (target_line <= 0) return NULL;
+    
+    const char *p = source;
+    int cur_line = 0;
+    while (*p && cur_line < target_line) {
+        if (*p == '\n') cur_line++;
+        p++;
+    }
+    
+    const char *lines[100];
+    int line_lens[100];
+    int count = 0;
+    
+    const char *curr = p - 1;
+    while (curr > source && count < 100) {
+        const char *line_end = curr;
+        if (*line_end == '\n') {
+            curr--;
+            line_end = curr;
+            if (curr <= source) break;
+        }
+        while (curr > source && *curr != '\n') {
+            curr--;
+        }
+        const char *line_start = (curr == source) ? source : curr + 1;
+        
+        const char *s = line_start;
+        while (s <= line_end && (*s == ' ' || *s == '\t')) s++;
+        
+        if (s + 1 <= line_end && s[0] == '/' && s[1] == '/') {
+            s += 2;
+            while (s <= line_end && (*s == ' ' || *s == '\t')) s++;
+            lines[count] = s;
+            line_lens[count] = line_end - s + 1;
+            count++;
+        } else {
+            break;
+        }
+    }
+    
+    if (count == 0) return NULL;
+    
+    size_t total = 0;
+    for (int i = 0; i < count; i++) total += line_lens[i] + 1;
+    char *res = malloc(total + 1);
+    res[0] = '\0';
+    for (int i = count - 1; i >= 0; i--) {
+        strncat(res, lines[i], line_lens[i]);
+        strcat(res, "\n");
+    }
+    return res;
 }
 
 /* ────────────────────────────────────────────────
@@ -712,9 +888,15 @@ static void handle_hover(int id, const char *json, const char *uri) {
             AstNode *decl = find_decl(program, name);
             if (decl) {
                 char *sig = decl_signature(decl);
-                size_t mlen = strlen(sig) + 128;
+                char *doc = extract_docstring(text, decl->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 128;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```\n\n**%s**", sig, name);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s\n\n**%s**", sig, doc, name);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n**%s**", sig, name);
+                }
                 free(sig);
             } else {
                 size_t mlen = strlen(name) + 64;
@@ -723,9 +905,15 @@ static void handle_hover(int id, const char *json, const char *uri) {
             }
         } else if (found->kind == NODE_FN_DECL && CURSOR_ON_NAME(found, found->fn_decl.name)) {
             char *sig = decl_signature(found);
-            size_t mlen = strlen(sig) + 64;
+            char *doc = extract_docstring(text, found->loc.line, line_offset);
+            size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
             markdown = malloc(mlen);
-            snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            if (doc) {
+                snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                free(doc);
+            } else {
+                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+            }
             free(sig);
         } else if (found->kind == NODE_STRUCT_DECL && CURSOR_ON_NAME(found, found->struct_decl.name)) {
             char *sig = decl_signature(found);
@@ -751,9 +939,15 @@ static void handle_hover(int id, const char *json, const char *uri) {
                 AstNode *decl = find_decl(program, name);
                 if (decl) {
                     char *sig = decl_signature(decl);
-                    size_t mlen = strlen(sig) + 128;
+                    char *doc = extract_docstring(text, decl->loc.line, line_offset);
+                    size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 128;
                     markdown = malloc(mlen);
-                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                    if (doc) {
+                        snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                        free(doc);
+                    } else {
+                        snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                    }
                     free(sig);
                 }
             }
@@ -813,13 +1007,15 @@ static void handle_completion(int id, const char *json, const char *uri) {
         "bool", "int", "float", "string", "byte", "void", "self",
         /* Standard library modules */
         "http", "regex", "io", "math", "env", "time", "json", "string", "sqlite",
-        "postgres", "redis", "auth", "validate", "sanitize", "crypto",
+        "postgres", "redis", "auth", "validate", "sanitize", "crypto", "zenith",
         /* Common methods */
         "len", "push", "get", "post", "query", "split", "trim", "replace",
         "contains", "starts_with", "ends_with", "index_of", "last_index_of",
         "substring", "upper", "lower",
         "read_text", "write_text", "read_bytes", "write_bytes",
         "exists", "delete", "list_dir", "mkdir",
+        /* Zenith specific */
+        "serve", "serve_tls", "middleware", "json", "html", "text", "param", "status", "redirect",
     };
     int kw_count = sizeof(keywords) / sizeof(keywords[0]);
 

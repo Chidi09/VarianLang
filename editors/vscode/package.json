@@ -25,7 +25,8 @@
                 ],
                 "extensions": [
                     ".vn",
-                    ".vhtml"
+                    ".vhtml",
+                    ".lumen"
                 ]
             }
         ],

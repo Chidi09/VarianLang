@@ -182,6 +182,7 @@ struct AstNode {
             bool is_pub;
             bool is_async;
             bool is_method;
+            bool is_module_init;
             char *impl_type;
             /* Metadata decorators */
             char **decorator_keys;

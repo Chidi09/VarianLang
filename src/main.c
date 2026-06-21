@@ -5,6 +5,7 @@
 #include "fmt.h"
 #include "test_runner.h"
 #include "pkg_manager.h"
+#include "vnb.h"
 #include "lint.h"
 #include "lsp.h"
 
@@ -24,6 +25,71 @@
  * cluster worker threads can independently re-load the same script. */
 const char *g_varian_script_path = NULL;
 static int g_prelude_line_count = 0;
+
+static uint64_t fnv1a_hash(const char *str, size_t len) {
+    uint64_t hash = 0xcbf29ce484222325ULL;
+    for (size_t i = 0; i < len; i++) {
+        hash ^= (uint8_t)str[i];
+        hash *= 0x00000100000001B3ULL;
+    }
+    return hash;
+}
+
+static void ensure_dir(const char *path) {
+    mkdir(path, 0755);
+}
+
+static bool copy_file(const char *src, const char *dst) {
+    FILE *sf = fopen(src, "rb");
+    if (!sf) return false;
+    FILE *df = fopen(dst, "wb");
+    if (!df) { fclose(sf); return false; }
+    char buf[8192];
+    size_t bytes;
+    while ((bytes = fread(buf, 1, sizeof(buf), sf)) > 0) {
+        fwrite(buf, 1, bytes, df);
+    }
+    fclose(sf);
+    fclose(df);
+    return true;
+}
+
+static void collect_assets_recursive(const char *dir_path, VMAsset **assets, int *count, int *capacity) {
+    DIR *d = opendir(dir_path);
+    if (!d) return;
+    struct dirent *entry;
+    while ((entry = readdir(d)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        char full_path[1024];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        struct stat st;
+        if (stat(full_path, &st) == 0) {
+            if (S_ISDIR(st.st_mode)) {
+                collect_assets_recursive(full_path, assets, count, capacity);
+            } else if (S_ISREG(st.st_mode)) {
+                FILE *f = fopen(full_path, "rb");
+                if (f) {
+                    fseek(f, 0, SEEK_END);
+                    long sz = ftell(f);
+                    rewind(f);
+                    unsigned char *data = malloc((size_t)sz);
+                    size_t read_bytes = fread(data, 1, (size_t)sz, f);
+                    fclose(f);
+                    
+                    if (*count >= *capacity) {
+                        *capacity = *capacity ? *capacity * 2 : 16;
+                        *assets = realloc(*assets, (size_t)(*capacity) * sizeof(VMAsset));
+                    }
+                    (*assets)[*count].path = strdup(full_path);
+                    (*assets)[*count].data = data;
+                    (*assets)[*count].size = (int)read_bytes;
+                    (*count)++;
+                }
+            }
+        }
+    }
+    closedir(d);
+}
 
 #ifndef VARIAN_VERSION
 #define VARIAN_VERSION "0.1.0"
@@ -128,10 +194,14 @@ static char *read_directory_sources(const char *dir_path) {
     return result;
 }
 
-/* Locate the vn_modules prelude directory independent of CWD, so the tooling
- * (vn dev / vn run) works from any project folder, not just the repo root.
- * Search order: $VARIAN_HOME, ./vn_modules (repo dev), then relative to the
- * executable (install layouts). Returns a pointer to a static buffer or NULL. */
+/* Locate the standard-library prelude directory (the top-level vn_modules/*.vn
+ * the runtime auto-loads). This is a TOOLCHAIN location, deliberately resolved
+ * independent of CWD: a user's project has its OWN ./vn_modules holding vendored
+ * Constellation packages (subdirs, loaded on-demand via `use`), and that must
+ * NOT be mistaken for the stdlib — otherwise a project with deps would shadow
+ * and lose the entire stdlib. Search order: $VARIAN_HOME, then relative to the
+ * executable (repo dev + install layouts), and only as a last resort ./vn_modules
+ * (for a standalone tree with no install). Returns a static buffer or NULL. */
 static const char *resolve_vn_modules_dir(void) {
     static char found[2048];
     DIR *d;
@@ -140,12 +210,6 @@ static const char *resolve_vn_modules_dir(void) {
     if (home && *home) {
         snprintf(found, sizeof(found), "%s/vn_modules", home);
         if ((d = opendir(found))) { closedir(d); return found; }
-    }
-
-    if ((d = opendir("vn_modules"))) {
-        closedir(d);
-        snprintf(found, sizeof(found), "vn_modules");
-        return found;
     }
 
     char exe[2048];
@@ -162,6 +226,13 @@ static const char *resolve_vn_modules_dir(void) {
             snprintf(found, sizeof(found), "%s/../lib/varian/vn_modules", exe);
             if ((d = opendir(found))) { closedir(d); return found; }
         }
+    }
+
+    /* Last resort only — a source tree run with no install and no $VARIAN_HOME. */
+    if ((d = opendir("vn_modules"))) {
+        closedir(d);
+        snprintf(found, sizeof(found), "vn_modules");
+        return found;
     }
     return NULL;
 }
@@ -1400,7 +1471,14 @@ static void print_help(const char *prog) {
     printf("  %s test [dir] [--filter <substr>] [--timeout <secs>]\n", prog);
     printf("                   Run *_test.vn tests (default dir: .)\n");
     printf("  %s add <pkg>     Add a package dependency\n", prog);
+    printf("  %s remove <pkg>  Remove a package\n", prog);
+    printf("  %s install [--frozen]\n", prog);
+    printf("  %s update      Update dependencies\n", prog);
+    printf("  %s search <q>  Search the registry\n", prog);
+    printf("  %s publish     Publish package to the registry\n", prog);
+    printf("\nLanguage Tooling:\n");
     printf("  %s wrap <target> Generate wrapper for a foreign library\n", prog);
+    printf("  %s build <file>  Build app.vnb (or --release for native binary)\n", prog);
     printf("  %s lsp           Start LSP server\n", prog);
     printf("\n");
     printf("Lumen (frontend):\n");
@@ -1683,6 +1761,39 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         return pkg_add(argv[2]);
+    } else if (strcmp(argv[1], "remove") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s remove <pkg_name>\n", argv[0]);
+            return 1;
+        }
+        return pkg_remove(argv[2]);
+    } else if (strcmp(argv[1], "publish") == 0) {
+        return pkg_publish();
+    } else if (strcmp(argv[1], "install") == 0) {
+        bool frozen = false;
+        if (argc == 3 && strcmp(argv[2], "--frozen") == 0) {
+            frozen = true;
+        } else if (argc > 2) {
+            fprintf(stderr, "Usage: %s install [--frozen]\n", argv[0]);
+            return 1;
+        }
+        return pkg_install(frozen);
+    }
+
+    if (strcmp(argv[1], "update") == 0) {
+        if (argc > 2) {
+            fprintf(stderr, "Usage: %s update\n", argv[0]);
+            return 1;
+        }
+        return pkg_update();
+    }
+
+    if (strcmp(argv[1], "search") == 0) {
+        if (argc != 3) {
+            fprintf(stderr, "Usage: %s search <query>\n", argv[0]);
+            return 1;
+        }
+        return pkg_search(argv[2]);
     }
 
     if (strcmp(argv[1], "wrap") == 0) {
@@ -1709,15 +1820,317 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "run") == 0) {
         if (argc != 3) {
-            fprintf(stderr, "Usage: %s run <file.vn>\n", argv[0]);
+            fprintf(stderr, "Usage: %s run <file.vn | file.vnb>\n", argv[0]);
             return 1;
         }
-        char *source = read_file_with_modules(argv[2]);
+        const char *target = argv[2];
+        size_t len = strlen(target);
+        if (len > 4 && strcmp(target + len - 4, ".vnb") == 0) {
+            VM vm;
+            vm_init(&vm, NULL);
+            ObjFunction *main_fn = vnb_load(&vm, target);
+            if (!main_fn) {
+                fprintf(stderr, "Failed to load %s\n", target);
+                return 1;
+            }
+            vm.source_name = target;
+            vm.main_fn = main_fn;
+            
+            int res = vm_run(&vm, false) ? 0 : 1;
+            vm_free(&vm);
+            return res;
+        }
+        
+        char *source = read_file_with_modules(target);
         if (!source) return 1;
-        g_varian_script_path = argv[2];
-        int result = run_source(source, argv[2]);
+        g_varian_script_path = target;
+        int result = run_source(source, target);
         free(source);
         return result;
+    }
+    
+    if (strcmp(argv[1], "build") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s build <file.vn> [--release] [out_basename]\n", argv[0]);
+            return 1;
+        }
+        const char *entry = argv[2];
+        const char *out_basename = "app";
+        bool release = false;
+        bool static_link = false;
+        const char *cc_compiler = getenv("CC");
+        if (!cc_compiler) cc_compiler = "cc";
+        const char *target_triple = NULL;
+        
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--release") == 0) {
+                release = true;
+            } else if (strcmp(argv[i], "--static") == 0) {
+                static_link = true;
+            } else if (strncmp(argv[i], "--cc=", 5) == 0) {
+                cc_compiler = argv[i] + 5;
+            } else if (strncmp(argv[i], "--target=", 9) == 0) {
+                target_triple = argv[i] + 9;
+            } else {
+                out_basename = argv[i];
+            }
+        }
+        
+        /* Auto-install any declared dependency that isn't vendored yet, so
+         * `use "<pkg>"` resolves during the build instead of erroring. */
+        {
+            struct stat st_toml;
+            if (stat("constellation.toml", &st_toml) == 0) {
+                ConstellationManifest m;
+                if (pkg_manifest_load(&m, "constellation.toml")) {
+                    bool any_missing = false;
+                    for (int i = 0; i < m.dep_count; i++) {
+                        char dp[600];
+                        snprintf(dp, sizeof(dp), "vn_modules/%s", m.deps[i].name);
+                        struct stat ds;
+                        if (stat(dp, &ds) != 0 || !S_ISDIR(ds.st_mode)) { any_missing = true; break; }
+                    }
+                    if (any_missing) {
+                        printf("[Kiln] Installing missing dependencies...\n");
+                        if (pkg_install(false) != 0) {
+                            fprintf(stderr, "[Kiln] dependency install failed.\n");
+                            return 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        const char *build_entry = entry;
+        bool temp_lumen_entry = false;
+        struct stat st_pages;
+        if (stat("pages", &st_pages) == 0 && S_ISDIR(st_pages.st_mode)) {
+            printf("[Kiln] Detected Lumen project (pages/ directory present). Pre-compiling routes...\n");
+            if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
+                fprintf(stderr, "[Kiln] Pre-compilation of Lumen pages failed.\n");
+                return 1;
+            }
+            build_entry = ".lumen-build.vn";
+            temp_lumen_entry = true;
+        }
+        
+        char *source = read_file_with_modules(build_entry);
+        if (!source) {
+            if (temp_lumen_entry) remove(build_entry);
+            return 1;
+        }
+        
+        // Scan public/ directory and collect assets
+        VMAsset *assets = NULL;
+        int asset_count = 0;
+        int asset_capacity = 0;
+        struct stat st_public;
+        if (stat("public", &st_public) == 0 && S_ISDIR(st_public.st_mode)) {
+            printf("[Kiln] Embedding public/ assets...\n");
+            collect_assets_recursive("public", &assets, &asset_count, &asset_capacity);
+        }
+        
+        // Cache lookup (incorporates source + release flag + asset contents)
+        uint64_t hash_val = fnv1a_hash(source, strlen(source));
+        hash_val = fnv1a_hash((const char *)&release, sizeof(bool)) ^ hash_val;
+        hash_val = fnv1a_hash((const char *)&static_link, sizeof(bool)) ^ hash_val;
+        if (cc_compiler) hash_val ^= fnv1a_hash(cc_compiler, strlen(cc_compiler));
+        if (target_triple) hash_val ^= fnv1a_hash(target_triple, strlen(target_triple));
+        for (int i = 0; i < asset_count; i++) {
+            hash_val ^= fnv1a_hash(assets[i].path, strlen(assets[i].path));
+            hash_val ^= fnv1a_hash((const char *)assets[i].data, (size_t)assets[i].size);
+        }
+        
+        char hash_str[32];
+        snprintf(hash_str, sizeof(hash_str), "%016lx", hash_val);
+        char cache_path[512];
+        snprintf(cache_path, sizeof(cache_path), ".kiln/cache/%s", hash_str);
+        
+        struct stat st;
+        if (stat(cache_path, &st) == 0) {
+            char target_path[512];
+            if (release) {
+                snprintf(target_path, sizeof(target_path), "%s", out_basename);
+            } else {
+                snprintf(target_path, sizeof(target_path), "%s.vnb", out_basename);
+            }
+            if (copy_file(cache_path, target_path)) {
+#ifndef _WIN32
+                if (release) {
+                    chmod(target_path, 0755);
+                }
+#endif
+                printf("[Kiln] Cache hit! Reused cached artifact: %s\n", target_path);
+                free(source);
+                if (temp_lumen_entry) remove(build_entry);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) {
+                        free(assets[i].path);
+                        free(assets[i].data);
+                    }
+                    free(assets);
+                }
+                return 0;
+            }
+        }
+        
+        if (release) {
+            char out_c[256];
+            snprintf(out_c, sizeof(out_c), "%s.c", out_basename);
+            int res = aot_compile(source, build_entry, out_c);
+            free(source);
+            if (temp_lumen_entry) remove(build_entry);
+            if (res != 0) {
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return res;
+            }
+            
+            FILE *f = fopen(out_c, "a");
+            if (f) {
+                // Write asset arrays in generated C file
+                for (int i = 0; i < asset_count; i++) {
+                    fprintf(f, "static const unsigned char asset_data_%d[] = {\n  ", i);
+                    for (int j = 0; j < assets[i].size; j++) {
+                        fprintf(f, "0x%02x, ", assets[i].data[j]);
+                        if (j % 16 == 15) fprintf(f, "\n  ");
+                    }
+                    fprintf(f, "\n};\n\n");
+                }
+                
+                fprintf(f, "\nconst char *g_varian_script_path = NULL;\n"
+                           "char *read_file_with_modules(const char *path) { (void)path; return NULL; }\n\n"
+                           "int main() {\n"
+                           "  VM vm;\n"
+                           "  vm_init(&vm, NULL);\n");
+                
+                // Populate assets array in VM inside generated main
+                if (asset_count > 0) {
+                    fprintf(f, "  vm.assets = (VMAsset *)calloc(%d, sizeof(VMAsset));\n", asset_count);
+                    fprintf(f, "  vm.asset_count = %d;\n", asset_count);
+                    for (int i = 0; i < asset_count; i++) {
+                        fprintf(f, "  vm.assets[%d].path = strdup(\"%s\");\n", i, assets[i].path);
+                        fprintf(f, "  vm.assets[%d].data = (unsigned char *)asset_data_%d;\n", i, i);
+                        fprintf(f, "  vm.assets[%d].size = %d;\n", i, assets[i].size);
+                    }
+                }
+                
+                fprintf(f, "  ObjFunction *main_fn = varian_aot_load(&vm);\n"
+                           "  vm.main_fn = main_fn;\n"
+                           "  int res = vm_run(&vm, false) ? 0 : 1;\n"
+                           "  vm_free(&vm);\n"
+                           "  return res;\n"
+                           "}\n");
+                fclose(f);
+            }
+            
+            char exe_dir[2048] = ".";
+            char exe[2048];
+            ssize_t exe_n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+            if (exe_n > 0) {
+                exe[exe_n] = '\0';
+                char *slash = strrchr(exe, '/');
+                if (slash) {
+                    *slash = '\0';
+                    strncpy(exe_dir, exe, sizeof(exe_dir) - 1);
+                    exe_dir[sizeof(exe_dir) - 1] = '\0';
+                }
+            }
+            
+            char cmd[4096];
+            char target_flag[256] = "";
+            if (target_triple) {
+                snprintf(target_flag, sizeof(target_flag), "-target %s", target_triple);
+            }
+            const char *static_flag = static_link ? "-static" : "";
+            snprintf(cmd, sizeof(cmd), "%s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring", cc_compiler, static_flag, target_flag, exe_dir, out_c, out_basename, exe_dir);
+            printf("Compiling native binary: %s\n", cmd);
+            res = system(cmd);
+            if (res == 0) {
+                ensure_dir(".kiln");
+                ensure_dir(".kiln/cache");
+                copy_file(out_basename, cache_path);
+                printf("[Kiln] Cached new build: %s\n", cache_path);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return 0;
+            }
+            if (assets) {
+                for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                free(assets);
+            }
+            return 1;
+        } else {
+            Lexer lexer;
+            lexer_init(&lexer, source, build_entry);
+            Arena *arena = arena_create(0);
+            Parser parser;
+            parser_init(&parser, &lexer, arena);
+            AstNode *program = parser_parse(&parser);
+            if (parser.had_error) {
+                fprintf(stderr, "Parse error\n");
+                arena_destroy(arena);
+                free(source);
+                if (temp_lumen_entry) remove(build_entry);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return 1;
+            }
+            
+            Chunk chunk;
+            chunk_init(&chunk);
+            Compiler compiler;
+            compiler_init(&compiler, arena, &chunk, program);
+            if (!compiler_compile(&compiler)) {
+                fprintf(stderr, "Compile error\n");
+                arena_destroy(arena);
+                free(source);
+                if (temp_lumen_entry) remove(build_entry);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return 1;
+            }
+            
+            ObjFunction *main_fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
+            main_fn->obj.type = VAL_FUNCTION;
+            main_fn->code = chunk.code;
+            main_fn->code_count = chunk.count;
+            main_fn->code_capacity = chunk.capacity;
+            main_fn->constants = chunk.constants;
+            main_fn->constant_count = chunk.constant_count;
+            main_fn->constant_capacity = chunk.constant_capacity;
+            main_fn->rle_lines = chunk.rle_lines;
+            main_fn->rle_counts = chunk.rle_counts;
+            main_fn->rle_count = chunk.rle_count;
+            
+            char out_vnb[256];
+            snprintf(out_vnb, sizeof(out_vnb), "%s.vnb", out_basename);
+            vnb_save(main_fn, &compiler, assets, asset_count, out_vnb);
+            
+            chunk_free(&chunk);
+            arena_destroy(arena);
+            free(source);
+            if (temp_lumen_entry) remove(build_entry);
+            printf("Built portable bundle: %s\n", out_vnb);
+            
+            ensure_dir(".kiln");
+            ensure_dir(".kiln/cache");
+            copy_file(out_vnb, cache_path);
+            printf("[Kiln] Cached new build: %s\n", cache_path);
+            if (assets) {
+                for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                free(assets);
+            }
+            return 0;
+        }
     }
 
     /* `vn dev [pagesdir] [port]` — Lumen file-based dev server. */
