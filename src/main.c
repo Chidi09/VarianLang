@@ -14,6 +14,9 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
+#include <signal.h>
+#include <time.h>
 #include <curl/curl.h>
 
 /* Set before vm_run() for "vn <file>"/"vn run <file>" so lib_http.c's
@@ -335,18 +338,87 @@ static int lumen_build(const char *pages, const char *out, const char *port) {
     return r;
 }
 
-/* `vn dev`: build pages/ then serve the generated app (blocks). */
+/* Sum the mtimes of every .lumen file in `dir` — a cheap change fingerprint. */
+static long lumen_pages_fingerprint(const char *dir) {
+    DIR *d = opendir(dir);
+    if (!d) return -1;
+    long sum = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        size_t len = strlen(e->d_name);
+        if (len > 6 && strcmp(e->d_name + len - 6, ".lumen") == 0) {
+            char path[2048];
+            snprintf(path, sizeof(path), "%s/%s", dir, e->d_name);
+            struct stat st;
+            if (stat(path, &st) == 0) sum += (long)st.st_mtime + (long)len;
+        }
+    }
+    closedir(d);
+    return sum;
+}
+
+/* Spawn the generated app as a child process (this same binary, `run <app>`). */
+static pid_t lumen_spawn_server(const char *app) {
+    pid_t pid = fork();
+    if (pid == 0) {
+        char exe[2048];
+        ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+        if (n <= 0) { _exit(127); }
+        exe[n] = '\0';
+        execl(exe, exe, "run", app, (char *)NULL);
+        _exit(127); /* exec failed */
+    }
+    return pid;
+}
+
+/* `vn dev`: build pages/, serve, and live-reload on file changes. The browser's
+ * client runtime already auto-reconnects on socket close and re-renders, so a
+ * rebuild+restart cycle is a full hot reload with no extra client code. A
+ * rebuild that fails (e.g. a mid-edit syntax error) keeps the last good server
+ * running and prints the error, rather than dropping the page. */
 static int lumen_dev(const char *pages, const char *port) {
     const char *app = ".lumen-build.vn";
-    int r = lumen_build(pages, app, port);
-    if (r != 0) { fprintf(stderr, "lumen: build failed.\n"); return r; }
+    if (lumen_build(pages, app, port) != 0) {
+        fprintf(stderr, "lumen: build failed.\n");
+        return 1;
+    }
 
-    char *asrc = read_file_with_modules(app);
-    if (!asrc) return 1;
-    g_varian_script_path = app;
-    r = run_source(asrc, app);
-    free(asrc);
-    return r;
+    pid_t child = lumen_spawn_server(app);
+    if (child < 0) {
+        /* fork unavailable — fall back to a plain blocking serve. */
+        char *asrc = read_file_with_modules(app);
+        if (!asrc) return 1;
+        g_varian_script_path = app;
+        int r = run_source(asrc, app);
+        free(asrc);
+        return r;
+    }
+
+    printf("⚡ Lumen: watching %s for changes (Ctrl-C to stop)\n", pages);
+    long last = lumen_pages_fingerprint(pages);
+    struct timespec poll = { 0, 400L * 1000000L }; /* 400ms */
+    for (;;) {
+        nanosleep(&poll, NULL);
+
+        /* Did the server exit on its own (e.g. Ctrl-C / crash)? */
+        int status;
+        if (waitpid(child, &status, WNOHANG) == child) break;
+
+        long now = lumen_pages_fingerprint(pages);
+        if (now != last && now != -1) {
+            last = now;
+            printf("⚡ Lumen: change detected — rebuilding…\n");
+            if (lumen_build(pages, app, port) == 0) {
+                kill(child, SIGTERM);
+                waitpid(child, NULL, 0);
+                child = lumen_spawn_server(app);
+                printf("⚡ Lumen: reloaded.\n");
+            } else {
+                fprintf(stderr, "lumen: rebuild failed — keeping the running server.\n");
+            }
+        }
+    }
+    return 0;
 }
 
 /* Scaffold a starter Lumen project: <name>/pages/index.lumen */
