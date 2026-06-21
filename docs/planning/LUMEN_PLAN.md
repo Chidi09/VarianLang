@@ -74,32 +74,45 @@ in `.lumen` files read from disk, where `{{ }}` is written plainly.
   start-offset on `index_of` (registered in the parser builtin-method gate). Tested in
   `tests/lumen_m3_test.vn`; real example `examples/lumen/UserCard.lumen`.
 
-### Roadmap from here (M4+) — assessed against "powerful but simple"
+### Roadmap (M4–M9) — status
 
-Ordered by value-to-complexity. Each must pass the charter test: does it remove a TS/React
-papercut *without* adding a new concept users have to learn?
+Each milestone had to pass the charter test: does it remove a TS/React papercut *without*
+adding a new concept users have to learn?
 
-- **M4 — DOM patch protocol (perf, invisible to users).** Today the server sends the full
-  re-rendered HTML (`{"t":"html",...}`) and the client morphs it. Keep the morph as the
-  fallback, but add a server-side diff that emits `{"t":"patch","ops":[...]}` (text/attr/child
-  ops keyed by a stable path) so only the changed bytes cross the wire. Biggest perf upgrade,
-  and it changes **nothing** in the authoring model — purely under the hood. **Recommended next.**
-- **M5 — reactive state helpers (DX).** Normal field updates already read cleanly
-  (`s.count = s.count + 1; return s`). The rough edge is *adding/dynamic* keys (today
-  `_tpl_bind`). Add an ergonomic state API — `s.set("k", v)` returning the new state, and a
-  read sugar — so handlers never touch `_tpl_bind`. No signals/effects (those reintroduce the
-  reactivity footguns the charter rejects); state stays plain server-side data.
-- **M6 — slots / children.** `<Card> <h1>Hi</h1> </Card>`: capture inner markup as a `children`
-  region a component renders with `{{! children }}`. High value, moderate parser work; composes
-  with M3's prop binding.
-- **M7 — DX to beat TS.** Friendly `.lumen` errors via the `errors` module + dev browser error
-  overlay; `vn fmt`/`vn lint` understand `.lumen` (unescaped-input, N+1-in-loop); component
-  snapshot testing; auto CSRF token in `.lumen` forms; HMR.
-- **M8 — client islands (opt-in).** `<Chart client />` runs a component in the browser while the
-  rest stays server-driven. Powerful but the highest-complexity item (needs a real client
-  payload) — deliberately last, and strictly opt-in so the default model stays server-driven.
-- **M9 — native perf port.** Move the hot render/diff path from `vn_modules/lumen.vn` into C
-  (the Varian-first-then-native path Zenith took); cache static template segments.
+- **M4 — DOM patch protocol (DONE).** The live loop sends a minimal prefix/suffix splice
+  patch (`{"t":"p",s,e,d}`) instead of full HTML; the client keeps the last full HTML, applies
+  the splice, then morphs. Prefix/suffix are kept ASCII-only so server byte offsets equal the
+  client's JS string indices (Unicode in the changed middle stays safe). First event per
+  (re)connect sends full HTML to resync. Invisible to authors. `tests/lumen_m4_test.vn`.
+- **M5 — reactive state helpers (DONE).** Universal struct methods `set`/`get`/`has`/`keys`
+  under a `"struct"` dispatch namespace, reachable on any struct. `set` is immutable (returns a
+  new struct, arena-safe). Handlers read as `s.set("count", s.get("count") + 1)`. No
+  signals/effects — state stays plain server-side data. `tests/lumen_m5_test.vn`.
+- **M6 — slots / children (DONE).** `<Card> inner </Card>` projects inner markup into the
+  component's `{{! children }}` slot; nested interactive components inside a slot keep their own
+  event scope (placeholder splice avoids double-prefixing). `tests/lumen_m6_test.vn`.
+- **M7 — DX to beat TS (DONE).** Live-loop handler errors are caught and pushed to a
+  **Lumen-branded in-browser error overlay** (navy/amber, logo, auto-clears on next render) via
+  `errors.explain()`. `lumen_snapshot(component)` for snapshot tests. **File-based dev tool**:
+  `vn lumen new`, `vn dev [dir] [port]` (file→route mapping, server-driven live), `vn lumen
+  build`. **Live reload** (watch + rebuild + restart; client auto-reconnects). `vn_modules`
+  resolved via `$VARIAN_HOME`/executable so the tool runs from any folder.
+  `tests/lumen_m7_test.vn`, `tests/lumen_router_test.vn`, `examples/lumen_app/`.
+  *Deferred sub-items:* `vn fmt`/`vn lint` `.lumen`-awareness and auto-CSRF-in-forms — see notes.
+- **M8 — client islands (DONE, honestly).** An optional `<client>` block in a `.lumen` file
+  ships verbatim browser JS for a client-only widget (charts/canvas/maps). It's embedded as a
+  `<script>` that runs once on first paint and is left untouched by the DOM morph
+  (cloneNode/innerHTML never re-run scripts). This is the *honest* island: real client code
+  where you ask for it, the rest still server-driven — **no Varian-in-browser, no hydration
+  mismatch.** Full "compile a Varian component to a client bundle" was deliberately NOT built:
+  it requires a Varian→JS/wasm subsystem and reintroduces the divergence bugs the charter
+  rejects. `tests/lumen_m8_test.vn`.
+- **M9 — native perf port (PARTIAL — intentionally).** Banked a safe, real win: the composition
+  pass now early-outs when markup has no component tag (every leaf render), skipping the
+  char-by-char rebuild. The full render/diff C port and static-segment cache are **left as a
+  benchmark-driven effort**, not rushed — the Varian renderer is correct and adequately fast,
+  and a half-port would risk that correctness. Do it when a real workload shows it's the
+  bottleneck, the same way Zenith's native paths were earned.
 
 CSS, SSR/SPA: **not separate milestones — already covered by the model.** Server-driven-live
 *is* SSR by construction (server renders real HTML on every change; SPA-grade interactivity

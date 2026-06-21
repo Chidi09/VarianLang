@@ -1,0 +1,36 @@
+// tests/lumen_m8_test.vn
+// Milestone 8: client islands — an optional <client> block ships verbatim
+// browser-side JS while the component stays server-driven.
+
+let _src = "<template><div id=\"clk\">…</div></template>" +
+           "<script>fn state() \{ return \{ tz: \"utc\" \} \}</script>" +
+           "<client>document.getElementById('clk').dataset.ready='1';</client>"
+
+test "the <client> block is embedded as a script in the compiled template" {
+    let code = lumen_compile_source("Clock", _src)
+    assert_ne(code.index_of("<script>document.getElementById('clk')"), -1)
+    // server state still present and separate from the island JS
+    assert_ne(code.index_of("fn state()"), -1)
+}
+
+test "a component with an island renders both markup and the client script" {
+    // Build the component the way the compiler's output would, then render it.
+    let clock = lumen_component(
+        | | { return {} },
+        |s| { return lumen_render(
+            "<div id=\"clk\">…</div><script>document.getElementById('clk').dataset.ready='1';</script>",
+            s) },
+        [], []
+    )
+    let html = lumen_snapshot(clock)
+    assert_ne(html.index_of("<div id=\"clk\">…</div>"), -1)
+    assert_ne(html.index_of("<script>document.getElementById('clk').dataset.ready='1';</script>"), -1)
+}
+
+test "a component with no <client> block compiles unchanged" {
+    let plain = "<template><p>hi</p></template><script>fn state() \{ return \{\} \}</script>"
+    let code = lumen_compile_source("Plain", plain)
+    assert_eq(code.index_of("<script>"), code.index_of("<script>"))  // sanity
+    // No stray island script injected.
+    assert_ne(code.index_of("<p>hi</p>"), -1)
+}

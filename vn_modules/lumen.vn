@@ -223,11 +223,28 @@ fn _lumen_rewrite_child_events(html, child_id) {
 }
 
 fn _lumen_process_composition(html, state) {
+    let n = html.len()
+
+    // M9 fast path: a component tag is a "<" followed by an uppercase letter.
+    // If the markup has none (every leaf component, the common case), skip the
+    // full char-by-char rebuild and its allocations — just return the input.
+    let scan = 0
+    let found_comp = false
+    while scan < n {
+        let lt = html.index_of("<", scan)
+        if lt < 0 { break }
+        if lt + 1 < n {
+            let nc = html.code_at(lt + 1)
+            if nc >= 65 and nc <= 90 { found_comp = true; break }
+        }
+        scan = lt + 1
+    }
+    if found_comp == false { return html }
+
     let out = ""
     let i = 0
-    let n = html.len()
     let child_counts = {}
-    
+
     while i < n {
         let tag_start = html.index_of("<", i)
         if tag_start < 0 {
@@ -408,6 +425,22 @@ fn lumen_compile_source(name, lumen_src) {
     
     let template = lumen_src.substring(temp_start + 10, temp_end)
     let script = lumen_src.substring(script_start + 8, script_end)
+
+    // ─── M8: client islands ───
+    // An optional <client> block ships verbatim client-side JS for a
+    // browser-only widget (charts, maps, canvas…). It's appended to the
+    // component's markup as a <script>, so it runs once on first paint and is
+    // left untouched by the live DOM morph (cloneNode/innerHTML never re-run
+    // scripts). This is the honest island: real client code where you ask for
+    // it, with the rest of the component still server-driven — no
+    // Varian-in-browser, no hydration mismatch.
+    let client_start = lumen_src.index_of("<client>")
+    let client_end = lumen_src.index_of("</client>")
+    if client_start >= 0 and client_end > client_start {
+        let client_js = lumen_src.substring(client_start + 8, client_end)
+        template = template + "<script>" + client_js + "</script>"
+    }
+
     let escaped_tpl = _lumen_escape_string(template)
     
     let names = _lumen_extract_fns(script)
