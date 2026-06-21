@@ -1,0 +1,92 @@
+// tests/lumen_m4_test.vn
+// Milestone 4: DOM patch protocol (prefix/suffix splice).
+
+// Reconstruct the client's view from a patch message the way the JS client does:
+//   new = prev[0:s] + d + prev[len-e:]
+fn _apply_patch(prev, msg) {
+    let pn = prev.len()
+    return prev.substring(0, msg.s) + msg.d + prev.substring(pn - msg.e, pn)
+}
+
+fn _capture_ws(sink) {
+    return http.create_struct(
+        ["read", "write"],
+        [ | | { return null }, |m| { sink.last = m } ]
+    )
+}
+
+test "first send with no baseline emits full html" {
+    let sink = { last: "" }
+    let ws = _capture_ws(sink)
+    let prev = _lumen_send_update(ws, null, "<p>Count: 0</p>")
+    let msg = json_decode(sink.last)
+    assert_eq(_validate.get_field(msg, "t"), "html")
+    assert_eq(_validate.get_field(msg, "html"), "<p>Count: 0</p>")
+    assert_eq(prev, "<p>Count: 0</p>")
+}
+
+test "localized change emits a small patch that reconstructs exactly" {
+    let sink = { last: "" }
+    let ws = _capture_ws(sink)
+    let before = "<p>Count: 0</p>"
+    let after = "<p>Count: 1</p>"
+    let prev = _lumen_send_update(ws, before, after)
+    let msg = json_decode(sink.last)
+    assert_eq(_validate.get_field(msg, "t"), "p")
+    // The changed middle must be tiny (just the digit), not the whole element.
+    assert_eq(_validate.get_field(msg, "d"), "1")
+    // And applying the patch to the old HTML yields exactly the new HTML.
+    assert_eq(_apply_patch(before, msg), after)
+    assert_eq(prev, after)
+}
+
+test "patch is correct when unicode sits in the changed middle" {
+    let sink = { last: "" }
+    let ws = _capture_ws(sink)
+    let before = "<b>x</b>"
+    let after = "<b>👍</b>"
+    let _ = _lumen_send_update(ws, before, after)
+    let msg = json_decode(sink.last)
+    assert_eq(_validate.get_field(msg, "t"), "p")
+    assert_eq(_apply_patch(before, msg), after)
+}
+
+test "patch handles growth (appended content) correctly" {
+    let sink = { last: "" }
+    let ws = _capture_ws(sink)
+    let before = "<ul><li>a</li></ul>"
+    let after = "<ul><li>a</li><li>b</li></ul>"
+    let _ = _lumen_send_update(ws, before, after)
+    let msg = json_decode(sink.last)
+    assert_eq(_apply_patch(before, msg), after)
+}
+
+test "live loop sends full html on first event, patch on second" {
+    let counter = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render("<p>Count: \{\{ count \}\}</p>", s) },
+        ["inc"],
+        [ |s, v| { s.count = s.count + 1; return s } ]
+    )
+    let log = { msgs: [] }
+    let reads = { n: 0 }
+    let ws = http.create_struct(
+        ["read", "write"],
+        [ | | {
+              if reads.n < 2 {
+                  reads.n = reads.n + 1
+                  return "{" + "\"t\":\"event\",\"h\":\"inc\",\"v\":null" + "}"
+              }
+              return null
+          },
+          |m| { log.msgs = log.msgs.push(m) } ]
+    )
+    _lumen_live_loop(ws, counter)
+    assert_eq(log.msgs.len(), 2)
+    assert_eq(_validate.get_field(json_decode(log.msgs[0]), "t"), "html")
+    assert_eq(_validate.get_field(json_decode(log.msgs[1]), "t"), "p")
+    // Reconstruct the second view from the first and confirm it shows Count: 2.
+    let first = _validate.get_field(json_decode(log.msgs[0]), "html")
+    let second = _apply_patch(first, json_decode(log.msgs[1]))
+    assert_ne(second.index_of("Count: 2"), -1)
+}

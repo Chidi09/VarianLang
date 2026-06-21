@@ -4288,6 +4288,14 @@ L_BC_LOOP_TOP:
                     }
                 }
 
+                /* M5: universal struct methods (set/get/has/keys) live under the
+                 * "struct" namespace. Tried only after the per-type lookup and the
+                 * stored-closure-field fallback above, so a user's same-named field
+                 * or registered impl always wins over the built-ins. */
+                if (!func_val && obj.type == VAL_STRUCT) {
+                    func_val = vm_find_dispatch(vm, "struct", method_name->chars);
+                }
+
                 if (!func_val) {
                     RAISE("No method '%s' for type '%s'", method_name->chars,
                                   type_name ? type_name : "(anonymous struct)");

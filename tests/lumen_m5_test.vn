@@ -1,0 +1,42 @@
+// tests/lumen_m5_test.vn
+// Milestone 5: universal struct methods for ergonomic component state.
+
+test "set returns a new struct, leaving the original unchanged (immutable)" {
+    let s = { count: 0 }
+    let s2 = s.set("count", 5)
+    assert_eq(s.count, 0)
+    assert_eq(s2.count, 5)
+}
+
+test "set can add a brand-new key" {
+    let s = { a: 1 }
+    let s2 = s.set("b", 2)
+    assert_eq(s2.get("a"), 1)
+    assert_eq(s2.get("b"), 2)
+    assert_eq(s.has("b"), false)
+    assert_eq(s2.has("b"), true)
+}
+
+test "get returns null for a missing key" {
+    let s = { a: 1 }
+    assert_eq(s.get("missing"), null)
+}
+
+test "keys lists every field" {
+    let s = { a: 1, b: 2, c: 3 }
+    assert_eq(s.keys().len(), 3)
+}
+
+test "a component handler can update state with .set" {
+    let comp = lumen_component(
+        | | { return { count: 0 } },
+        |s| { return lumen_render("<p>\{\{ count \}\}</p>", s) },
+        ["inc"],
+        [ |s, v| { return s.set("count", s.get("count") + 1) } ]
+    )
+    let h = _lumen_handler(comp, "inc")
+    let st = (comp.state_fn)()
+    st = h(st, null)
+    st = h(st, null)
+    assert_eq(st.count, 2)
+}

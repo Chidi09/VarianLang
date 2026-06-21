@@ -143,6 +143,81 @@ static Value lib_validate_get_keys(VM *vm, int arg_count, Value *args) {
     return val_array(arr);
 }
 
+/* ─── M5: universal struct methods (state ergonomics) ───
+ * Registered under the "struct" namespace; reachable on any struct via the
+ * BC_DISPATCH fallback. These let component state read like a map without the
+ * _tpl_bind boilerplate:  state = state.set("count", state.count + 1).
+ * set() is IMMUTABLE — it returns a NEW struct (works for existing or new
+ * keys) — which is required because structs may be arena-backed and cannot
+ * grow in place. The receiver self is args[0]. */
+static Value lib_struct_set(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 3 || args[0].type != VAL_STRUCT || args[1].type != VAL_STRING) {
+        runtime_error(vm, "struct.set(key, value) requires a struct and a string key");
+        return val_nil();
+    }
+    ObjStruct *src = args[0].as.structure;
+    const char *key = args[1].as.string->chars;
+    int idx = -1;
+    for (int i = 0; i < src->field_count; i++)
+        if (strcmp(src->field_names[i], key) == 0) { idx = i; break; }
+    int n = src->field_count + (idx < 0 ? 1 : 0);
+    ObjStruct *s = new_struct(vm, n, false);
+    s->type_name = src->type_name ? strdup(src->type_name) : NULL;
+    for (int i = 0; i < src->field_count; i++) {
+        s->field_names[i] = strdup(src->field_names[i]);
+        s->fields[i] = src->fields[i];
+    }
+    if (idx >= 0) {
+        s->fields[idx] = args[2];
+    } else {
+        s->field_names[src->field_count] = strdup(key);
+        s->fields[src->field_count] = args[2];
+    }
+    return val_struct(s);
+}
+
+static Value lib_struct_get(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRUCT || args[1].type != VAL_STRING)
+        return val_nil();
+    ObjStruct *s = args[0].as.structure;
+    const char *key = args[1].as.string->chars;
+    for (int i = 0; i < s->field_count; i++)
+        if (strcmp(s->field_names[i], key) == 0) return s->fields[i];
+    return val_nil();
+}
+
+static Value lib_struct_has(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_STRUCT || args[1].type != VAL_STRING)
+        return val_bool(false);
+    ObjStruct *s = args[0].as.structure;
+    const char *key = args[1].as.string->chars;
+    for (int i = 0; i < s->field_count; i++)
+        if (strcmp(s->field_names[i], key) == 0) return val_bool(true);
+    return val_bool(false);
+}
+
+static Value lib_struct_keys(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || args[0].type != VAL_STRUCT) return val_nil();
+    ObjStruct *s = args[0].as.structure;
+    ObjArray *arr = new_array();
+    arr->obj.next = vm->objects;
+    vm->objects = (Obj *)arr;
+    Task *self = vm->current_task;
+    self->stack[self->stack_top++] = val_array(arr);  /* temp GC root */
+    for (int i = 0; i < s->field_count; i++) {
+        if (arr->count >= arr->capacity) {
+            int new_cap = arr->capacity ? arr->capacity * 2 : 8;
+            arr->elements = (Value *)realloc(arr->elements, (size_t)new_cap * sizeof(Value));
+            arr->capacity = new_cap;
+        }
+        arr->elements[arr->count++] = val_string(allocate_string(vm, s->field_names[i], (int)strlen(s->field_names[i])));
+    }
+    self->stack_top--;
+    return val_array(arr);
+}
+
 void lib_validate_init(VM *vm) {
     ObjModule *mod = new_module("_validate");
     mod->obj.next = vm->objects;
@@ -156,4 +231,10 @@ void lib_validate_init(VM *vm) {
     vm_register_dispatch(vm, "_validate", "is_uuid",         val_native_fn((void *)lib_validate_is_uuid));
     vm_register_dispatch(vm, "_validate", "get_field",       val_native_fn((void *)lib_validate_get_field));
     vm_register_dispatch(vm, "_validate", "get_keys",        val_native_fn((void *)lib_validate_get_keys));
+
+    /* M5: universal struct methods, reachable on any struct value. */
+    vm_register_dispatch(vm, "struct", "set",  val_native_fn((void *)lib_struct_set));
+    vm_register_dispatch(vm, "struct", "get",  val_native_fn((void *)lib_struct_get));
+    vm_register_dispatch(vm, "struct", "has",  val_native_fn((void *)lib_struct_has));
+    vm_register_dispatch(vm, "struct", "keys", val_native_fn((void *)lib_struct_keys));
 }

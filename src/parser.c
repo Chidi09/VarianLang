@@ -2384,6 +2384,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
             "sha1_base64", "hash_password", "verify_password",
             "bit_and", "bit_or", "bit_xor", "index_of", "last_index_of",
             "contains", "ends_with",
+            "set", "get", "has", "keys",
             "read", "write", "close"
         };
         int n = sizeof(builtin_methods) / sizeof(builtin_methods[0]);
