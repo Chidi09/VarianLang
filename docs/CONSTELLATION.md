@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/constellation-logo.png" alt="Constellation" width="150" />
+</p>
+
 # Constellation — The Varian Package Registry & Dependency Manager
 
 **Packages are stars; Constellation is the map that makes them a navigable whole.**

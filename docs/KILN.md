@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/kiln-logo.png" alt="Kiln" width="150" />
+</p>
+
 # Kiln — The Varian Build Tool
 
 **Kiln fires raw Varian into a hardened, shippable artifact.**

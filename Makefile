@@ -47,7 +47,12 @@ debug: $(TARGET)
 release: CFLAGS += -O2 -DNDEBUG -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
 	-fstack-clash-protection -fPIE -fno-strict-aliasing -Wformat -Wformat-security
 release: LDFLAGS += -pie -Wl,-z,relro,-z,now -Wl,-z,noexecstack
-release: clean $(TARGET)
+# Clean must finish before the (parallel) rebuild starts, or `rm -rf build/`
+# races the compiler under `make -j`. Two ordered sub-makes guarantee that; the
+# inner one still parallelizes via the inherited jobserver.
+release:
+	$(MAKE) clean
+	$(MAKE) $(TARGET) $(LIB_TARGET) CFLAGS="$(CFLAGS)" LDFLAGS="$(LDFLAGS)"
 
 # AddressSanitizer + UBSan build for finding memory bugs under the test sweep
 # and fuzzers. Slower; not for production. Run: make asan && ./vn test tests/
