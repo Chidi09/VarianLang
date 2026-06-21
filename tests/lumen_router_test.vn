@@ -31,5 +31,8 @@ test "build_dir compiles a pages directory into one runnable app" {
     assert_ne(app.index_of("lumen_register_component(\"About\""), -1)
     assert_ne(app.index_of("lumen_mount(app, \"/\", _lumen_get_component(\"Index\"))"), -1)
     assert_ne(app.index_of("lumen_mount(app, \"/about\", _lumen_get_component(\"About\"))"), -1)
-    assert_ne(app.index_of("app.listen(8099)"), -1)
+    // Serves /public (favicons + manifest + user assets) and binds the port
+    // via http.serve directly so `vn dev` owns the only startup banner.
+    assert_ne(app.index_of("app.serve_static(\"/\", \"public\")"), -1)
+    assert_ne(app.index_of("http.serve(8099"), -1)
 }

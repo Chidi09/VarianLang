@@ -159,6 +159,137 @@ app.serve_static("/assets", "public/assets")
 app.listen_tls_cluster(443, "cert.pem", "key.pem", 8)
 ```
 
+---
+
+<p align="center">
+  <img src="docs/assets/lumen-logo.png" alt="Lumen Logo" width="170" />
+</p>
+
+<h2 align="center">Lumen — the Varian frontend framework</h2>
+
+<p align="center"><i>Server-driven. Live by default. Zero config, zero <code>node_modules</code>, zero hydration mismatch.</i></p>
+
+If Zenith is Varian's answer to Express/FastAPI, **Lumen** is its answer to **Next.js and Nuxt** — a full-stack UI framework that ships *inside the `vn` binary*. There is no `npm install`, no `tsconfig`, no bundler to configure, and no separate client/server codebase to keep in sync. You write `.lumen` components, run `vn dev`, and you have a live, reactive app.
+
+> **Lumen : Varian :: JSX : TypeScript.** A `.lumen` file is markup + bindings; the logic underneath is plain Varian (`.vn`).
+
+### The core idea: server-driven live
+
+Most React/Next apps run your component logic *twice* — once on the server (SSR) and again in the browser (hydration) — which is the entire source of the dreaded *"hydration mismatch"* class of bugs. Lumen does not do this.
+
+In Lumen, **the server owns all state and does all rendering.** The browser runs a tiny (~5 KB) runtime whose only jobs are: forward DOM events over a WebSocket, and patch the DOM with whatever HTML the server sends back. State lives in plain Varian on the server — no `useState`, no `useEffect` dependency arrays, no stale closures, no `useMemo` ceremony.
+
+```
+┌────────── Browser ──────────┐         ┌────────────── Server (Varian) ──────────────┐
+│  click ─▶ data-lumen-click  │ ──WS──▶ │  run handler ▶ new state ▶ re-render HTML    │
+│  morph DOM ◀── DOM patch ── │ ◀──WS── │  diff vs last HTML ▶ send minimal splice     │
+└─────────────────────────────┘         └──────────────────────────────────────────────┘
+```
+
+Because the server renders the *real* HTML on every change, **SSR and SPA-grade interactivity are the same mechanism** — there is nothing to "hydrate," so there is no mismatch to debug.
+
+### Anatomy of a `.lumen` component
+
+A component is a `<template>` (markup), a `<script>` (Varian logic), and an optional `<client>` (browser-only JS). This is the starter `vn lumen new` scaffolds — a Lumen logo whose colour is reactive server state:
+
+```html
+<template>
+  <main style="display:grid;place-items:center;min-height:100vh">
+    <!-- @click compiles to a live event hook; {{ color }} is reactive state -->
+    <svg @click="pulse" viewBox="0 0 48 48" width="150">
+      <rect x="3" y="3" width="42" height="42" rx="12" fill="#1b2233"/>
+      <path d="M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z"
+            fill="{{ color }}" style="transition:fill .35s ease"/>
+    </svg>
+    <p>pulse <b>{{ count }}</b></p>
+  </main>
+</template>
+
+<script>
+fn _hue(n) {
+  let palette = ["#f5b829", "#ff6b6b", "#4dd4ac", "#5b9cff", "#c77dff", "#ff9f43"]
+  return palette[n % 6]
+}
+fn state() { return { count: 0, color: "#f5b829" } }
+fn pulse(s, v) {
+  let n = s.get("count") + 1
+  return s.set("count", n).set("color", _hue(n))   // immutable, arena-safe
+}
+</script>
+```
+
+Click the logo → the server runs `pulse` → computes a new colour → re-renders → Lumen morphs **only the changed `fill` attribute** into the live DOM. That round-trip *is* the reactivity model. No client state, no virtual DOM in the browser, no rerender-the-world.
+
+### Markup syntax
+
+| Syntax | Meaning |
+| --- | --- |
+| `{{ expr }}` | Interpolate, **HTML-escaped by default** (XSS-safe) |
+| `{{! expr }}` | Interpolate **raw** / unescaped (trusted content only) |
+| `{{#if expr}} … {{else}} … {{/if}}` | Conditionals |
+| `{{#each items as item}} … {{/each}}` | Loops |
+| `@click="handler"` | Live event hook → `data-lumen-click` (also `@input`, `@change`, `@submit`, `@keydown`, …) |
+| `<UserCard id="u1" name="Ada" />` | Child component, with props |
+| `<Card> … </Card>` + `{{! children }}` | Slots — project inner markup into a component |
+
+Escaping is **opt-out, not opt-in** — you can't forget to escape, because `{{ }}` already does. That single default removes the most common XSS footgun in the React/template world.
+
+### The interactive dev console
+
+`vn dev` is the headline experience — the same "it just works" loop as `next dev` / `nuxi dev` / `vite`, but it's one native binary with nothing to install:
+
+```text
+   LUMEN   v0.1.0   the Varian frontend framework
+
+  ➜  Local     http://localhost:8090/
+  ➜  Pages     2 in pages/
+
+     ● /                  index.lumen
+     ● /about             about.lumen
+
+  ✔ ready in 142 ms  · watching pages/ — edit a page to hot-reload
+```
+
+* **File-based routing.** Drop `pages/index.lumen` → served at `/`; `pages/about.lumen` → `/about`. (The same convention Next/Nuxt popularized.)
+* **Live reload.** Save a file and the server rebuilds, restarts, and the browser auto-reconnects and re-renders — no plugin, no `nodemon`.
+* **Branded error overlay.** A runtime error in a handler is caught and shown as a Lumen-branded in-browser overlay (with the friendly `errors.explain()` what/fix text), then auto-clears on the next good render.
+* **Batteries included, like the JS starters.** Every page ships, with zero setup, exactly what `create-next-app` / `nuxi init` / `create-vite` give you out of the box:
+  * a full **favicon set** + `manifest.json` (`vn lumen new` scaffolds them into `public/`, served automatically),
+  * a responsive `<meta viewport>`, `theme-color`, and `lang`,
+  * the **Degular** typeface wired up with a system-font fallback,
+  * escape-by-default rendering and a friendly error overlay.
+
+### Composition, slots & client islands
+
+* **Components compose.** `<UserCard id="u1" name="Ada"/>` renders a child with its own props and its own server-side event scope (events are namespaced as `id:handler` so two instances never collide).
+* **Slots.** `<Card> inner markup </Card>` projects into the card's `{{! children }}`; interactive components *inside* a slot keep their own scope.
+* **Honest client islands.** Need a chart, canvas, or map that must run in the browser? Add a `<client>` block of real browser JS. It runs once on first paint and survives the DOM morph. This is the *honest* island — real client code exactly where you ask for it, the rest still server-driven. Lumen deliberately does **not** compile Varian to a browser bundle: that's what reintroduces hydration-mismatch bugs, and avoiding that whole bug class is the point.
+
+### CLI
+
+```sh
+vn lumen new myapp     # scaffold pages/ + public/ (favicons, manifest) + a starter component
+vn dev                 # serve ./pages with live reload + the dev console (default :8090)
+vn dev pages 3000      # custom dir + port
+vn lumen build pages app.vn 8090   # compile pages/ into one runnable Varian app
+```
+
+### What Lumen fixes about React / Next / TypeScript
+
+| React / Next / TS pain | Lumen's answer |
+| --- | --- |
+| Config & build hell (tsconfig, webpack/vite/babel, dozens of deps) | **Zero-config.** One binary, `vn dev`, nothing to wire. |
+| Hydration mismatches, SSR/CSR divergence | **Server-driven live** — the server owns state and renders; there is no client/server divergence to mismatch. |
+| `node_modules` + supply-chain risk | **Batteries-included**, ships in the binary. No npm, no lockfile. |
+| Reactivity footguns (effect deps, stale closures, memo ceremony) | State is plain Varian on the server. No dependency arrays, no stale closures. |
+| XSS-by-omission (forgot to escape) | `{{ }}` **escapes by default**; raw is the explicit `{{! }}`. |
+| Cryptic wall-of-text errors | Friendly errors with file/line/caret + a fix hint, and a branded browser overlay in dev. |
+| Fragmented commands (npm/npx/tsc/eslint/jest/vite) | One `vn` CLI with consistent verbs — same DX as the backend. |
+
+See [`docs/LUMEN.md`](docs/LUMEN.md) and [`docs/planning/LUMEN_PLAN.md`](docs/planning/LUMEN_PLAN.md) for the full reference and roadmap.
+
+---
+
 ### 🛠️ The High-Fidelity Toolchain
 Varian isn't just a compiler; it's a complete ecosystem.
 *   **`vn fmt`**: Opinionated, zero-config code formatter built into the compiler.
@@ -231,6 +362,7 @@ Value compute(Value x) {
 *   [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) — tasks, channels, actors
 *   [`docs/STDLIB.md`](docs/STDLIB.md) — native modules (`math`, `string`, `regex`, `sqlite`, `http`, `auth`, `validate`, `json_encode`/`decode`, the Python bridge, FFI)
 *   [`docs/ZENITH.md`](docs/ZENITH.md) — the Zenith web framework and the comptime ORM
+*   [`docs/LUMEN.md`](docs/LUMEN.md) — the Lumen frontend framework (`.lumen` components, server-driven live, `vn dev`)
 *   [`docs/TOOLING.md`](docs/TOOLING.md) — the `vn` CLI in full
 *   [`docs/SECURITY.md`](docs/SECURITY.md) — threat model, hardened build, app-level defenses, and the sandboxing caveat
 *   [`docs/planning/`](docs/planning/) — internal roadmap / design notes

@@ -547,11 +547,15 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
     if count == 0 {
         throw("Lumen: no .lumen files found in " + pages_dir)
     }
-    let program = combined + "\nlet app = new_app()\n" + mounts +
-                  "print(\"⚡ Lumen dev server ready → http://localhost:" + port + "\")\n" +
-                  "app.listen(" + port + ")\n"
+    // Serve the project's /public dir (favicons, manifest, user assets). Static
+    // mounts are consulted only AFTER routing, so page routes always win and a
+    // missing file just 404s — mounting at "/" is safe.
+    let statics = "app.serve_static(\"/\", \"public\")\n"
+    // Serve directly via http.serve (not app.listen) so the framework's own
+    // startup line is suppressed — `vn dev` prints its own Lumen console.
+    let program = combined + "\nlet app = new_app()\n" + mounts + statics +
+                  "http.serve(" + port + ", |req| \{ return app.handle(req) \})\n"
     io.write_text(out_path, program)
-    print("⚡ Lumen: compiled " + count + " page(s) from " + pages_dir)
     return count
 }
 
@@ -759,9 +763,31 @@ fn _lumen_live_loop(ws, component) {
     }
 }
 
+// The <head> Lumen injects into every page: responsive viewport, the full
+// favicon set (served from /public — see _lumen_build_dir), a web-app
+// manifest, the Degular typeface (loaded via Adobe Fonts), and a base style
+// that wires Degular up with a system-font fallback so a page looks right
+// even before the webfont arrives. This is the "batteries-included" head
+// every Next/Nuxt/Vite starter ships — authors never write it themselves.
+fn _lumen_head() {
+    return "<meta charset=\"utf-8\">" +
+           "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
+           "<title>Lumen</title>" +
+           "<meta name=\"theme-color\" content=\"#1b2233\">" +
+           "<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">" +
+           "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\">" +
+           "<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/favicon-16x16.png\">" +
+           "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">" +
+           "<link rel=\"manifest\" href=\"/manifest.json\">" +
+           "<link rel=\"stylesheet\" href=\"https://use.typekit.net/jsj7zpl.css\">" +
+           "<style>:root\{--lumen-font:\"degular\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif\}" +
+           "html\{font-family:var(--lumen-font);-webkit-font-smoothing:antialiased\}" +
+           "body\{margin:0\}</style>"
+}
+
 // Wrap the rendered component in the live shell (data-lumen-root + client).
 fn _lumen_shell(inner, ws_path) {
-    return "<!DOCTYPE html><html><head><meta charset=\"utf-8\"></head><body>" +
+    return "<!DOCTYPE html><html lang=\"en\"><head>" + _lumen_head() + "</head><body>" +
            "<div data-lumen-root>" + inner + "</div>" +
            "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + _lumen_client_js() + "</script>" +
            "</body></html>"

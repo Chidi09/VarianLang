@@ -98,7 +98,19 @@ adding a new concept users have to learn?
   build`. **Live reload** (watch + rebuild + restart; client auto-reconnects). `vn_modules`
   resolved via `$VARIAN_HOME`/executable so the tool runs from any folder.
   `tests/lumen_m7_test.vn`, `tests/lumen_router_test.vn`, `examples/lumen_app/`.
-  *Deferred sub-items:* `vn fmt`/`vn lint` `.lumen`-awareness and auto-CSRF-in-forms — see notes.
+  - **Batteries-included starter (DONE).** Like create-next-app/nuxi/create-vite, every project
+    ships a full **favicon set + themed `manifest.json`** (scaffolded into `public/`, bundled in
+    `vn_modules/lumen_assets/`, served via `serve_static("/", "public")`), responsive
+    `<meta viewport>`/`theme-color`/`lang`, and the **Degular** typeface (Adobe Fonts) with a
+    system-font fallback — all injected by `_lumen_head()`. The `vn lumen new` starter is a
+    **reactive Lumen-logo** whose SVG `fill` is server state (click → recompute colour → morph
+    only the changed attribute), demonstrating the whole reactivity model with zero client code.
+  - **Interactive dev console (DONE).** `vn dev` prints a Nuxt/Next-style banner (LUMEN chip,
+    local URL, file→route table, ready-in-N-ms) and hot-reload status lines; colour gated on TTY
+    + `NO_COLOR`; the framework's own `http.serve` line is suppressed via `LUMEN_QUIET` so the
+    console is the single banner. In `src/main.c` (`lumen_print_banner`, `lumen_dev`).
+  - *Deferred sub-items:* `vn fmt`/`vn lint` `.lumen`-awareness and auto-CSRF/Origin-check on the
+    live socket — see notes.
 - **M8 — client islands (DONE, honestly).** An optional `<client>` block in a `.lumen` file
   ships verbatim browser JS for a client-only widget (charts/canvas/maps). It's embedded as a
   `<script>` that runs once on first paint and is left untouched by the DOM morph

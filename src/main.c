@@ -361,6 +361,7 @@ static long lumen_pages_fingerprint(const char *dir) {
 static pid_t lumen_spawn_server(const char *app) {
     pid_t pid = fork();
     if (pid == 0) {
+        setenv("LUMEN_QUIET", "1", 1);  /* silence the child's own listen banner */
         char exe[2048];
         ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
         if (n <= 0) { _exit(127); }
@@ -371,6 +372,123 @@ static pid_t lumen_spawn_server(const char *app) {
     return pid;
 }
 
+/* ─── Lumen dev console — the interactive Nuxt/Next-style startup banner ─── */
+#define LUM_RESET   "\033[0m"
+#define LUM_AMBER   "\033[38;5;214m"
+#define LUM_AMBERB  "\033[1;38;5;214m"
+#define LUM_DIM     "\033[2m"
+#define LUM_GRAY    "\033[38;5;245m"
+#define LUM_WHITEB  "\033[1;38;5;231m"
+#define LUM_GREEN   "\033[38;5;42m"
+#define LUM_CHIP    "\033[48;5;236m\033[1;38;5;214m"
+
+/* Colour only when writing to a real terminal and the user hasn't opted out. */
+static int lumen_color(void) {
+    return isatty(STDOUT_FILENO) && getenv("NO_COLOR") == NULL;
+}
+
+static double lumen_now_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1.0e6;
+}
+
+static int lumen_name_cmp(const void *a, const void *b) {
+    return strcmp(*(const char *const *)a, *(const char *const *)b);
+}
+
+/* Collect, sort, and return the .lumen filenames in `dir` (caller frees each
+ * entry). Returns the count; fills `names` up to `max`. */
+static int lumen_collect_pages(const char *dir, char **names, int max) {
+    DIR *d = opendir(dir);
+    if (!d) return 0;
+    int n = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL && n < max) {
+        size_t len = strlen(e->d_name);
+        if (len > 6 && strcmp(e->d_name + len - 6, ".lumen") == 0)
+            names[n++] = strdup(e->d_name);
+    }
+    closedir(d);
+    qsort(names, n, sizeof(char *), lumen_name_cmp);
+    return n;
+}
+
+/* The branded "server is up" banner: a LUMEN chip, the local URL, and a
+ * file→route table — the same orienting summary Nuxt/Next/Vite print. */
+static void lumen_print_banner(const char *pages, const char *port, double ms) {
+    int c = lumen_color();
+    const char *A    = c ? LUM_AMBER  : "";
+    const char *D    = c ? LUM_DIM    : "";
+    const char *G    = c ? LUM_GRAY   : "";
+    const char *W    = c ? LUM_WHITEB : "";
+    const char *GR   = c ? LUM_GREEN  : "";
+    const char *R    = c ? LUM_RESET  : "";
+    const char *CHIP = c ? LUM_CHIP   : "";
+
+    char *names[256];
+    int n = lumen_collect_pages(pages, names, 256);
+
+    printf("\n  %s LUMEN %s  %sv%s%s   %sthe Varian frontend framework%s\n\n",
+           CHIP, R, G, VARIAN_VERSION, R, D, R);
+    printf("  %s➜%s  %sLocal%s     %shttp://localhost:%s/%s\n", A, R, W, R, A, port, R);
+    printf("  %s➜%s  %sPages%s     %s%d%s %sin %s/%s\n\n", A, R, W, R, W, n, R, D, pages, R);
+
+    for (int i = 0; i < n; i++) {
+        size_t bl = strlen(names[i]) - 6;          /* strip ".lumen" */
+        char base[256], route[300];
+        if (bl >= sizeof(base)) bl = sizeof(base) - 1;
+        memcpy(base, names[i], bl);
+        base[bl] = '\0';
+        if (strcmp(base, "index") == 0) snprintf(route, sizeof(route), "/");
+        else                            snprintf(route, sizeof(route), "/%s", base);
+        printf("     %s●%s %s%-18s%s %s%s%s\n", A, R, W, route, R, G, names[i], R);
+        free(names[i]);
+    }
+    if (n) printf("\n");
+    printf("  %s✔%s ready in %s%.0f ms%s  %s· watching %s/ — edit a page to hot-reload%s\n\n",
+           GR, R, W, ms, R, D, pages, R);
+}
+
+/* Copy one file byte-for-byte (binary-safe). Returns 0 on success. */
+static int lumen_copy_file(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    if (!in) return -1;
+    FILE *out = fopen(dst, "wb");
+    if (!out) { fclose(in); return -1; }
+    char buf[8192];
+    size_t r;
+    int ok = 0;
+    while ((r = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, r, out) != r) { ok = -1; break; }
+    }
+    fclose(in);
+    fclose(out);
+    return ok;
+}
+
+/* Copy the bundled favicon/manifest set into a project's public/ dir. The
+ * assets ship alongside vn_modules so an installed binary finds them too. */
+static int lumen_copy_assets(const char *public_dir) {
+    const char *mod = resolve_vn_modules_dir();
+    if (!mod) return -1;
+    char assets[2048];
+    snprintf(assets, sizeof(assets), "%s/lumen_assets", mod);
+    DIR *d = opendir(assets);
+    if (!d) return -1;
+    int copied = 0;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (e->d_name[0] == '.') continue;
+        char src[4608], dst[4608];
+        snprintf(src, sizeof(src), "%s/%s", assets, e->d_name);
+        snprintf(dst, sizeof(dst), "%s/%s", public_dir, e->d_name);
+        if (lumen_copy_file(src, dst) == 0) copied++;
+    }
+    closedir(d);
+    return copied;
+}
+
 /* `vn dev`: build pages/, serve, and live-reload on file changes. The browser's
  * client runtime already auto-reconnects on socket close and re-renders, so a
  * rebuild+restart cycle is a full hot reload with no extra client code. A
@@ -378,6 +496,7 @@ static pid_t lumen_spawn_server(const char *app) {
  * running and prints the error, rather than dropping the page. */
 static int lumen_dev(const char *pages, const char *port) {
     const char *app = ".lumen-build.vn";
+    double t0 = lumen_now_ms();
     if (lumen_build(pages, app, port) != 0) {
         fprintf(stderr, "lumen: build failed.\n");
         return 1;
@@ -394,7 +513,16 @@ static int lumen_dev(const char *pages, const char *port) {
         return r;
     }
 
-    printf("⚡ Lumen: watching %s for changes (Ctrl-C to stop)\n", pages);
+    lumen_print_banner(pages, port, lumen_now_ms() - t0);
+    fflush(stdout);
+
+    int color = lumen_color();
+    const char *A  = color ? LUM_AMBER  : "";
+    const char *D  = color ? LUM_DIM    : "";
+    const char *GR = color ? LUM_GREEN  : "";
+    const char *RED= color ? "\033[38;5;203m" : "";
+    const char *R  = color ? LUM_RESET  : "";
+
     long last = lumen_pages_fingerprint(pages);
     struct timespec poll = { 0, 400L * 1000000L }; /* 400ms */
     for (;;) {
@@ -407,26 +535,31 @@ static int lumen_dev(const char *pages, const char *port) {
         long now = lumen_pages_fingerprint(pages);
         if (now != last && now != -1) {
             last = now;
-            printf("⚡ Lumen: change detected — rebuilding…\n");
+            double rt0 = lumen_now_ms();
             if (lumen_build(pages, app, port) == 0) {
                 kill(child, SIGTERM);
                 waitpid(child, NULL, 0);
                 child = lumen_spawn_server(app);
-                printf("⚡ Lumen: reloaded.\n");
+                printf("  %s↻%s %shot-reloaded%s %sin %.0f ms%s\n",
+                       A, R, GR, R, D, lumen_now_ms() - rt0, R);
             } else {
-                fprintf(stderr, "lumen: rebuild failed — keeping the running server.\n");
+                printf("  %s✖%s build error — %skeeping the last good page up%s\n", RED, R, D, R);
             }
+            fflush(stdout);
         }
     }
     return 0;
 }
 
-/* Scaffold a starter Lumen project: <name>/pages/index.lumen */
+/* Scaffold a starter Lumen project: <name>/pages/index.lumen + a public/
+ * dir pre-loaded with the favicon set (exactly like create-next-app /
+ * nuxi init / create-vite ship a default favicon). */
 static int lumen_new(const char *name) {
-    char dir[1024];
+    char dir[1024], pub[1024];
     snprintf(dir, sizeof(dir), "%s/pages", name);
-    char cmd[1200];
-    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+    snprintf(pub, sizeof(pub), "%s/public", name);
+    char cmd[2400];
+    snprintf(cmd, sizeof(cmd), "mkdir -p '%s' '%s'", dir, pub);
     if (system(cmd) != 0) { fprintf(stderr, "lumen: cannot create %s\n", dir); return 1; }
 
     char page[1100];
@@ -435,23 +568,54 @@ static int lumen_new(const char *name) {
     if (!f) { fprintf(stderr, "lumen: cannot write %s\n", page); return 1; }
     fputs(
         "<template>\n"
-        "<main style=\"font-family:system-ui;max-width:640px;margin:64px auto;text-align:center\">\n"
-        "  <h1>Welcome to {{ name }}</h1>\n"
-        "  <p>Count: <b>{{ count }}</b></p>\n"
-        "  <button @click=\"inc\">+1</button>\n"
-        "  <button @click=\"dec\">-1</button>\n"
+        "<main style=\"min-height:100vh;display:grid;place-items:center;text-align:center;color:#e8eaf0;background:radial-gradient(1200px 600px at 50% -10%,#1a2236,#0f1422)\">\n"
+        "  <section style=\"padding:48px\">\n"
+        "    <svg @click=\"pulse\" viewBox=\"0 0 48 48\" width=\"150\" height=\"150\" role=\"button\" aria-label=\"Lumen\" style=\"cursor:pointer;filter:drop-shadow(0 16px 38px rgba(0,0,0,.55))\">\n"
+        "      <rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"12\" fill=\"#1b2233\"/>\n"
+        "      <path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"{{ color }}\" style=\"transition:fill .35s ease\"/>\n"
+        "    </svg>\n"
+        "    <h1 style=\"font-size:40px;font-weight:800;margin:30px 0 6px;letter-spacing:-.5px\">Welcome to <span style=\"color:#f5b829\">Lumen</span></h1>\n"
+        "    <p style=\"color:#8b93a7;margin:0 0 6px\">Click the logo — it re-renders on the server and morphs the DOM live.</p>\n"
+        "    <p style=\"color:#5b6478;font-size:14px;margin:0\">pulse <b style=\"color:#e8eaf0\">{{ count }}</b> · edit <code style=\"color:#8b93a7\">pages/index.lumen</code> to hot-reload</p>\n"
+        "  </section>\n"
         "</main>\n"
         "</template>\n"
         "<script>\n"
-        "fn state() {\n"
-        "  return { name: \"Lumen\", count: 0 }\n"
+        "// The logo colour is plain server state. Each click recomputes it and\n"
+        "// Lumen morphs only the changed attribute into the live DOM — no client\n"
+        "// JS, no hydration. That is the whole reactivity model.\n"
+        "fn _hue(n) {\n"
+        "  let palette = [\"#f5b829\", \"#ff6b6b\", \"#4dd4ac\", \"#5b9cff\", \"#c77dff\", \"#ff9f43\"]\n"
+        "  return palette[n % 6]\n"
         "}\n"
-        "fn inc(s, v) { return s.set(\"count\", s.get(\"count\") + 1) }\n"
-        "fn dec(s, v) { return s.set(\"count\", s.get(\"count\") - 1) }\n"
+        "fn state() {\n"
+        "  return { count: 0, color: \"#f5b829\" }\n"
+        "}\n"
+        "fn pulse(s, v) {\n"
+        "  let n = s.get(\"count\") + 1\n"
+        "  return s.set(\"count\", n).set(\"color\", _hue(n))\n"
+        "}\n"
         "</script>\n", f);
     fclose(f);
 
-    printf("⚡ Created Lumen app '%s'\n\n  cd %s\n  vn dev pages\n\nThen open http://localhost:8090\n", name, name);
+    int assets = lumen_copy_assets(pub);
+
+    int color = lumen_color();
+    const char *A    = color ? LUM_AMBER  : "";
+    const char *D    = color ? LUM_DIM    : "";
+    const char *W    = color ? LUM_WHITEB : "";
+    const char *GR   = color ? LUM_GREEN  : "";
+    const char *R    = color ? LUM_RESET  : "";
+    const char *CHIP = color ? LUM_CHIP   : "";
+
+    printf("\n  %s LUMEN %s  %screated %s%s%s\n\n", CHIP, R, D, W, name, R);
+    printf("  %s✔%s pages/index.lumen\n", GR, R);
+    if (assets > 0)
+        printf("  %s✔%s public/ %s(%d assets — favicons + manifest)%s\n", GR, R, D, assets, R);
+    printf("\n  %sNext steps:%s\n\n", D, R);
+    printf("    %scd%s %s\n", A, R, name);
+    printf("    %svn dev%s\n\n", A, R);
+    printf("  %sthen open%s %shttp://localhost:8090/%s\n\n", D, R, A, R);
     return 0;
 }
 

@@ -1526,8 +1526,11 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
         if (tls_ctx) SSL_CTX_free(tls_ctx);
         return false;
     }
-    printf("  %s: listening on port %d%s\n", fn_name, port, tls_ctx ? " (TLS)" : "");
-    fflush(stdout);
+    /* LUMEN_QUIET is set by `vn dev` so its own console is the only banner. */
+    if (getenv("LUMEN_QUIET") == NULL) {
+        printf("  %s: listening on port %d%s\n", fn_name, port, tls_ctx ? " (TLS)" : "");
+        fflush(stdout);
+    }
     t->http_listen_fd = fd;
     PendingConnPool *pool = get_pending_pool(t);
     pool->tls_ctx = tls_ctx;
