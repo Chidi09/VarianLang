@@ -1,0 +1,58 @@
+// tests/lumen_m6_test.vn
+// Milestone 6: slots / children — <Card>..inner..</Card> projection.
+// Components are built at top level: the test-runner counts braces to find
+// test bodies, so brace-heavy component literals live outside the test blocks.
+
+let _card = lumen_component(
+    | | { return {} },
+    |s| { return lumen_render("<div class=\"card\"><div class=\"body\">\{\{! children \}\}</div></div>", s) },
+    [], []
+)
+lumen_register_component("Card", _card)
+
+let _badge = lumen_component(
+    | | { return { label: "new" } },
+    |s| { return lumen_render("<span>\{\{ label \}\}</span>", s) },
+    [], []
+)
+lumen_register_component("Badge", _badge)
+
+let _counter = lumen_component(
+    | | { return { count: 0 } },
+    |s| { return lumen_render("<button @click=\"bump\">\{\{ count \}\}</button>", s) },
+    ["bump"],
+    [ |s, v| { return s.set("count", s.get("count") + 1) } ]
+)
+lumen_register_component("CounterX", _counter)
+
+let _panel = lumen_component(
+    | | { return {} },
+    |s| { return lumen_render("<section>\{\{! children \}\}</section>", s) },
+    [], []
+)
+lumen_register_component("Panel", _panel)
+
+fn _render(tpl) {
+    _lumen_active_child_states = {}
+    return lumen_render(tpl, {})
+}
+
+test "paired tag projects inner markup into the children slot" {
+    let html = _render("<main><Card id=\"c1\"><h1>Hi</h1><p>There</p></Card></main>")
+    assert_ne(html.index_of("<div class=\"card\">"), -1)
+    assert_ne(html.index_of("<h1>Hi</h1><p>There</p>"), -1)
+    assert_eq(html.index_of("lumen-slot"), -1)
+}
+
+test "self-closing component still renders (no slot)" {
+    let html = _render("<p><Badge id=\"b1\" /></p>")
+    assert_ne(html.index_of("<span>new</span>"), -1)
+}
+
+test "interactive component inside a slot keeps its own event scope" {
+    let html = _render("<div><Panel id=\"p1\"><CounterX id=\"cx\" /></Panel></div>")
+    assert_ne(html.index_of("data-lumen-click=\"cx:bump\""), -1)
+    assert_eq(html.index_of("p1:cx:bump"), -1)
+    let cx_state = _validate.get_field(_lumen_active_child_states, "cx")
+    assert_ne(cx_state, null)
+}

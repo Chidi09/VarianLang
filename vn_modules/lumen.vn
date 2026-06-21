@@ -300,7 +300,7 @@ fn _lumen_process_composition(html, state) {
             child_state = _tpl_bind(child_state, "_comp", comp_name)
             child_state = _tpl_bind(child_state, "_id", child_id)
         }
-        
+
         let attr_keys = _validate.get_keys(raw_attrs)
         for k in 0..attr_keys.len() {
             let key = attr_keys[k]
@@ -309,23 +309,41 @@ fn _lumen_process_composition(html, state) {
                 child_state = _tpl_bind(child_state, key, val)
             }
         }
-        _lumen_active_child_states = _tpl_bind(_lumen_active_child_states, child_id, child_state)
-        
-        let child_html = (comp.render_fn)(child_state)
-        let child_html_rewritten = _lumen_rewrite_child_events(child_html, child_id)
-        out = out + child_html_rewritten
-        
+
+        // ─── M6: slots ───
+        // For a paired tag <Comp>..inner..</Comp>, the inner markup is the
+        // component's `children`. It's already interpolated against the parent
+        // context (composition runs after lumen_render's {{ }} pass), so we just
+        // recursively process it for nested components, then inject it into the
+        // child's {{! children }} slot AFTER the child's own events are scoped.
+        // A placeholder keeps the two event scopes from colliding: the child's
+        // own @events get the child_id prefix; the slot content (already final)
+        // is spliced in untouched.
+        let next_i = tag_end + 1
+        let slot_html = ""
+        let has_slot = false
         if is_self_closing == false {
             let close_tag = "</" + comp_name + ">"
             let close_tag_pos = html.index_of(close_tag, tag_end)
             if close_tag_pos >= 0 {
-                i = close_tag_pos + close_tag.len()
-            } else {
-                i = tag_end + 1
+                let inner = html.substring(tag_end + 1, close_tag_pos)
+                slot_html = _lumen_process_composition(inner, state)
+                has_slot = true
+                next_i = close_tag_pos + close_tag.len()
             }
-        } else {
-            i = tag_end + 1
         }
+        if has_slot {
+            child_state = _tpl_bind(child_state, "children", "<!--lumen-slot-->")
+        }
+        _lumen_active_child_states = _tpl_bind(_lumen_active_child_states, child_id, child_state)
+
+        let child_html = (comp.render_fn)(child_state)
+        let child_html_rewritten = _lumen_rewrite_child_events(child_html, child_id)
+        if has_slot {
+            child_html_rewritten = _lumen_replace(child_html_rewritten, "<!--lumen-slot-->", slot_html)
+        }
+        out = out + child_html_rewritten
+        i = next_i
     }
     return out
 }
