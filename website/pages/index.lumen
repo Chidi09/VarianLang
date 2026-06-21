@@ -1,0 +1,268 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VarianLang — The Systems Language of the Future</title>
+  <meta name="description" content="A blazing fast, concurrent, systems-level programming language built from scratch in C with a custom bytecode VM.">
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    .editor-container {
+      background: #000;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-xl);
+      overflow: hidden;
+      margin: var(--space-8) auto;
+      max-width: 900px;
+      box-shadow: var(--shadow-glow);
+      text-align: left;
+    }
+    .editor-header {
+      background: var(--bg-surface);
+      padding: var(--space-2) var(--space-4);
+      display: flex;
+      gap: var(--space-2);
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .editor-dot { width: 12px; height: 12px; border-radius: 50%; }
+    .editor-dot.red { background: #ff5f56; }
+    .editor-dot.yellow { background: #ffbd2e; }
+    .editor-dot.green { background: #27c93f; }
+    .editor-body {
+      padding: var(--space-4);
+      font-family: var(--font-mono);
+      font-size: var(--text-sm);
+      display: flex;
+    }
+    .editor-lines {
+      color: var(--text-muted);
+      padding-right: var(--space-4);
+      user-select: none;
+      text-align: right;
+    }
+    .editor-code { color: var(--text-primary); outline: none; flex: 1; }
+    .editor-run-bar {
+      border-top: 1px solid var(--border-subtle);
+      padding: var(--space-2) var(--space-4);
+      background: var(--bg-surface);
+      display: flex;
+      justify-content: flex-end;
+    }
+    
+    .framework-section {
+      padding: var(--space-24) 0;
+      border-top: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      gap: var(--space-12);
+    }
+    .framework-section.reverse {
+      flex-direction: row-reverse;
+    }
+    .framework-content {
+      flex: 1;
+    }
+    .framework-logo {
+      flex: 1;
+      text-align: center;
+    }
+    .framework-logo img {
+      max-width: 250px;
+      border-radius: var(--radius-2xl);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="navbar" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+      <a href="/" class="nav-brand">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+        Varian
+      </a>
+      <div class="nav-links">
+        <a href="#features">Features</a>
+        <a href="#ecosystem">Ecosystem</a>
+        <a href="/the_varian_book">Docs</a>
+        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+      </div>
+    </nav>
+
+    <main>
+      <!-- Varian Interactive Hero -->
+      <section class="hero">
+        <h1>Blazing fast.<br><span class="gradient-text">Beautifully concurrent.</span></h1>
+        <p>A systems-level programming language built from scratch in C with a custom bytecode VM. The speed of C, concurrency of Go, and ecosystem of Python.</p>
+        
+        <div class="editor-container">
+          <div class="editor-header">
+            <div class="editor-dot red"></div>
+            <div class="editor-dot yellow"></div>
+            <div class="editor-dot green"></div>
+            <span style="margin-left: 10px; color: var(--text-muted); font-size: 12px; font-family: var(--font-sans);">main.vn</span>
+          </div>
+          <div class="editor-body">
+            <div class="editor-lines">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10</div>
+            <div class="editor-code" contenteditable="true" spellcheck="false">
+<span class="token-keyword">fn</span> <span class="token-function">main</span>() {
+  <span class="token-comment">// Native cooperative actors without the thread overhead</span>
+  <span class="token-keyword">let</span> ch <span class="token-keyword">=</span> <span class="token-function">make</span>(<span class="token-type">chan</span>, 10)
+  
+  <span class="token-keyword">spawn</span> <span class="token-keyword">fn</span>() {
+    <span class="token-function">send</span>(ch, <span class="token-string">"Hello from goroutine-like actor!"</span>)
+  }()
+
+  <span class="token-keyword">let</span> msg <span class="token-keyword">=</span> <span class="token-function">recv</span>(ch)
+  <span class="token-function">print</span>(msg)
+}
+            </div>
+          </div>
+          <div class="editor-run-bar">
+            <button @click="runCode" class="btn btn-primary" style="padding: var(--space-1) var(--space-4); font-size: var(--text-sm);">Run &gt;</button>
+          </div>
+          {{ if output }}
+          <div style="padding: var(--space-4); border-top: 1px solid var(--border-subtle); background: #111; font-family: var(--font-mono); font-size: var(--text-sm);">
+            <strong style="color: var(--brand-accent);">Output:</strong><br>
+            {{ output }}
+          </div>
+          {{ endif }}
+        </div>
+      </section>
+
+      <!-- What is Varian About -->
+      <section id="features" class="features" style="border-top: 1px solid var(--border-subtle); padding-top: var(--space-24);">
+        <div style="grid-column: 1 / -1; text-align: center; margin-bottom: var(--space-8);">
+          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl);">What is Varian?</h2>
+          <p style="color: var(--text-secondary); max-width: 700px; margin: 0 auto;">Varian combines three distinct paradigms into a robust development platform.</p>
+        </div>
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+          </div>
+          <h3>Native Speed</h3>
+          <p>Built from scratch in C with a highly optimized custom bytecode VM. Get raw performance without sacrificing ergonomics.</p>
+        </div>
+        
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6M6 20V10M18 20V4"></path></svg>
+          </div>
+          <h3>Concurrency Built-In</h3>
+          <p>Go-style concurrency model with actors and channels for seamless multi-core scaling. Safe, cheap, and easy.</p>
+        </div>
+
+        <div class="feature-card">
+          <div class="feature-icon">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
+          </div>
+          <h3>Python Ecosystem</h3>
+          <p>Integrate seamlessly with the Python ecosystem. Import and use Python libraries natively from Varian code.</p>
+        </div>
+      </section>
+
+      <!-- Zenith Section -->
+      <section id="ecosystem" class="framework-section">
+        <div class="framework-content">
+          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Zenith Web Server</h2>
+          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
+            Zenith is Varian's high-performance HTTP and WebSocket server. Capable of handling millions of concurrent connections, Zenith leverages Varian's actor model to serve traffic with unparalleled efficiency and virtually zero overhead.
+          </p>
+          <a href="/zenith" class="btn btn-secondary">Learn about Zenith</a>
+        </div>
+        <div class="framework-logo">
+          <img src="/assets/zenith-logo.png" alt="Zenith Logo">
+        </div>
+      </section>
+
+      <!-- Lumen Section -->
+      <section class="framework-section reverse">
+        <div class="framework-content">
+          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Lumen Framework</h2>
+          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
+            Lumen is the Varian frontend framework. Components render to HTML on the server. A tiny client runtime forwards events over WebSockets, and the server re-renders and morphs the new HTML into the live DOM. No page reload, no client state, no hydration mismatch.
+          </p>
+          <a href="/lumen" class="btn btn-secondary">Explore Lumen</a>
+        </div>
+        <div class="framework-logo">
+          <img src="/assets/lumen-logo.png" alt="Lumen Logo">
+        </div>
+      </section>
+
+      <!-- Kiln Section -->
+      <section class="framework-section">
+        <div class="framework-content">
+          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Kiln Build Tool</h2>
+          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
+            Kiln fires raw Varian into a hardened, shippable artifact. It's a unified orchestrator that resolves dependency graphs offline and bundles logic and assets into single-file deliverables without the need for complex configuration.
+          </p>
+          <a href="/kiln" class="btn btn-secondary">Discover Kiln</a>
+        </div>
+        <div class="framework-logo">
+          <img src="/assets/kiln-logo.png" alt="Kiln Logo">
+        </div>
+      </section>
+
+      <!-- Constellation Section -->
+      <section class="framework-section reverse">
+        <div class="framework-content">
+          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Constellation Registry</h2>
+          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
+            Packages are stars; Constellation is the map. It's Varian's built-in package manager utilizing a hybrid CDN index with direct Git vendoring. Reproducible offline builds made absolutely simple.
+          </p>
+          <div class="button-group" style="justify-content: flex-start;">
+            <a href="#" class="btn btn-primary">Browse Packages</a>
+            <a href="/constellation" class="btn btn-secondary">Registry Docs</a>
+          </div>
+        </div>
+        <div class="framework-logo">
+          <img src="/assets/constellation-logo.png" alt="Constellation Logo">
+        </div>
+      </section>
+
+      <section id="community" style="padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 style="font-size: var(--text-3xl); margin-bottom: var(--space-4); font-family: var(--font-display); text-align: center;">Community & Contributing</h2>
+        <p style="color: var(--text-secondary); margin-bottom: var(--space-8); font-size: var(--text-lg); text-align: center; max-width: 800px; margin-left: auto; margin-right: auto;">
+          Varian is open-source and built by a thriving community. Whether you're reporting issues, submitting patches, or helping others, your contribution matters.
+        </p>
+        <div class="features" style="padding: 0;">
+          <div class="feature-card">
+            <h3 style="font-family: var(--font-display);">Report an Issue</h3>
+            <p>Found a bug or have a feature request? Open an issue on our GitHub repository to help us improve.</p>
+            <a href="https://github.com/Chidi09/VarianLang/issues" style="color: var(--brand-primary); text-decoration: none; display: inline-block; margin-top: var(--space-4);">Go to Issues →</a>
+          </div>
+          <div class="feature-card">
+            <h3 style="font-family: var(--font-display);">Contribute Code</h3>
+            <p>Want to write some C or Varian? Check out our contribution guide and submit a pull request.</p>
+            <a href="https://github.com/Chidi09/VarianLang/pulls" style="color: var(--brand-primary); text-decoration: none; display: inline-block; margin-top: var(--space-4);">View Pull Requests →</a>
+          </div>
+        </div>
+      </section>
+      
+      <section style="text-align:center; padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
+         <h2 style="font-size: var(--text-3xl); margin-bottom: var(--space-4); font-family: var(--font-display);">Ready to experience Varian?</h2>
+         <p style="color: var(--text-secondary); margin-bottom: var(--space-8);">Download the latest release and start building today.</p>
+         <button @click="incrementDownloads" class="btn btn-primary">Download v0.1.0 ({{ downloads }} installs)</button>
+      </section>
+
+    </main>
+
+    <footer style="border-top: 1px solid var(--border-subtle); padding: var(--space-8) 0; text-align: center; color: var(--text-muted); font-size: var(--text-sm);">
+      <p>&copy; 2026 VarianLang. The stars are the limit.</p>
+    </footer>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() {
+  return { downloads: 1337, output: "" }
+}
+fn incrementDownloads(s, v) {
+  return s.set("downloads", s.get("downloads") + 1)
+}
+fn runCode(s, v) {
+  // Simulate running the interactive code
+  return s.set("output", "Hello from goroutine-like actor!\n[Process exited 0]")
+}
+</script>

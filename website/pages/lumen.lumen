@@ -1,0 +1,417 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lumen — VarianLang Docs</title>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    /* Doc-specific layout */
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--brand-primary);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    
+    /* Markdown Styles */
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--brand-primary);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(255, 158, 187, 0.05); /* owo pink */
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+  </style>
+</head>
+<body>
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/the_varian_book">Docs</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Language</strong></li>
+        <li><a href="/the_varian_book">The Varian Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/concurrency">Concurrency Model</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li style="margin-top: 1rem"><strong>Core</strong></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </aside>
+    
+    <main class="docs-content markdown-body">
+<p align="center">
+  <img src="/assets/lumen-logo.png" alt="Lumen" width="150" />
+</p>
+
+<h1>Lumen — server-driven live components</h1>
+<p>Lumen is the Varian frontend framework — Varian's answer to Next.js / Nuxt. Components
+render to HTML <strong>on the server</strong> (on top of Zenith WebSocket routes). A tiny (~5 KB)
+client runtime forwards events over a WebSocket; the server re-renders and morphs the new
+HTML into the live DOM. No page reload, no client state, no Varian in the browser, and —
+because the server is the only place state lives and renders — <strong>no hydration mismatch</strong>.</p>
+<p>This page has two halves:</p>
+<ol>
+<li><strong><a href="#the-developer-guide-lumen--vn-dev">The developer guide</a></strong> — <code>.lumen</code> files, <code>vn dev</code>,
+   the dev console, file routing, and the batteries every project ships with. Start here.</li>
+<li><strong><a href="#public-api">The runtime reference</a></strong> — the underlying <code>lumen_component</code> / <code>lumen_mount</code>
+   API the compiler targets. Read this if you're embedding Lumen by hand or hacking on it.</li>
+</ol>
+<hr />
+<h2>The developer guide (Lumen + <code>vn dev</code>)</h2>
+<h3>Quick start</h3>
+<pre><code class="language-sh">vn lumen new myapp     # scaffold pages/ + public/ (favicons, manifest) + a starter component
+cd myapp
+vn dev                 # serve ./pages with live reload + the dev console (default :8090)
+</code></pre>
+<p>Open <code>http://localhost:8090/</code> and click the logo — its colour is reactive server state.</p>
+<h3>The <code>.lumen</code> file format</h3>
+<p>A component is up to three blocks in one file:</p>
+<pre><code class="language-html">&lt;template&gt;            &lt;!-- markup with &#123;&#123; &#125;&#125; bindings and @event hooks --&gt;
+  &lt;button @click=&quot;pulse&quot;&gt;&#123;&#123; count &#125;&#125;&lt;/button&gt;
+&lt;/template&gt;
+
+&lt;script&gt;              &lt;!-- plain Varian: a state() fn + handler fns + helpers --&gt;
+fn state() { return { count: 0 } }
+fn pulse(s, v) { return s.set(&quot;count&quot;, s.get(&quot;count&quot;) + 1) }
+&lt;/script&gt;
+
+&lt;client&gt;              &lt;!-- OPTIONAL: verbatim browser JS for a client-only island --&gt;
+/* runs once on first paint; left untouched by the live DOM morph */
+&lt;/client&gt;
+</code></pre>
+<p>How it compiles (<code>lumen_compile_source</code> in <code>vn_modules/lumen.vn</code>):</p>
+<ul>
+<li><code>&lt;template&gt;</code> is escaped and embedded as the component's render string.</li>
+<li>Every <code>fn</code> in <code>&lt;script&gt;</code> <strong>except <code>state</code></strong> is collected as a handler (so helper
+  functions like <code>_hue</code> are in scope for your handlers too — they just never fire as
+  events). <code>state()</code> supplies the initial state.</li>
+<li>The result is a generated <code>_lumen_init_component_&lt;Name&gt;()</code> that calls
+  <code>lumen_component(...)</code> and registers it. The language has no <code>eval</code>, so <code>vn dev</code> does
+  this in a build pass that emits one runnable <code>.vn</code>, then serves it.</li>
+</ul>
+<h3>Reactivity model</h3>
+<p>State is <strong>plain Varian data on the server</strong>. There is no <code>useState</code>, no signals, no
+effect dependency arrays, no virtual DOM in the browser. The whole loop is:</p>
+<pre><code>click ─▶ data-lumen-click ──WS──▶ run handler ▶ new state ▶ re-render ▶ diff ──WS──▶ morph
+</code></pre>
+<p>A handler takes <code>(state, value)</code> and returns the <strong>new</strong> state. State helpers are immutable
+and arena-safe — <code>s.set(k, v)</code> returns a <em>new</em> struct, and they chain:</p>
+<pre><code class="language-varian">fn pulse(s, v) {
+  let n = s.get(&quot;count&quot;) + 1
+  return s.set(&quot;count&quot;, n).set(&quot;color&quot;, _hue(n))   // immutable, chainable
+}
+</code></pre>
+<p>The scaffolded starter wires <code>&#123;&#123; color &#125;&#125;</code> into an SVG <code>fill</code>, so each click recomputes a
+colour server-side and Lumen morphs <strong>only the changed attribute</strong> into the DOM — a live
+demonstration of the model with zero client code.</p>
+<h3>File-based routing</h3>
+<p><code>vn dev &lt;dir&gt;</code> scans <code>&lt;dir&gt;</code> for <code>.lumen</code> files and maps each to a route (<code>_lumen_route</code>):</p>
+<table>
+<thead>
+<tr>
+<th>File</th>
+<th>Route</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pages/index.lumen</code></td>
+<td><code>/</code></td>
+</tr>
+<tr>
+<td><code>pages/about.lumen</code></td>
+<td><code>/about</code></td>
+</tr>
+<tr>
+<td><code>pages/user-card.lumen</code></td>
+<td><code>/user-card</code> (component name PascalCased to <code>UserCard</code>)</td>
+</tr>
+</tbody>
+</table>
+<h3>The interactive dev console</h3>
+<p><code>vn dev</code> prints a Nuxt/Next-style console and then watches for changes:</p>
+<pre><code class="language-text">   LUMEN   v0.1.0   the Varian frontend framework
+
+  ➜  Local     http://localhost:8090/
+  ➜  Pages     2 in pages/
+
+     ● /                  index.lumen
+     ● /about             about.lumen
+
+  ✔ ready in 142 ms  · watching pages/ — edit a page to hot-reload
+</code></pre>
+<ul>
+<li><strong>Live reload.</strong> Save any <code>.lumen</code> file → rebuild + restart; the browser's runtime
+  auto-reconnects and re-renders. A build that fails mid-edit keeps the last good server
+  up and prints <code>✖ build error — keeping the last good page up</code>.</li>
+<li><strong>Colour</strong> is emitted only to a TTY and is suppressed by <code>NO_COLOR</code>.</li>
+<li>Implemented in <code>src/main.c</code> (<code>lumen_dev</code>, <code>lumen_print_banner</code>); the framework's own
+  <code>http.serve</code> startup line is silenced via the <code>LUMEN_QUIET</code> env var so the console is
+  the single source of truth.</li>
+</ul>
+<h3>Batteries included (no extra deps)</h3>
+<p>Every page Lumen serves gets, with zero setup, the same defaults <code>create-next-app</code> /
+<code>nuxi init</code> / <code>create-vite</code> give you — injected by <code>_lumen_head()</code>:</p>
+<ul>
+<li><strong>Favicon set + <code>manifest.json</code>.</strong> <code>vn lumen new</code> copies a full icon set
+  (<code>favicon.ico</code>, <code>favicon-16/32</code>, <code>apple-touch-icon</code>, <code>android-chrome-192/512</code>) and a
+  themed web-app manifest into <code>public/</code>. The generated app serves <code>public/</code> via
+  <code>app.serve_static("/", "public")</code> — consulted only <em>after</em> routing, so page routes
+  always win and a missing asset just 404s. The bundled source lives in
+  <code>vn_modules/lumen_assets/</code> so an installed binary finds it too.</li>
+<li><strong>Responsive meta</strong> — <code>&lt;meta viewport&gt;</code>, <code>theme-color</code>, <code>lang="en"</code>.</li>
+<li><strong>The Degular typeface</strong>, loaded via Adobe Fonts, wired through a CSS variable with a
+  full system-font fallback so a page looks right even before the webfont arrives.</li>
+<li><strong>Escape-by-default rendering</strong> and the branded <strong>error overlay</strong> (below).</li>
+</ul>
+<h3>Error overlay</h3>
+<p>A runtime error inside a handler is caught in <code>_lumen_live_loop</code> and pushed to the browser
+as a Lumen-branded overlay (navy/amber, inline-SVG logo) carrying the friendly
+<code>errors.explain()</code> what/fix text. It auto-clears on the next successful render. Dismissable;
+dev-only by nature (it only appears when a live handler throws).</p>
+<h3>DOM patch protocol (M4)</h3>
+<p>After the first full render per connection, the server sends a <strong>minimal splice patch</strong>
+instead of full HTML: it computes the longest common ASCII prefix/suffix between the last
+HTML and the new HTML and sends only the changed middle as <code>{"t":"p","s":p,"e":q,"d":mid}</code>.
+Prefix/suffix are kept ASCII so server byte offsets equal the client's UTF-16 string
+indices (Unicode in the changed middle is sent verbatim and stays safe). The client
+reconstructs <code>prev[0:s] + d + prev[len-e:]</code> and morphs. Invisible to authors.</p>
+<h3>Composition &amp; slots</h3>
+<ul>
+<li><strong>Child components.</strong> <code>&lt;UserCard id="u1" name="Ada"/&gt;</code> renders a child with props and its
+  own server-side event scope — events are namespaced <code>id:handler</code> so two instances of the
+  same component never collide.</li>
+<li><strong>Slots.</strong> <code>&lt;Card&gt; inner markup &lt;/Card&gt;</code> projects into the card's <code>&#123;&#123;! children &#125;&#125;</code>;
+  interactive components nested inside a slot keep their own scope.</li>
+</ul>
+<h3>Client islands (M8)</h3>
+<p>For a genuinely client-only widget (chart, canvas, map), add a <code>&lt;client&gt;</code> block of real
+browser JS. It's embedded as a <code>&lt;script&gt;</code> that runs once on first paint and is left
+untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-run scripts). This is the <em>honest</em>
+island — real client code where you ask for it, the rest still server-driven. Lumen
+deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
+reintroduces hydration-mismatch bugs.</p>
+<h3>Lumen UI (Component Registry)</h3>
+<p>Lumen ships with an official, Shadcn-inspired component registry called <strong>Lumen UI</strong>. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in <code>pages/components/</code>) so you fully own and customize the code.</p>
+<p>Add components via the CLI:</p>
+<pre><code class="language-sh">vn lumen add button
+vn lumen add card
+</code></pre>
+<p><strong>Features:</strong>
+- <strong>Zero Client JS:</strong> Components like <code>Accordion</code>, <code>Dialog</code>, and <code>Select</code> are driven entirely by server-side Varian state and scoped CSS.
+- <strong>Theme-Aware:</strong> Lumen is "Light Mode First" but ships with native Dark Mode. Global CSS variables (<code>var(--lumen-bg)</code>, <code>var(--lumen-primary)</code>, etc.) adapt automatically when the <code>dark</code> class is toggled on the <code>&lt;html&gt;</code> element. Use <code>vn lumen add theme-toggle</code> for a pre-built switcher.
+- <strong>Inline SVG Icons:</strong> Icons are pure, inline Lucide SVG vectors baked directly into the <code>.lumen</code> files. They inherit <code>currentColor</code>, cause zero layout shift, and require no external CDN scripts.
+- <strong>Batteries Included:</strong> Available components: <code>button</code>, <code>card</code>, <code>input</code>, <code>dialog</code>, <code>badge</code>, <code>accordion</code>, <code>alert</code>, <code>progress</code>, <code>select</code>, <code>checkbox</code>, <code>switch</code>, <code>separator</code>, and <code>theme-toggle</code>.</p>
+<h3>CLI reference</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Effect</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>vn lumen new &lt;name&gt;</code></td>
+<td>Scaffold <code>pages/</code> + <code>public/</code> (favicons + manifest) + a starter component</td>
+</tr>
+<tr>
+<td><code>vn dev [dir] [port]</code></td>
+<td>Serve a pages dir with live reload + the dev console (default <code>./pages :8090</code>)</td>
+</tr>
+<tr>
+<td><code>vn lumen build &lt;dir&gt; &lt;out.vn&gt; [port]</code></td>
+<td>Compile a pages dir into one runnable Varian app</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2>Public API</h2>
+<h3><code>lumen_component(state_fn, render_fn, handler_names, handler_fns)</code></h3>
+<p>Create a component struct from four pieces:</p>
+<table>
+<thead>
+<tr>
+<th>Argument</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>state_fn</code></td>
+<td><code>\| \| { return &lt;initial state&gt; }</code> — zero-arg closure returning the initial state</td>
+</tr>
+<tr>
+<td><code>render_fn</code></td>
+<td><code>\|state\| { return lumen_render(template, state) }</code> — renders state to HTML</td>
+</tr>
+<tr>
+<td><code>handler_names</code></td>
+<td>Array of handler name strings, e.g. <code>["inc", "dec"]</code></td>
+</tr>
+<tr>
+<td><code>handler_fns</code></td>
+<td>Array of handler closures <code>\|state, value\| { ...; return state }</code></td>
+</tr>
+</tbody>
+</table>
+<p>Handler names and functions are parallel arrays (same index = same handler). Handler
+closures receive the current state and the event value (the element's <code>.value</code>, or <code>null</code>)
+and must return the <strong>new</strong> state (mutation works but the returned value is what's used).</p>
+<p>Returns a struct (built with <code>http.create_struct</code> so there's no parse-order dependency
+on zenith.vn's struct declarations).</p>
+<h3><code>lumen_mount(app, path, component)</code></h3>
+<p>Mount a live component on a Zenith app at <code>path</code>. Registers two routes:</p>
+<ul>
+<li><strong><code>GET &lt;path&gt;</code></strong> — renders the component's initial HTML wrapped in the live shell
+  (<code>data-lumen-root</code> container + embedded client script) and returns <code>text/html</code>.</li>
+<li><strong><code>GET &lt;path&gt;/live</code></strong> — WebSocket upgrade endpoint. Upgrades to RFC 6455, then enters
+  the per-connection event loop until the socket closes.</li>
+</ul>
+<h2>Wire Protocol</h2>
+<p>Both directions are JSON text frames over a single WebSocket.</p>
+<p><strong>Client → Server</strong> (an event happened):</p>
+<pre><code class="language-json">{&quot;t&quot;:&quot;event&quot;,&quot;h&quot;:&quot;&lt;handlerName&gt;&quot;,&quot;v&quot;:&quot;&lt;value-or-null&gt;&quot;}
+</code></pre>
+<ul>
+<li><code>h</code> = the <code>data-lumen-&lt;event&gt;</code> attribute value (originally <code>@click="handlerName"</code>).</li>
+<li><code>v</code> = the element's <code>.value</code> for input-ish elements, else <code>null</code>.</li>
+</ul>
+<p><strong>Server → Client</strong> (re-rendered HTML):</p>
+<pre><code class="language-json">{&quot;t&quot;:&quot;html&quot;,&quot;html&quot;:&quot;&lt;full component HTML&gt;&quot;}
+</code></pre>
+<p>The client morphs (not replaces) the new HTML onto the live DOM, preserving focus and
+input values in untouched fields.</p>
+<h2>Per-Connection State</h2>
+<p>Each WebSocket connection gets its own independent state held in a local variable in the
+<code>_lumen_live_loop</code> function. State lives exactly as long as the socket. Shared/multi-user
+state via actors is a future milestone.</p>
+<h2>Security Rules</h2>
+<ol>
+<li><strong>Handler names from the wire are resolved only against the registered set.</strong>
+   An unknown name is silently dropped — never evaluated.</li>
+<li><strong>Re-rendering goes through <code>lumen_render</code>, which HTML-escapes <code>&#123;&#123; &#125;&#125;</code> by default.</strong>
+   Never bypass it.</li>
+</ol>
+<h2>Scheduler Model</h2>
+<p>The Varian VM is a single-threaded cooperative round-robin scheduler.
+<code>ws.read()</code> is <strong>non-blocking</strong>: it returns <code>""</code> (empty string) when no data is available
+(EAGAIN), not <code>null</code>. The per-connection live loop calls <code>task.yield()</code> when there's no
+message, allowing the scheduler to service other connections/tasks on the next tick.</p>
+<h2>Example</h2>
+<pre><code class="language-varian">let counter = lumen_component(
+    | | { return { count: 0 } },
+    |s| { return lumen_render(&quot;&lt;div&gt;&lt;p&gt;Count: &#123;&#123; count &#125;&#125;&lt;/p&gt;&quot; +
+                              &quot;&lt;button @click=\&quot;inc\&quot;&gt;+&lt;/button&gt;&quot; +
+                              &quot;&lt;button @click=\&quot;dec\&quot;&gt;-&lt;/button&gt;&lt;/div&gt;&quot;, s) },
+    [&quot;inc&quot;, &quot;dec&quot;],
+    [ |s, v| { s.count = s.count + 1; return s },
+      |s, v| { s.count = s.count - 1; return s } ]
+)
+
+let app = new_app()
+lumen_mount(app, &quot;/&quot;, counter)
+app.listen(8090)
+</code></pre>
+<p>Run it: <code>./vn run examples/lumen_counter.vn</code>, open <code>http://localhost:8090</code>.</p>
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>

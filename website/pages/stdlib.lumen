@@ -1,0 +1,310 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stdlib — VarianLang Docs</title>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    /* Doc-specific layout */
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--brand-primary);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    
+    /* Markdown Styles */
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--brand-primary);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(255, 158, 187, 0.05); /* owo pink */
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+  </style>
+</head>
+<body>
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/the_varian_book">Docs</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Language</strong></li>
+        <li><a href="/the_varian_book">The Varian Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/concurrency">Concurrency Model</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li style="margin-top: 1rem"><strong>Core</strong></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </aside>
+    
+    <main class="docs-content markdown-body">
+<h1>Standard Library</h1>
+<p>All native modules are pre-registered globals — there is no <code>import</code> statement in the
+language at all (the lexer has no such keyword). <code>math.sqrt(9.0)</code>, <code>string</code>/<code>array</code>
+methods, <code>sqlite</code>, etc. are simply always available. The <code>vn_modules/*.vn</code> files (Zenith,
+the ORM, queue helpers) are different: they're plain Varian source that the CLI
+concatenates as a prelude in front of your file every time you run <code>vn run &lt;file&gt;</code> (or
+<code>vn &lt;file&gt;</code>) — see <code>docs/TOOLING.md</code>.</p>
+<h2><code>math</code></h2>
+<pre><code class="language-varian">print(math.sin(0.0))
+print(math.cos(0.0))
+print(math.sqrt(9.0))
+print(math.abs(-5))
+print(math.floor(3.7))
+print(math.ceil(3.2))
+</code></pre>
+<h2><code>string</code> and <code>array</code> — called as methods, not module functions</h2>
+<p>These are dispatched by <em>value type</em>, so you call them as methods on a string/array
+value rather than as <code>string.len(s)</code>:</p>
+<pre><code class="language-varian">let s = &quot;Hello World&quot;
+print(s.len())
+print(s.upper())
+print(s.lower())
+print(s.substring(0, 5))
+print(s.trim())
+print(s.split(&quot; &quot;))
+print(s.starts_with(&quot;Hello&quot;))
+print(s.replace(&quot;World&quot;, &quot;Varian&quot;))
+
+let a = [1, 2, 3]
+print(a.len())
+let b = a.push(4)   // returns a NEW array — does not mutate `a`, see docs/LANGUAGE.md
+</code></pre>
+<h2><code>io</code></h2>
+<pre><code class="language-varian">let ok = io.write_text(&quot;/tmp/file.txt&quot;, &quot;Hello from Varian!&quot;)
+let content = io.read_text(&quot;/tmp/file.txt&quot;)
+let missing = io.read_text(&quot;/tmp/nonexistent&quot;)   // nil, not an error
+</code></pre>
+<h2><code>sqlite</code></h2>
+<pre><code class="language-varian">let conn = sqlite.connect(&quot;test.db&quot;)   // or &quot;:memory:&quot;
+sqlite.query(conn, &quot;CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)&quot;)
+sqlite.query(conn, &quot;INSERT INTO users (name) VALUES (?)&quot;, [&quot;Alice&quot;])
+let rows = sqlite.query(conn, &quot;SELECT * FROM users ORDER BY id ASC&quot;)
+for i in 0..rows.len() {
+    print(rows[i].id, rows[i].name)
+}
+sqlite.close(conn)
+</code></pre>
+<p><code>sqlite.query(conn, sql)</code> or <code>sqlite.query(conn, sql, params)</code> — params is an array,
+positionally bound to <code>?</code> placeholders. Rows come back as an array of structs with one
+field per column. Prefer the comptime ORM in <code>vn_modules/db.vn</code> (see <code>docs/ZENITH.md</code>)
+over hand-written SQL strings where the query shape is static — <code>vn lint</code> flags
+string-concatenated SQL.</p>
+<h2><code>postgres</code></h2>
+<p>Same shape as <code>sqlite</code>: <code>postgres.connect(...)</code>, <code>postgres.query(conn, sql, params)</code>,
+<code>postgres.close(conn)</code>.</p>
+<h2><code>redis</code></h2>
+<pre><code class="language-varian">let red = redis.connect(&quot;127.0.0.1&quot;, 6379)
+redis.cmd(red, &quot;SET&quot;, [&quot;mykey&quot;, &quot;hello redis&quot;])
+let val = redis.cmd(red, &quot;GET&quot;, [&quot;mykey&quot;])
+redis.cmd(red, &quot;RPUSH&quot;, [&quot;mylist&quot;, &quot;item1&quot;])
+let items = redis.cmd(red, &quot;LRANGE&quot;, [&quot;mylist&quot;, 0, -1])
+redis.close(red)
+</code></pre>
+<p><code>redis.cmd(conn, command_name, args_array)</code> is a generic command dispatcher — there's
+one native entry point for every Redis command, not a method per command.</p>
+<h2><code>http</code></h2>
+<pre><code class="language-varian">let body = http.get(&quot;https://example.com&quot;)
+print(body.len())
+
+http.serve(8080, |req| {
+    return Response { status: 200, body: &quot;hi&quot;, content_type: &quot;text/plain&quot; }
+})
+</code></pre>
+<p><code>http.get(url)</code> returns the response body as a string. <code>http.serve(port, handler)</code>
+starts a blocking HTTP server, calling <code>handler(req)</code> per request — this is what
+<code>ZenithApp.listen()</code> wraps (see <code>docs/ZENITH.md</code>). </p>
+<blockquote>
+<p>[!TIP]
+Under the hood, <code>http.serve</code> configures each connection request handler task with a <strong>per-task struct arena</strong> via <code>task_arena_enable()</code>. This avoids GC and heap allocation overhead entirely for request/response structs, reclaiming them in bulk upon completion.</p>
+</blockquote>
+<p><code>http.create_struct(keys_array, values_array)</code> builds a struct dynamically from parallel arrays — used throughout Zenith to build request/params objects with field sets not known until runtime.</p>
+<h2><code>auth</code></h2>
+<pre><code class="language-varian">let hash = auth.hash_sha256(&quot;hello&quot;)
+
+struct Payload { user_id: int, role: string }
+let token = auth.sign_jwt(Payload { user_id: 42, role: &quot;admin&quot; }, &quot;mysecret&quot;)
+let decoded = auth.verify_jwt(token, &quot;mysecret&quot;)
+print(decoded.role)
+</code></pre>
+<h2><code>validate</code></h2>
+<p>These are the functions backing the <code>@is_email</code>/<code>@min_len(n)</code> etc. struct field
+decorators (see <code>docs/LANGUAGE.md</code>) — <code>is_email</code>, <code>is_url</code>, <code>is_alphanumeric</code>,
+<code>min_len(n)</code>, <code>max_len(n)</code>, <code>is_uuid</code>. They can also be called directly:
+<code>validate.is_email(s)</code> returns a bool.</p>
+<h2><code>sanitize</code></h2>
+<p><code>sanitize.strip_html(s)</code>, <code>sanitize.escape_html(s)</code>, <code>sanitize.trim(s)</code>.</p>
+<h2><code>regex</code> — POSIX extended regular expressions</h2>
+<p>Backed by libc <code>regcomp</code>/<code>regexec</code> (POSIX ERE). There are <strong>no</strong> <code>\d</code>/<code>\w</code> shorthands —
+use character classes (<code>[0-9]</code>, <code>[A-Za-z]</code>). Every function takes an optional trailing
+<code>flags</code> string: <code>"i"</code> for case-insensitive, <code>"m"</code> for multi-line (<code>^</code>/<code>$</code> match at line
+breaks).</p>
+<pre><code class="language-varian">regex.test(&quot;[0-9]+&quot;, &quot;abc123&quot;)              // true
+regex.test(&quot;hello&quot;, &quot;HELLO&quot;, &quot;i&quot;)           // true (case-insensitive)
+regex.match(&quot;[0-9]+&quot;, &quot;order 42 now&quot;)       // &quot;42&quot;  (first match, or null)
+regex.find_all(&quot;[0-9]+&quot;, &quot;a1 b22 c333&quot;)     // [&quot;1&quot;, &quot;22&quot;, &quot;333&quot;]
+regex.groups(&quot;([a-z]+)@([a-z]+)&quot;, &quot;ada@example&quot;)  // [&quot;ada@example&quot;, &quot;ada&quot;, &quot;example&quot;]
+regex.replace(&quot;[0-9]+&quot;, &quot;a1b2&quot;, &quot;#&quot;)        // &quot;a#b#&quot;  (replaces all)
+regex.replace(&quot;([a-z])([0-9])&quot;, &quot;a1&quot;, &quot;\\2\\1&quot;)   // &quot;1a&quot;  (\1..\9 backrefs, \0 = whole)
+</code></pre>
+<p><code>match</code>/<code>groups</code> return <code>null</code> when there is no match; <code>find_all</code> returns <code>[]</code>.
+Note <code>match</code> is a reserved keyword but works fine after <code>.</code> (see <code>docs/LANGUAGE.md</code>).</p>
+<h2><code>json_encode</code> / <code>json_decode</code></h2>
+<p>Plain globals, not a module (no <code>json.</code> prefix):</p>
+<pre><code class="language-varian">let s = json_encode(some_struct_or_array_or_primitive)
+let v = json_decode(s)
+</code></pre>
+<p>Works generically over structs, arrays, and primitives — this is what the OpenAPI spec
+generation and several test helpers lean on rather than hand-building JSON strings.</p>
+<h2><code>python</code> — calling into Python</h2>
+<pre><code class="language-varian">let result = python.run(&quot;json&quot;, &quot;dumps&quot;, [[1, 2, 3]])
+let nums = python.run(&quot;json&quot;, &quot;loads&quot;, [&quot;[1, 2, 3]&quot;])
+let s = python.run(&quot;math&quot;, &quot;sqrt&quot;, [9])
+</code></pre>
+<p><code>python.run(module_name, function_name, args_array)</code> imports <code>module_name</code> in an
+embedded Python interpreter, calls <code>function_name(*args)</code>, and converts the result back
+to a Varian value. This is the documented escape hatch for anything not worth writing a
+native C module for (e.g. <code>boto3</code> for S3 — see <code>docs/ZENITH.md</code>'s note on
+"Untouchables").</p>
+<h2>FFI — calling C directly</h2>
+<pre><code class="language-varian">@ffi(&quot;libm.so.6&quot;, &quot;sqrt&quot;)
+fn fast_sqrt(x: c_double) -&gt; c_double
+
+@ffi(&quot;/tmp/libffi_helper.so&quot;, &quot;greet&quot;)
+fn greet(name: ptr) -&gt; ptr
+
+print(fast_sqrt(9.0))
+let raw = greet(&quot;World&quot;)          // ptr params decay to a raw address (printed as int)
+let managed = ffi_to_string(raw)  // convert a returned char* into a managed Varian string
+</code></pre>
+<p><code>@ffi("path/to/lib.so", "symbol")</code> on a bodyless <code>fn</code> declaration binds directly to a C
+shared library symbol via <code>libffi</code>. Supported FFI parameter/return types: <code>c_int</code>,
+<code>c_double</code>, <code>c_float</code>, <code>c_char</code>, <code>ptr</code>. Use the global <code>ffi_to_string(ptr)</code> to convert a
+returned <code>char*</code> into a real Varian string when a C function hands back text.</p>
+<h2><code>errors</code> — error diagnostics and hints</h2>
+<p>The <code>errors</code> module is a native module that helps turn any raw error string or error struct into developer-friendly diagnostic category and actionable hints.</p>
+<pre><code class="language-varian">// Match standard runtime error messages:
+let err = &quot;Undefined variable 'foo'&quot;
+print(errors.explain(err))
+// Prints:
+// x UndefinedName
+//   what: Undefined variable 'foo'
+//   fix:  Declare it first with `let name = ...`, or check the spelling/scope.
+
+print(errors.kind(err))                 // &quot;UndefinedName&quot;
+print(errors.is(err, &quot;UndefinedName&quot;))  // true
+
+// Make your own custom error structure:
+let my_err = errors.make(&quot;PaymentFailed&quot;, &quot;card declined&quot;, &quot;ask the user to try another card&quot;)
+print(my_err.kind)     // &quot;PaymentFailed&quot;
+print(my_err.message)  // &quot;card declined&quot;
+print(my_err.hint)     // &quot;ask the user to try another card&quot;
+</code></pre>
+<ul>
+<li><code>errors.explain(err)</code>: returns a multi-line friendly summary of the error.</li>
+<li><code>errors.kind(err)</code>: returns a short category name (e.g. <code>UndefinedName</code>, <code>NoSuchField</code>, <code>DivByZero</code>, <code>IndexOutOfBounds</code>, <code>TypeMismatch</code>, <code>WrongArgCount</code>, etc.).</li>
+<li><code>errors.is(err, kind_string)</code>: returns <code>true</code> if <code>err</code>'s kind matches <code>kind_string</code>.</li>
+<li><code>errors.make(kind, message, hint)</code>: returns a structured Error struct containing <code>kind</code>, <code>message</code>, and <code>hint</code>.</li>
+</ul>
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>

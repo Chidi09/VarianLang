@@ -1,0 +1,274 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tooling — VarianLang Docs</title>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    /* Doc-specific layout */
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--brand-primary);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    
+    /* Markdown Styles */
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--brand-primary);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(255, 158, 187, 0.05); /* owo pink */
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+  </style>
+</head>
+<body>
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/the_varian_book">Docs</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Language</strong></li>
+        <li><a href="/the_varian_book">The Varian Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/concurrency">Concurrency Model</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li style="margin-top: 1rem"><strong>Core</strong></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </aside>
+    
+    <main class="docs-content markdown-body">
+<h1>Tooling — the <code>vn</code> CLI</h1>
+<pre><code>vn                  Start interactive REPL
+vn run &lt;file&gt;        Execute a Varian script
+vn &lt;file&gt;            Same as `vn run &lt;file&gt;` (back-compat shorthand)
+vn fmt &lt;file&gt;        Format a Varian script in-place
+vn test [dir] [--filter &lt;substr&gt;] [--timeout &lt;secs&gt;]   Run tests in a directory (default: .)
+vn lint [path] [--only category] [--format json]   Lint a file or directory
+vn add &lt;pkg&gt;          Record a dependency in varian.pkg
+vn wrap &lt;target&gt;      Generate a Varian wrapper for a foreign library
+vn --help             Show usage
+</code></pre>
+<p>Debug environment variables: <code>VN_DEBUG_AST=1</code> prints the parsed AST before compilation;
+<code>VN_DEBUG_BYTECODE=1</code> prints the compiled bytecode disassembly.</p>
+<h2>Module loading: there is no <code>import</code></h2>
+<p><code>vn run &lt;file&gt;</code> (and the bare <code>vn &lt;file&gt;</code> form) automatically reads every <code>.vn</code> file in
+<code>vn_modules/</code> (if that directory exists in the current working directory) and
+concatenates them as a prelude <em>before</em> your file's source, then compiles the combined
+source as one program. There is no <code>import</code>/<code>use</code> keyword in the lexer at all — Zenith,
+the comptime ORM, and <code>queue.vn</code>'s helpers are simply always in scope as long as
+<code>vn_modules/</code> is present next to where you run <code>vn</code> from.</p>
+<h2><code>vn run</code> / bare file</h2>
+<pre><code>vn run examples/zenith_app_test.vn
+vn examples/zenith_app_test.vn      // identical
+</code></pre>
+<h2><code>vn fmt</code></h2>
+<p>Formats a file in place. Implemented as a separate comment-preserving re-lexer
+(<code>src/fmt.c</code>) — distinct from the parser used by <code>lint</code>/<code>test</code>/<code>run</code>, since formatting
+needs to round-trip whitespace/comments that the AST throws away.</p>
+<h2><code>vn test</code></h2>
+<pre><code>vn test tests/
+</code></pre>
+<p>Walks a directory for <code>.vn</code> files and runs each as a test file. Inside a test file, use
+<code>test "description" { ... }</code> blocks (see <code>examples/</code> and <code>tests/</code> for real examples) with
+the assertion globals <code>assert_eq(a, b)</code>, <code>assert_ne(a, b)</code>, <code>assert_throws(fn)</code> — all
+ordinary globals, not a module. On failure, the actual error message (not just the test
+description) is printed indented under the <code>❌ FAIL</code> line, so you don't have to re-run
+under a debugger to see why something failed.</p>
+<p><code>--filter &lt;substr&gt;</code> runs only tests whose description contains <code>&lt;substr&gt;</code>. <code>--timeout
+&lt;secs&gt;</code> (fractional seconds allowed) caps each individual test; a test exceeding it is
+killed at the next loop back-edge, marked <code>⏱️ TIMEOUT</code>, and counted as a failure without
+hanging the rest of the run. The summary line reports <code>X passed, Y failed (Z timed out),
+W skipped</code>.</p>
+<p>Mocking native module functions inside tests:</p>
+<pre><code class="language-varian">let saved = mock.intercept(&quot;sqlite&quot;, &quot;query&quot;, |conn, sql, params| { return [] })
+// ... test code that calls sqlite.query(...) and gets [] back ...
+mock.restore(&quot;sqlite&quot;, &quot;query&quot;, saved)
+</code></pre>
+<p><code>mock.intercept(type_name, method_name, fake_fn)</code> swaps in <code>fake_fn</code> for any
+(type, method) dispatch pair — the same dispatch table every native module
+(<code>sqlite</code>, <code>redis</code>, <code>string</code>, etc.) is built on — and returns whatever was previously
+bound there, so <code>mock.restore(type_name, method_name, saved)</code> can put it back exactly.</p>
+<h2><code>vn lint</code></h2>
+<pre><code>vn lint examples/
+vn lint src/foo.vn --only security
+vn lint . --format json
+</code></pre>
+<p>AST-walking static analysis (not the <code>fmt.c</code> tokenizer — a real parse tree walk, the same
+pipeline <code>vn run</code>/<code>vn test</code> use). Output is one line per finding:
+<code>path:line: [category] message</code>. Categories:</p>
+<ul>
+<li><strong>correctness</strong>: unreachable code (any statement after <code>return</code>/<code>break</code>/<code>continue</code>/
+  <code>throw(...)</code> in the same block), unused <code>let</code> bindings, shadowed bindings (a <code>let</code> name
+  that shadows one already declared in an enclosing scope).</li>
+<li><strong>security</strong>: hardcoded secrets (a <code>let</code>/field named like <code>secret</code>/<code>key</code>/<code>token</code>/
+  <code>password</code>/<code>api_key</code> assigned a string literal longer than ~12 chars), string-
+  concatenated SQL passed directly to <code>sqlite.query</code>/<code>postgres.query</code> (the anti-pattern
+  the comptime ORM in <code>docs/ZENITH.md</code> exists to replace).</li>
+<li><strong>performance</strong>: N+1 query pattern (a <code>sqlite</code>/<code>postgres</code>/<code>redis</code> call found inside a
+  <code>for</code>/<code>while</code> body), SQL containing <code>SELECT</code> passed as a query argument with no
+  <code>LIMIT</code> clause.</li>
+</ul>
+<p><code>--only &lt;category&gt;</code> filters to one category; <code>--format json</code> emits machine-readable
+output instead of the plain-text lines above.</p>
+<h2>Package Management &amp; Registry (<code>vn add</code>, <code>vn remove</code>, <code>vn install</code>, <code>vn update</code>, <code>vn search</code>)</h2>
+<p>For detailed information on Varian's package registry architecture, transitive resolution, capabilities, and version ranges, see <strong><a href="file:///root/dev/VarianLang/docs/CONSTELLATION.md">Constellation Documentation</a></strong>.</p>
+<ul>
+<li>
+<p><strong>Add a package dependency</strong>:
+  <code>vn add &lt;pkg_name&gt;</code>
+  Appends <code>&lt;pkg_name&gt; = "latest"</code> to <code>constellation.toml</code> (initializing a new manifest if missing).</p>
+</li>
+<li>
+<p><strong>Remove a dependency</strong>:
+  <code>vn remove &lt;pkg_name&gt;</code>
+  Removes the package from the manifest, prunes its directory and any unused transitive dependencies under <code>vn_modules/</code>, and updates the lockfile.</p>
+</li>
+<li>
+<p><strong>Install dependencies</strong>:
+  <code>vn install [--frozen]</code>
+  Fetches direct Git and index-resolved dependencies recursively, extracts them to <code>vn_modules/</code>, and writes the <code>constellation.lock</code> file. The <code>--frozen</code> flag prevents index updates and fails if the lockfile is out of sync.</p>
+</li>
+<li>
+<p><strong>Update dependencies</strong>:
+  <code>vn update</code>
+  Forces fresh queries to Git/registry index to re-resolve matching versions, computes updated SHA-256 integrity hashes, and rewrites the lockfile.</p>
+</li>
+<li>
+<p><strong>Search registry</strong>:
+  <code>vn search &lt;query&gt;</code>
+  Queries the registry index for packages matching <code>&lt;query&gt;</code> (or <code>"*"</code> for all) and lists their registered versions.</p>
+</li>
+<li>
+<p><strong>Wrapping foreign libraries</strong>:
+  <code>vn wrap python:requests</code>
+  Introspects a Python module and writes <code>vn_modules/&lt;module&gt;.vn</code> wrapper functions calling <code>python.run(module, fn, args)</code> (see <strong><a href="file:///root/dev/VarianLang/docs/STDLIB.md">Standard Library Docs</a></strong>).</p>
+</li>
+</ul>
+<h2>Build Orchestration (Kiln — <code>vn build</code>)</h2>
+<p>Varian applications are assembled and compiled using Kiln. For detailed information on bytecode container formats, native AOT compile harnesses, and compilation caching, see <strong><a href="file:///root/dev/VarianLang/docs/KILN.md">Kiln Documentation</a></strong>.</p>
+<ul>
+<li>
+<p><strong>Build a portable bytecode bundle</strong>:
+  <code>vn build</code>
+  Assembles all source files and compiles them into a fast, portable <code>app.vnb</code> bytecode container (executable directly via <code>vn app.vnb</code>).</p>
+</li>
+<li>
+<p><strong>Build a native standalone binary</strong>:
+  <code>vn build --release</code>
+  Compiles Varian code directly to optimized C via AOT, compiles it with the host compiler, and links it against <code>libvarian.a</code> to produce a standalone executable binary.</p>
+</li>
+</ul>
+<h2>Building from source</h2>
+<pre><code>make            # default: -g debug build, fast to rebuild — use while developing
+make release    # -O2 hardened build to ship/benchmark (see docs/SECURITY.md)
+make asan       # AddressSanitizer + UBSan build, for finding memory bugs
+make clean
+</code></pre>
+<p><code>make release</code> enables <code>_FORTIFY_SOURCE=2</code>, stack-protector/-clash protection, full
+RELRO + immediate binding, a non-executable stack, and a position-independent executable
+(ASLR). <code>make asan</code> builds with <code>-fsanitize=address,undefined</code>; run the suite under it
+with <code>ASAN_OPTIONS=detect_leaks=0 ./vn test tests/</code> to catch overflows and UB. Both do a
+<code>clean</code> first so object files aren't mixed between flag sets.</p>
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>

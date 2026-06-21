@@ -1,0 +1,206 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Kiln — VarianLang Docs</title>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    /* Doc-specific layout */
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--brand-primary);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    
+    /* Markdown Styles */
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--brand-primary);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(255, 158, 187, 0.05); /* owo pink */
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+  </style>
+</head>
+<body>
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/the_varian_book">Docs</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Language</strong></li>
+        <li><a href="/the_varian_book">The Varian Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/concurrency">Concurrency Model</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li style="margin-top: 1rem"><strong>Core</strong></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </aside>
+    
+    <main class="docs-content markdown-body">
+<p align="center">
+  <img src="/assets/kiln-logo.png" alt="Kiln" width="150" />
+</p>
+
+<h1>Kiln — The Varian Build Tool</h1>
+<p><strong>Kiln fires raw Varian into a hardened, shippable artifact.</strong></p>
+<p>Kiln is the unified compilation and build orchestrator for Varian applications. It reads project settings from <code>constellation.toml</code>, resolves dependency graphs offline using <code>constellation.lock</code>, and bundles application logic and assets into single-file deliverables.</p>
+<hr />
+<h2>1. Zero-Config Build Philosophy</h2>
+<p>Kiln eliminates build configuration file sprawl (such as webpack, vite, or tsconfig files) by standardizing on sensible defaults.
+* <strong>Auto-Discovery</strong>: If a <code>pages/</code> directory exists, Kiln enters Lumen framework mode, compiling pages into routes.
+* <strong>Asset Embedding</strong>: The <code>public/</code> directory (static assets, icons, fonts) is automatically embedded directly inside the output bundle or binary.
+* <strong>Offline Execution</strong>: Kiln never reaches out to the network. It assumes the offline state of <code>vn_modules/</code> represents the truth established by the package manager.</p>
+<pre><code>                      constellation.lock
+                               │
+   Varian Source Code          ▼
+   (main.vn, pages/*.lumen) ──▶[Assemble]
+                               │
+               ┌───────────────┴───────────────┐
+               ▼                               ▼
+       Portable Bundle                  AOT Native Binary
+       (Default)                        (--release)
+               │                               │
+               ▼                               ▼
+          `app.vnb`                        `./app`
+   - Serialized bytecode            - C Code AOT Compilation
+   - Embedded public/ assets        - Linked against libvarian.a
+   - Immediate startup              - Standalone binary execution
+</code></pre>
+<hr />
+<h2>2. Compilation Backends</h2>
+<h3>Backend A: Portable Bytecode Bundle (<code>vn build</code>)</h3>
+<p>This is the default output backend, producing a single <code>app.vnb</code> bytecode container:
+* <strong>The <code>.vnb</code> Format</strong>: Contains a versioned header (specifying language ABI and VM version gates), serialized function chunks (bytecode instruction vectors and constant pools), a string table, and embedded assets.
+* <strong>Startup Performance</strong>: When executing <code>vn app.vnb</code>, the VM skips lexing, parsing, and bytecode generation entirely, reading bytecode arrays straight into execution structures.
+* <strong>Compatibility Gate</strong>: A <code>.vnb</code> bundle compiled by an incompatible Varian VM version is caught at the header level and rejected, preventing unsafe execution or memory corruption.</p>
+<h3>Backend B: Standalone Native Binary (<code>vn build --release</code>)</h3>
+<p>This backend produces a compiled, optimized native executable for the target machine:
+1. <strong>AOT C Generation</strong>: Drives <code>aot_compile()</code> (from <code>src/aot.c</code>) to turn Varian source code into equivalent native C structures representing Varian execution logic.
+2. <strong>Harness Generation</strong>: Emits a <code>main()</code> C harness that sets up the Varian runtime, instantiates the VM, loads the AOT function table (<code>varian_aot_load(vm)</code>), and executes the entry point.
+3. <strong>Compilation &amp; Linking</strong>: Invokes the C compiler to compile the generated C code and link it against <code>libvarian.a</code> (the archived Varian runtime library) and its associated system dependencies:
+   <code>cc -O2 -Iinclude app.c -o app libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring</code>
+4. <strong>Static and Cross-Compilation (K5)</strong>: 
+   - <code>--static</code>: Passes the <code>-static</code> flag to the underlying C compiler to produce a fully statically-linked binary (e.g., using musl-libc or explicitly provided static dependency archives).
+   - <code>--target=&lt;triple&gt;</code>: Passes the <code>-target &lt;triple&gt;</code> flag to the C compiler, allowing for cross-compilation when used with a compatible compiler (like clang or zig cc).
+   - <code>--cc=&lt;compiler&gt;</code>: Overrides the C compiler executable (e.g., <code>--cc=zig cc</code> or <code>--cc=aarch64-linux-gnu-gcc</code>). Alternatively, use the <code>$CC</code> environment variable.
+5. <strong>Embedded Assets</strong>: Embeds assets directly in the binary layout so the application runs standalone.</p>
+<hr />
+<h2>3. Incremental Build Caching</h2>
+<p>To ensure rapid compilation, Kiln maintains a content-addressed build cache under <code>.kiln/cache/</code>:
+* <strong>Cache Keys</strong>: Built from the combined FNV-1a hash of:
+  - The literal bytes of the Varian source code.
+  - The values of all active compiler flags (<code>--release</code>, <code>--static</code>, <code>--cc</code>, <code>--target</code>).
+  - The bytes of all embedded assets found in the <code>public/</code> directory.
+* <strong>Unchanged Modules</strong>: If the computed 64-bit hash matches an existing file in <code>.kiln/cache/</code>, Kiln bypasses the entire parser and compiler, immediately copying the cached artifact to the output destination. This reduces repeated compilation times of large projects from seconds to milliseconds.
+* <strong>Reproducibility</strong>: The cache is purely a speed optimization. If you delete <code>.kiln/</code>, or run the build on a completely fresh machine (assuming the same <code>constellation.lock</code> and source files), Kiln is mathematically guaranteed to yield a byte-for-byte identical output artifact.</p>
+<hr />
+<h2>4. Lumen Framework Integration</h2>
+<p>Kiln is deeply aware of <strong>Lumen</strong>, Varian's web framework. If Kiln detects a <code>pages/</code> directory in the current working directory, it automatically shifts into "Lumen App Mode".</p>
+<ol>
+<li><strong>Pre-compilation of Routes</strong>: Kiln triggers <code>lumen_build()</code>, which traverses the <code>pages/</code> directory and transpiles the <code>.lumen</code> HTML/Varian templates into pure Varian functions (<code>.lumen-build.vn</code>).</li>
+<li><strong>Asset Routing</strong>: If a <code>public/</code> directory exists, Kiln embeds it. The Lumen runtime automatically serves these embedded assets at the root <code>/</code> path (e.g., <code>public/favicon.ico</code> becomes accessible at <code>https://your-app.com/favicon.ico</code>).</li>
+<li><strong>Seamless Deployment</strong>: By running <code>vn build --release</code>, your entire web server—including all HTML views, CSS stylesheets, images, and server-side Varian logic—is compiled into a single static C binary. You can deploy this single file to a bare Ubuntu server and run it without installing Nginx, Node.js, or even Varian itself.</li>
+</ol>
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>

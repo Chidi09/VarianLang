@@ -1,0 +1,904 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>The Varian Book — VarianLang Docs</title>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    /* Doc-specific layout */
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--brand-primary);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    
+    /* Markdown Styles */
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--brand-primary);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(255, 158, 187, 0.05); /* owo pink */
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+  </style>
+</head>
+<body>
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#features">Features</a>
+      <a href="/the_varian_book">Docs</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Language</strong></li>
+        <li><a href="/the_varian_book">The Varian Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/concurrency">Concurrency Model</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li style="margin-top: 1rem"><strong>Core</strong></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </aside>
+    
+    <main class="docs-content markdown-body">
+<h1>The Varian Programming Language Book</h1>
+<p>This book is a comprehensive, chapter-by-chapter guide to the <strong>Varian Programming Language</strong>, a modern, fast, agentic programming language designed to bridge native performance with universal foreign function interoperability, cooperative actor-based concurrency, and high-productivity web programming.</p>
+<hr />
+<h2>Table of Contents</h2>
+<ul>
+<li><a href="#foreword">Foreword</a></li>
+<li><a href="#introduction">Introduction</a></li>
+<li><a href="#1-getting-started">1. Getting Started</a><ul>
+<li><a href="#11-installation">1.1. Installation</a></li>
+<li><a href="#12-hello-world">1.2. Hello, World!</a></li>
+<li><a href="#13-hello-cargo-equivalent-varian-packages-and-tooling">1.3. Hello, Cargo! (Equivalent: Varian Packages and Tooling)</a></li>
+</ul>
+</li>
+<li><a href="#2-programming-a-guessing-game">2. Programming a Guessing Game</a><ul>
+<li><a href="#setting-up-a-new-project">Setting Up a New Project</a></li>
+<li><a href="#processing-a-guess">Processing a Guess</a></li>
+<li><a href="#storing-values-with-variables">Storing Values with Variables</a></li>
+<li><a href="#receiving-user-input">Receiving User Input</a></li>
+<li><a href="#handling-potential-failure-with-null--catch">Handling Potential Failure with null / catch</a></li>
+<li><a href="#printing-values-with-print-placeholders">Printing Values with print Placeholders</a></li>
+<li><a href="#testing-the-first-part">Testing the First Part</a></li>
+<li><a href="#generating-a-secret-number">Generating a Secret Number</a></li>
+<li><a href="#increasing-functionality-with-a-module">Increasing Functionality with a Module</a></li>
+<li><a href="#comparing-the-guess-to-the-secret-number">Comparing the Guess to the Secret Number</a></li>
+<li><a href="#allowing-multiple-guesses-with-looping">Allowing Multiple Guesses with Looping</a></li>
+<li><a href="#quitting-after-a-correct-guess">Quitting After a Correct Guess</a></li>
+<li><a href="#handling-invalid-input">Handling Invalid Input</a></li>
+<li><a href="#summary">Summary</a></li>
+</ul>
+</li>
+<li><a href="#3-common-programming-concepts">3. Common Programming Concepts</a><ul>
+<li><a href="#31-variables-and-mutability">3.1. Variables and Mutability</a></li>
+<li><a href="#32-data-types">3.2. Data Types</a></li>
+<li><a href="#33-functions">3.3. Functions</a></li>
+<li><a href="#34-comments">3.4. Comments</a></li>
+<li><a href="#35-control-flow">3.5. Control Flow</a></li>
+</ul>
+</li>
+<li><a href="#4-understanding-memory-mutation-and-lifetimes">4. Understanding Memory, Mutation, and Lifetimes</a><ul>
+<li><a href="#41-what-is-memory-management-struct-reference-semantics-vs-copy-on-write-arrays">4.1. What is Memory Management? (Struct Reference Semantics vs Copy-On-Write Arrays)</a></li>
+<li><a href="#42-in-place-mutation-and-the-self-reference">4.2. In-Place Mutation and the self Reference</a></li>
+<li><a href="#43-slices-and-indexing-semantics">4.3. Slices and Indexing Semantics</a></li>
+</ul>
+</li>
+<li><a href="#5-using-structs-to-structure-related-data">5. Using Structs to Structure Related Data</a><ul>
+<li><a href="#51-defining-and-instantiating-structs">5.1. Defining and Instantiating Structs</a></li>
+<li><a href="#52-an-example-program-using-structs-with-validation-decorators">5.2. An Example Program Using Structs (with Validation Decorators)</a></li>
+<li><a href="#53-methods-and-impl-blocks">5.3. Methods and impl Blocks</a></li>
+</ul>
+</li>
+<li><a href="#6-enums-and-pattern-matching">6. Enums and Pattern Matching</a><ul>
+<li><a href="#61-defining-an-enum">6.1. Defining an Enum</a></li>
+<li><a href="#62-the-match-control-flow-construct">6.2. The match Control Flow Construct</a></li>
+<li><a href="#63-concise-control-flow-with-optional-chaining-and-null-coalescing">6.3. Concise Control Flow with optional chaining and null coalescing</a></li>
+</ul>
+</li>
+<li><a href="#7-packages-modules-and-scoping">7. Packages, Modules, and Scoping</a><ul>
+<li><a href="#71-packages-and-the-varianpkg-format">7.1. Packages and the varian.pkg format</a></li>
+<li><a href="#72-module-loading-and-the-concatenation-prelude">7.2. Module Loading and the Concatenation Prelude</a></li>
+<li><a href="#73-scope-resolution">7.3. Scope Resolution</a></li>
+<li><a href="#74-automatic-module-inclusion">7.4. Automatic Module Inclusion</a></li>
+<li><a href="#75-separating-modules-into-different-files">7.5. Separating Modules into Different Files</a></li>
+</ul>
+</li>
+<li><a href="#8-common-collections">8. Common Collections</a><ul>
+<li><a href="#81-storing-lists-of-values-with-arrays">8.1. Storing Lists of Values with Arrays</a></li>
+<li><a href="#82-storing-utf-8-encoded-text-with-strings">8.2. Storing UTF-8 Encoded Text with Strings</a></li>
+<li><a href="#83-storing-keys-with-associated-values-in-hash-maps-dynamic-structs">8.3. Storing Keys with Associated Values in Hash Maps (Dynamic Structs)</a></li>
+</ul>
+</li>
+<li><a href="#9-error-handling">9. Error Handling</a><ul>
+<li><a href="#91-unrecoverable-errors-with-throw">9.1. Unrecoverable Errors with throw</a></li>
+<li><a href="#92-recoverable-errors-with-trycatch-and-">9.2. Recoverable Errors with try/catch and ?</a></li>
+<li><a href="#93-optional-return-propagation-vs-throw">9.3. Optional return propagation vs throw</a></li>
+</ul>
+</li>
+<li><a href="#10-generic-types-traits-and-lifetimes">10. Generic Types, Traits, and Lifetimes</a><ul>
+<li><a href="#101-type-erased-generic-syntax">10.1. Type-Erased Generic Syntax</a></li>
+<li><a href="#102-implicit-structural-traits">10.2. Implicit Structural Traits</a></li>
+<li><a href="#103-memory-lifetimes-gc-vs-bump-arenas">10.3. Memory Lifetimes: GC vs Bump Arenas</a></li>
+</ul>
+</li>
+<li><a href="#11-writing-automated-tests">11. Writing Automated Tests</a><ul>
+<li><a href="#111-how-to-write-tests">11.1. How to Write Tests</a></li>
+<li><a href="#112-controlling-how-tests-are-run">11.2. Controlling How Tests Are Run</a></li>
+<li><a href="#113-mocking-and-intercepting-native-modules">11.3. Mocking and Intercepting Native Modules</a></li>
+</ul>
+</li>
+<li><a href="#12-building-a-command-line-program">12. Building a Command Line Program</a><ul>
+<li><a href="#121-accepting-command-line-arguments">12.1. Accepting Command Line Arguments</a></li>
+<li><a href="#122-reading-a-file">12.2. Reading a File</a></li>
+<li><a href="#123-improving-modularity-and-error-isolation">12.3. Improving Modularity and Error Isolation</a></li>
+<li><a href="#124-test-driven-cli-refactoring">12.4. Test-Driven CLI Refactoring</a></li>
+<li><a href="#125-working-with-environment-variables">12.5. Working with Environment Variables</a></li>
+<li><a href="#126-redirecting-errors-to-standard-error">12.6. Redirecting Errors to Standard Error</a></li>
+</ul>
+</li>
+<li><a href="#13-functional-features-iterators-and-closures">13. Functional Features: Iterators and Closures</a><ul>
+<li><a href="#131-closures-and-value-capture">13.1. Closures and Value Capture</a></li>
+<li><a href="#132-processing-sequential-items">13.2. Processing Sequential Items</a></li>
+<li><a href="#133-applying-iterators-to-the-cli-project">13.3. Applying Iterators to the CLI Project</a></li>
+<li><a href="#134-performance-in-loops-vs-map-functions">13.4. Performance in Loops vs. Map Functions</a></li>
+</ul>
+</li>
+<li><a href="#14-varian-tooling-and-ecosystem">14. Varian Tooling and Ecosystem</a><ul>
+<li><a href="#141-customizing-runtime-executable-flags">14.1. Customizing Runtime Executable Flags</a></li>
+<li><a href="#142-local-project-scaffolding-and-publishing-scenarios">14.2. Local Project Scaffolding and Publishing Scenarios</a></li>
+<li><a href="#143-multi-module-project-workspaces">14.3. Multi-Module Project Workspaces</a></li>
+<li><a href="#144-installing-the-vn-cli-globally">14.4. Installing the vn CLI Globally</a></li>
+<li><a href="#145-extending-vn-via-custom-wrappers">14.5. Extending vn via Custom Wrappers</a></li>
+</ul>
+</li>
+<li><a href="#15-allocation-smart-pointers-and-gc-internals">15. Allocation, Smart Pointers, and GC Internals</a><ul>
+<li><a href="#151-heap-allocation-and-sweep-cycles">15.1. Heap Allocation and Sweep Cycles</a></li>
+<li><a href="#152-treating-heap-objects-as-references">15.2. Treating Heap Objects as References</a></li>
+<li><a href="#153-gc-sweep-reclaim-and-garbage-collection-details">15.3. GC Sweep Reclaim and Garbage Collection Details</a></li>
+<li><a href="#154-vm-object-reference-counts">15.4. VM Object Reference Counts</a></li>
+<li><a href="#155-task-local-bump-arenas-and-the-escape_promote-write-barrier">15.5. Task-Local Bump Arenas and the escape_promote Write Barrier</a></li>
+<li><a href="#156-reference-cycles-and-cycle-collection">15.6. Reference Cycles and Cycle Collection</a></li>
+</ul>
+</li>
+<li><a href="#16-cooperative-concurrency">16. Cooperative Concurrency</a><ul>
+<li><a href="#161-green-thread-tasks">16.1. Green-Thread Tasks</a></li>
+<li><a href="#162-channels-and-automated-backpressure">16.2. Channels and Automated Backpressure</a></li>
+<li><a href="#163-stateful-actors-and-isolation-preventing-shared-state-hazards">16.3. Stateful Actors and Isolation (Preventing Shared-State Hazards)</a></li>
+<li><a href="#164-task-yielding-scheduling-safety">16.4. Task Yielding Scheduling Safety</a></li>
+</ul>
+</li>
+<li><a href="#17-fundamentals-of-asynchronous-programming">17. Fundamentals of Asynchronous Programming</a><ul>
+<li><a href="#171-cooperative-scheduling-loop">17.1. Cooperative Scheduling Loop</a></li>
+<li><a href="#172-applying-concurrency-with-async-tasks">17.2. Applying Concurrency with Async Tasks</a></li>
+<li><a href="#173-working-with-multiple-channels-select-multiplexing">17.3. Working with Multiple Channels (Select Multiplexing)</a></li>
+<li><a href="#174-continuous-streams-and-channels">17.4. Continuous Streams and Channels</a></li>
+<li><a href="#175-structural-interfaces-for-async">17.5. Structural Interfaces for Async</a></li>
+<li><a href="#176-futures-tasks-and-threads-single-threaded-worker-pools">17.6. Futures, Tasks, and Threads (Single-Threaded Worker Pools)</a></li>
+</ul>
+</li>
+<li><a href="#18-object-oriented-patterns-in-varian">18. Object-Oriented Patterns in Varian</a><ul>
+<li><a href="#181-characteristics-of-object-oriented-languages-encapsulation">18.1. Characteristics of Object-Oriented Languages (Encapsulation)</a></li>
+<li><a href="#182-trait-objects-and-structural-typing-parameters">18.2. Trait Objects and Structural Typing Parameters</a></li>
+<li><a href="#183-decoupling-state-and-behavior-with-impl-blocks">18.3. Decoupling State and Behavior with impl Blocks</a></li>
+</ul>
+</li>
+<li><a href="#19-pattern-matching-and-guards">19. Pattern Matching and Guards</a><ul>
+<li><a href="#191-where-pattern-matching-applies">19.1. Where Pattern Matching Applies</a></li>
+<li><a href="#192-match-guards-and-exhaustiveness-warnings">19.2. Match Guards and Exhaustiveness Warnings</a></li>
+<li><a href="#193-pattern-syntax-constants-ranges-wildcards-bindings">19.3. Pattern Syntax (Constants, Ranges, Wildcards, Bindings)</a></li>
+</ul>
+</li>
+<li><a href="#20-advanced-features">20. Advanced Features</a><ul>
+<li><a href="#201-direct-c-ffi-via-ffi">20.1. Direct C FFI via @ffi</a></li>
+<li><a href="#202-advanced-structural-traits">20.2. Advanced Structural Traits</a></li>
+<li><a href="#203-runtime-primitive-casting-and-type-validation">20.3. Runtime Primitive Casting and Type Validation</a></li>
+<li><a href="#204-first-class-functions-and-closures">20.4. First-Class Functions and Closures</a></li>
+<li><a href="#205-compile-time-evaluation-with-comptime">20.5. Compile-Time Evaluation with comptime</a></li>
+</ul>
+</li>
+<li><a href="#21-final-project-web-programming-with-zenith">21. Final Project: Web Programming with Zenith</a><ul>
+<li><a href="#211-zenith-app-routing-and-tri-tries">21.1. Zenith App Routing and Tri-Tries</a></li>
+<li><a href="#212-middleware-chains">21.2. Middleware Chains</a></li>
+<li><a href="#213-comptime-database-orm">21.3. Comptime Database ORM</a></li>
+<li><a href="#214-graceful-shutdown-and-cleanup">21.4. Graceful Shutdown and Cleanup</a></li>
+</ul>
+</li>
+<li><a href="#22-appendices">22. Appendices</a><ul>
+<li><a href="#221-appendix-a-keywords-and-special-identifiers">22.1. Appendix A: Keywords and Special Identifiers</a></li>
+<li><a href="#222-appendix-b-language-tooling-vn-fmt-and-vn-lint">22.2. Appendix B: Language Tooling (vn fmt and vn lint)</a></li>
+<li><a href="#223-appendix-c-field-decorators">22.3. Appendix C: Field Decorators</a></li>
+<li><a href="#224-appendix-d-useful-development-tools">22.4. Appendix D: Useful Development Tools</a></li>
+<li><a href="#225-appendix-e-editions-and-vm-releases">22.5. Appendix E: Editions and VM Releases</a></li>
+<li><a href="#226-appendix-f-global-documentation-and-translations">22.6. Appendix F: Global Documentation and Translations</a></li>
+<li><a href="#227-appendix-g-the-owo-syntax-color-scheme">22.7. Appendix G: The owo Syntax Color Scheme</a></li>
+</ul>
+</li>
+</ul>
+<hr />
+<h2>Foreword</h2>
+<p>Varian is built for high-performance network services, AI-agent integrations, and systems programming. It represents a synthesis of three core paradigms:
+1.  <strong>Direct Native Control</strong>: Direct shared-library bindings via libffi without wrapper code.
+2.  <strong>Universal Foreign Bridges</strong>: Embedded Python runtime bridge to invoke any library.
+3.  <strong>Cooperative Green Threads</strong>: Tasks and actor communication built on a lightweight, single-threaded VM scheduler.</p>
+<hr />
+<h2>Introduction</h2>
+<p>Varian is dynamically typed but incorporates optional static type annotations. The code compiles to custom bytecode, which executes on an optimized VM using task-local struct arenas and label-as-values computed-goto dispatches for throughput.</p>
+<hr />
+<h2>1. Getting Started</h2>
+<h3>1.1. Installation</h3>
+<p>Build the runtime executable <code>vn</code> from source:</p>
+<pre><code class="language-bash">make clean
+make -j8 CFLAGS=&quot;-Wall -Wextra -std=gnu11 -O2 -DNDEBUG -Iinclude&quot;
+</code></pre>
+<p>Launch the interactive REPL:</p>
+<pre><code class="language-bash">./vn
+</code></pre>
+<h3>1.2. Hello, World!</h3>
+<p>Create a file named <code>hello.vn</code>:</p>
+<pre><code class="language-varian">print(&quot;Hello, World!&quot;)
+</code></pre>
+<p>Run it via the CLI:</p>
+<pre><code class="language-bash">./vn hello.vn
+</code></pre>
+<h3>1.3. Hello, Cargo! (Equivalent: Varian Packages and Tooling)</h3>
+<p>Dependencies are tracked in <code>varian.pkg</code>. Varian manages local packages in the <code>vn_modules/</code> folder.
+To add a package, write:</p>
+<pre><code class="language-bash">vn add zenith
+</code></pre>
+<p>This updates the package manifest automatically.</p>
+<hr />
+<h2>2. Programming a Guessing Game</h2>
+<p>In this chapter, we will build an interactive guessing game to demonstrate Varian's core control flow, variable bindings, and standard input/output routines.</p>
+<h3>Setting Up a New Project</h3>
+<p>Create a directory for your project and place any needed helper modules inside the <code>vn_modules/</code> folder.</p>
+<h3>Processing a Guess</h3>
+<p>We begin by reading from standard input. Create <code>main.vn</code>:</p>
+<pre><code class="language-varian">print(&quot;Guess the number!&quot;)
+</code></pre>
+<h3>Storing Values with Variables</h3>
+<p>We store values using <code>let</code>:</p>
+<pre><code class="language-varian">let guess = &quot;&quot;
+</code></pre>
+<h3>Receiving User Input</h3>
+<p>Read lines from input using <code>io.read_line()</code>:</p>
+<pre><code class="language-varian">print(&quot;Please input your guess.&quot;)
+let guess_str = io.read_line()
+</code></pre>
+<h3>Handling Potential Failure with null / catch</h3>
+<p>If the input stream ends, <code>io.read_line()</code> returns <code>null</code>. We handle this using conditional checks:</p>
+<pre><code class="language-varian">if guess_str == null {
+    print(&quot;No input detected. Exiting.&quot;)
+}
+</code></pre>
+<h3>Printing Values with print Placeholders</h3>
+<p>Varian strings can be concatenated with <code>+</code>. Print variables directly:</p>
+<pre><code class="language-varian">print(&quot;You guessed: &quot; + guess_str)
+</code></pre>
+<h3>Testing the First Part</h3>
+<p>Run <code>./vn main.vn</code> to test that input is successfully accepted and echoed back.</p>
+<h3>Generating a Secret Number</h3>
+<p>Use the native <code>math</code> module to generate a random number between 1 and 100:</p>
+<pre><code class="language-varian">let secret = math.random_int(1, 100)
+</code></pre>
+<h3>Increasing Functionality with a Module</h3>
+<p>If we need more complex logic, we can write helper methods inside a <code>.vn</code> file in <code>vn_modules/</code>.</p>
+<h3>Comparing the Guess to the Secret Number</h3>
+<p>We parse the input string into an integer and compare it:</p>
+<pre><code class="language-varian">let guess = string_to_int(guess_str.trim())
+if guess &lt; secret {
+    print(&quot;Too low!&quot;)
+} else if guess &gt; secret {
+    print(&quot;Too high!&quot;)
+} else {
+    print(&quot;You win!&quot;)
+}
+</code></pre>
+<h3>Allowing Multiple Guesses with Looping</h3>
+<p>Wrap the guess processing in a <code>loop</code> block:</p>
+<pre><code class="language-varian">loop {
+    let guess_str = io.read_line()
+    if guess_str == null { break }
+    // comparisons here...
+}
+</code></pre>
+<h3>Quitting After a Correct Guess</h3>
+<p>Use the <code>break</code> statement to exit the loop once the correct guess is entered.</p>
+<h3>Handling Invalid Input</h3>
+<p>To prevent crash failures when parsing bad strings, wrap the conversion inside a <code>try/catch</code> or check for <code>null</code>:</p>
+<pre><code class="language-varian">try {
+    let guess = string_to_int(guess_str.trim())
+    // process guess...
+} catch e {
+    print(&quot;Please type a valid number!&quot;)
+}
+</code></pre>
+<h3>Summary</h3>
+<p>You have built a fully interactive game demonstrating Varian variables, loops, input processing, and parsing.</p>
+<hr />
+<h2>3. Common Programming Concepts</h2>
+<h3>3.1. Variables and Mutability</h3>
+<p>Variable bindings are declared with <code>let</code>. They can be reassigned freely:</p>
+<pre><code class="language-varian">let x = 5
+x = 6
+</code></pre>
+<blockquote>
+<p>[!NOTE]
+Type annotations are parsed and validated by static analysis tooling (<code>vn lint</code>), but they are discarded before runtime execution. The VM remains fully dynamically typed.</p>
+</blockquote>
+<pre><code class="language-varian">let price: float = 9.99 // Annotation discarded at execution time
+</code></pre>
+<h3>3.2. Data Types</h3>
+<p>Varian supports the following primitive data types:
+*   <code>bool</code>: <code>true</code> or <code>false</code>
+*   <code>int</code>: Platform-native integer representation
+*   <code>float</code>: IEEE-754 floating-point representation
+*   <code>string</code>: Immutable, UTF-8 encoded sequence of bytes
+*   <code>null</code>: Representation of empty/uninitialized value
+*   Arrays: Copy-on-write dynamic slices (<code>[1, 2, 3]</code>)
+*   Tuples: Stack-allocated fixed-size values (<code>(1, "str")</code>)
+*   Structs &amp; Enums</p>
+<h3>3.3. Functions</h3>
+<p>Declared using <code>fn</code>. Functions support optional parameter and return type signatures:</p>
+<pre><code class="language-varian">fn add(a: int, b: int) -&gt; int {
+    return a + b
+}
+</code></pre>
+<p>Multiple return values are supported via comma separation:</p>
+<pre><code class="language-varian">fn divide(a, b) {
+    if b == 0 {
+        return null, &quot;division by zero&quot;
+    }
+    return a / b, null
+}
+</code></pre>
+<h3>3.4. Comments</h3>
+<p>Line comments begin with <code>//</code>:</p>
+<pre><code class="language-varian">// This is a line comment.
+</code></pre>
+<h3>3.5. Control Flow</h3>
+<p>Varian supports conventional blocks and exclusive ranges:</p>
+<pre><code class="language-varian">if x &gt; 10 {
+    print(&quot;Big&quot;)
+} else {
+    print(&quot;Small&quot;)
+}
+
+for i in 0..10 {
+    print(i) // Outputs 0 through 9
+}
+
+while x &lt; 100 {
+    x = x + 10
+}
+</code></pre>
+<hr />
+<h2>4. Understanding Memory, Mutation, and Lifetimes</h2>
+<h3>4.1. What is Memory Management? (Struct Reference Semantics vs Copy-On-Write Arrays)</h3>
+<p>Instead of Rust's ownership system, Varian employs a hybrid approach:
+*   <strong>Structs</strong> are passed by reference and managed by a garbage collector.
+*   <strong>Arrays</strong> utilize copy-on-write (COW) semantics when mutated via methods (like <code>.push()</code>).</p>
+<h3>4.2. In-Place Mutation and the self Reference</h3>
+<p>Inside struct <code>impl</code> blocks, methods take an explicit <code>self</code> reference. Mutating fields on <code>self</code> edits the struct in place:</p>
+<pre><code class="language-varian">struct Point { x: int, y: int }
+impl Point {
+    fn move_to(self, new_x, new_y) {
+        self.x = new_x
+        self.y = new_y
+    }
+}
+</code></pre>
+<h3>4.3. Slices and Indexing Semantics</h3>
+<p>Arrays and strings can be sliced and indexed. While array indexing is mutable in-place (<code>arr[0] = x</code>), methods that append or resize copy the underlying array buffer.</p>
+<hr />
+<h2>5. Using Structs to Structure Related Data</h2>
+<h3>5.1. Defining and Instantiating Structs</h3>
+<p>Structs group related fields:</p>
+<pre><code class="language-varian">struct User {
+    id: int,
+    name: string,
+    email: string,
+}
+
+let user = User { id: 42, name: &quot;Alice&quot;, email: &quot;alice@example.com&quot; }
+</code></pre>
+<h3>5.2. An Example Program Using Structs (with Validation Decorators)</h3>
+<p>Validation decorators on struct fields enforce conditions at construction time:</p>
+<pre><code class="language-varian">struct SignupForm {
+    @is_email email: string,
+    @min_len(3) name: string,
+}
+</code></pre>
+<h3>5.3. Methods and impl Blocks</h3>
+<p>Behavior is attached to structs using <code>impl</code> blocks:</p>
+<pre><code class="language-varian">impl User {
+    fn display(self) {
+        print(self.name + &quot; &lt;&quot; + self.email + &quot;&gt;&quot;)
+    }
+}
+</code></pre>
+<hr />
+<h2>6. Enums and Pattern Matching</h2>
+<h3>6.1. Defining an Enum</h3>
+<p>Enums represent sum types that can contain payload data:</p>
+<pre><code class="language-varian">enum WebResult&lt;T&gt; {
+    Success(T),
+    Failure(string),
+}
+</code></pre>
+<h3>6.2. The match Control Flow Construct</h3>
+<p>Use the <code>match</code> block to inspect enums and unpack payload bindings:</p>
+<pre><code class="language-varian">let res = WebResult::Success(200)
+
+match res {
+    WebResult::Success(status) =&gt; print(&quot;Success: &quot; + status),
+    WebResult::Failure(err) =&gt; print(&quot;Failed: &quot; + err)
+}
+</code></pre>
+<h3>6.3. Concise Control Flow with optional chaining and null coalescing</h3>
+<p>Null-coalescing (<code>??</code>) and optional chaining (<code>?.</code>) permit concise, nil-safe expressions:</p>
+<pre><code class="language-varian">let role = user?.profile?.role ?? &quot;guest&quot;
+</code></pre>
+<hr />
+<h2>7. Packages, Modules, and Scoping</h2>
+<h3>7.1. Packages and the varian.pkg format</h3>
+<p>Packages declare metadata and target dependencies:</p>
+<pre><code class="language-toml">name = &quot;web-service&quot;
+version = &quot;1.0.0&quot;
+
+[deps]
+zenith = &quot;latest&quot;
+</code></pre>
+<h3>7.2. Module Loading and the Concatenation Prelude</h3>
+<p>Varian has no <code>import</code> keyword in its syntax. The CLI runner automatically concatenates all <code>.vn</code> files inside the <code>vn_modules/</code> folder as a prelude compiled in-scope above your entry file.</p>
+<h3>7.3. Scope Resolution</h3>
+<p>Names inside the prelude are loaded at global scope, while closures and inner scopes resolve locally.</p>
+<h3>7.4. Automatic Module Inclusion</h3>
+<p>By placing libraries under <code>vn_modules/</code>, they are automatically imported into scope across all project script files.</p>
+<h3>7.5. Separating Modules into Different Files</h3>
+<p>Larger applications separate concerns by writing distinct <code>.vn</code> files inside the <code>vn_modules/</code> directory.</p>
+<hr />
+<h2>8. Common Collections</h2>
+<h3>8.1. Storing Lists of Values with Arrays</h3>
+<p>Arrays are dynamic, type-erased lists of elements:</p>
+<pre><code class="language-varian">let list = [1, 2, &quot;three&quot;, true]
+</code></pre>
+<p>Adding to an array returns a new copy:</p>
+<pre><code class="language-varian">let updated = list.push(&quot;four&quot;)
+</code></pre>
+<h3>8.2. Storing UTF-8 Encoded Text with Strings</h3>
+<p>Strings are immutable sequences of UTF-8 text. String manipulation methods return new string values:</p>
+<pre><code class="language-varian">let text = &quot;Hello&quot;
+let upper = text.upper()
+</code></pre>
+<h3>8.3. Storing Keys with Associated Values in Hash Maps (Dynamic Structs)</h3>
+<p>Varian uses structs to map keys to values, or builds them dynamically via <code>http.create_struct(keys, values)</code>.</p>
+<hr />
+<h2>9. Error Handling</h2>
+<h3>9.1. Unrecoverable Errors with throw</h3>
+<p>Throwing directly aborts execution if not handled in a try/catch:</p>
+<pre><code class="language-varian">throw(&quot;unrecoverable error&quot;)
+</code></pre>
+<h3>9.2. Recoverable Errors with try/catch and ?</h3>
+<p>For standard error recovery, Varian provides <code>try/catch</code> blocks:</p>
+<pre><code class="language-varian">try {
+    throw(&quot;something went wrong&quot;)
+} catch e {
+    print(&quot;Caught error: &quot; + e)
+}
+</code></pre>
+<p>The <code>?</code> operator evaluates an expression. If it is <code>null</code>, it immediately propagates <code>null</code> as the return value of the enclosing function:</p>
+<pre><code class="language-varian">fn try_operation(a, b) {
+    let val = safe_div(a, b)? // returns null early if division fails
+    return val + 10
+}
+</code></pre>
+<h3>9.3. Optional return propagation vs throw</h3>
+<p>Throwing errors is reserved for unexpected failures, while <code>null</code> and <code>?</code> are preferred for expected failures like missing keys.</p>
+<hr />
+<h2>10. Generic Types, Traits, and Lifetimes</h2>
+<h3>10.1. Type-Erased Generic Syntax</h3>
+<p>Generics are supported syntactically for static type checks and IDE diagnostics:</p>
+<pre><code class="language-varian">struct Holder&lt;T&gt; { val: T }
+</code></pre>
+<p>They are fully type-erased at compile-time and have no runtime speed penalties.</p>
+<h3>10.2. Implicit Structural Traits</h3>
+<p>Varian implements implicit structural typing. If a struct exposes the methods defined on a trait, it implicitly implements that trait without declaration:</p>
+<pre><code class="language-varian">trait Greeter {
+    fn greet(self)
+}
+
+struct Robot {}
+impl Robot {
+    fn greet(self) { print(&quot;Beep Boop&quot;) }
+}
+
+fn do_greet(g: Greeter) {
+    g.greet()
+}
+// Robot is accepted by do_greet automatically
+</code></pre>
+<h3>10.3. Memory Lifetimes: GC vs Bump Arenas</h3>
+<p>Unlike Rust, lifetimes are handled dynamically by the VM's garbage collector or reclaimed in bulk within per-task bump arenas.</p>
+<hr />
+<h2>11. Writing Automated Tests</h2>
+<h3>11.1. How to Write Tests</h3>
+<p>Run <code>vn test</code> to walk files inside a <code>tests/</code> directory. Tests are declared via <code>test</code> blocks:</p>
+<pre><code class="language-varian">test &quot;math square root&quot; {
+    assert_eq(math.sqrt(16.0), 4.0)
+}
+</code></pre>
+<p>Available assertion globals include: <code>assert_eq(a, b)</code>, <code>assert_ne(a, b)</code>, and <code>assert_throws(fn)</code>.</p>
+<h3>11.2. Controlling How Tests Are Run</h3>
+<p>Run specific files or pass test paths to <code>vn test &lt;path&gt;</code> to narrow scope.</p>
+<h3>11.3. Mocking and Intercepting Native Modules</h3>
+<p>Tests can intercept and mock methods belonging to native modules:</p>
+<pre><code class="language-varian">let original = mock.intercept(&quot;sqlite&quot;, &quot;query&quot;, |conn, sql, params| {
+    return [Row { id: 1, name: &quot;Mock User&quot; }]
+})
+
+// Run tests using mock behavior...
+
+mock.restore(&quot;sqlite&quot;, &quot;query&quot;, original)
+</code></pre>
+<hr />
+<h2>12. Building a Command Line Program</h2>
+<h3>12.1. Accepting Command Line Arguments</h3>
+<p>Arguments are passed directly to script execution and are readable via system bindings.</p>
+<h3>12.2. Reading a File</h3>
+<p>Varian CLI inputs can be read from files using the <code>io</code> module:</p>
+<pre><code class="language-varian">let contents = io.read_text(&quot;input.txt&quot;)
+</code></pre>
+<h3>12.3. Improving Modularity and Error Isolation</h3>
+<p>Break code into functional components and catch file access errors gracefully using <code>try/catch</code>.</p>
+<h3>12.4. Test-Driven CLI Refactoring</h3>
+<p>Write test blocks in the test folder to assert that CLI outputs are correctly processed.</p>
+<h3>12.5. Working with Environment Variables</h3>
+<p>Varian queries the system environment using built-in config wrappers or via Python bridge.</p>
+<h3>12.6. Redirecting Errors to Standard Error</h3>
+<p>Errors in standard routines can be targeted specifically to standard error flows.</p>
+<hr />
+<h2>13. Functional Features: Iterators and Closures</h2>
+<h3>13.1. Closures and Value Capture</h3>
+<p>Closures are created via pipe syntax <code>|args| { body }</code>. They capture scope variables <strong>by value</strong>:</p>
+<pre><code class="language-varian">let factor = 2
+let double = |x| { return x * factor }
+print(double(10)) // 20
+</code></pre>
+<h3>13.2. Processing Sequential Items</h3>
+<p>Loop constructs and range expressions iterate through arrays efficiently.</p>
+<h3>13.3. Applying Iterators to the CLI Project</h3>
+<p>Process file lines sequentially inside iterator-like ranges:</p>
+<pre><code class="language-varian">let lines = contents.split(&quot;\n&quot;)
+for i in 0..lines.len() {
+    print(&quot;Line &quot; + i + &quot;: &quot; + lines[i])
+}
+</code></pre>
+<h3>13.4. Performance in Loops vs. Map Functions</h3>
+<p>Simple loop ranges execute at native VM speed via computed-goto, bypassing overhead from closure call allocations.</p>
+<hr />
+<h2>14. Varian Tooling and Ecosystem</h2>
+<h3>14.1. Customizing Runtime Executable Flags</h3>
+<p>Set environment variables to debug or optimize performance:
+*   <code>VN_DEBUG_AST=1</code>: Outputs AST.
+*   <code>VN_DEBUG_BYTECODE=1</code>: Outputs bytecode disassembly.</p>
+<h3>14.2. Local Project Scaffolding and Publishing Scenarios</h3>
+<p>Scaffold new projects with <code>vn add</code> to declare local package dependencies.</p>
+<h3>14.3. Multi-Module Project Workspaces</h3>
+<p>Track dependencies across nested workspaces using the <code>varian.pkg</code> format.</p>
+<h3>14.4. Installing the vn CLI Globally</h3>
+<p>Compile and copy the <code>vn</code> executable to system paths (e.g. <code>/usr/local/bin</code>).</p>
+<h3>14.5. Extending vn via Custom Wrappers</h3>
+<p>Auto-generate Varian modules for foreign code:</p>
+<pre><code class="language-bash">vn wrap python:numpy
+</code></pre>
+<hr />
+<h2>15. Allocation, Smart Pointers, and GC Internals</h2>
+<h3>15.1. Heap Allocation and Sweep Cycles</h3>
+<p>Varian manages dynamic memory on the heap. Allocation triggers are periodically swept by a Mark-and-Sweep GC.</p>
+<h3>15.2. Treating Heap Objects as References</h3>
+<p>Passing a struct into functions shares its memory address. Changes made within functions mutate the caller's struct value in-place.</p>
+<h3>15.3. GC Sweep Reclaim and Garbage Collection Details</h3>
+<p>Object reference counters identify roots. Unreferenced items are recycled to prevent leaks.</p>
+<h3>15.4. VM Object Reference Counts</h3>
+<p>Every heap object tracking header contains a reference counter to assist GC reachability determinations.</p>
+<h3>15.5. Task-Local Bump Arenas and the escape_promote Write Barrier</h3>
+<p>To achieve high throughput (e.g. in HTTP request routing), Varian spawns request tasks with per-task bump arenas. If an arena object escapes to a channel, actor, or global binding, the <code>escape_promote</code> write barrier copies it to the GC heap.</p>
+<h3>15.6. Reference Cycles and Cycle Collection</h3>
+<p>The Mark-and-Sweep garbage collector resolves circular references that cannot be collected by pure reference counting.</p>
+<hr />
+<h2>16. Cooperative Concurrency</h2>
+<h3>16.1. Green-Thread Tasks</h3>
+<p>Varian runs cooperative green threads scheduled in a single-threaded round-robin loop:</p>
+<pre><code class="language-varian">fn run_worker(id) {
+    print(&quot;Task &quot; + id + &quot; running&quot;)
+    task.yield()
+    print(&quot;Task &quot; + id + &quot; completed&quot;)
+}
+
+task.spawn(run_worker, [1])
+</code></pre>
+<h3>16.2. Channels and Automated Backpressure</h3>
+<p>Channels enable safe data transfer between tasks:</p>
+<pre><code class="language-varian">let ch = task.channel(2) // buffer capacity of 2
+</code></pre>
+<ul>
+<li><code>ch &lt;- value</code> yields the sending task if the buffer is full.</li>
+<li><code>&lt;- ch</code> yields the receiving task if the buffer is empty.</li>
+</ul>
+<h3>16.3. Stateful Actors and Isolation (Preventing Shared-State Hazards)</h3>
+<p>Actors isolate state. Calling an actor method yields the caller and schedules message execution within the actor's thread loop:</p>
+<pre><code class="language-varian">actor Counter {
+    val: int = 0,
+    fn increment(self) {
+        self.val = self.val + 1
+    }
+}
+let c = Counter.spawn()
+c.increment()
+</code></pre>
+<h3>16.4. Task Yielding Scheduling Safety</h3>
+<p>Because Varian schedules cooperatively, tasks must call <code>task.yield()</code> or perform I/O to share scheduler threads.</p>
+<hr />
+<h2>17. Fundamentals of Asynchronous Programming</h2>
+<h3>17.1. Cooperative Scheduling Loop</h3>
+<p>The core scheduler loops over active tasks, yielding execution contexts cleanly.</p>
+<h3>17.2. Applying Concurrency with Async Tasks</h3>
+<p>Spawn concurrent async functions and interact with channels to manage background data flow.</p>
+<h3>17.3. Working with Multiple Channels (Select Multiplexing)</h3>
+<p>Read from channels sequentially or implement polling constructs to prevent task blockages.</p>
+<h3>17.4. Continuous Streams and Channels</h3>
+<p>Read stream chunks off persistent channels continuously to process data fragments.</p>
+<h3>17.5. Structural Interfaces for Async</h3>
+<p>Tasks utilize implicit structural typing to resolve stream and channel types.</p>
+<h3>17.6. Futures, Tasks, and Threads (Single-Threaded Worker Pools)</h3>
+<p>Background workers utilize channels to process task jobs asynchronously:</p>
+<pre><code class="language-varian">let pool = WorkerPool { ch: task.channel(100), count: 0, workers: 0 }
+pool.spawn(4)
+</code></pre>
+<hr />
+<h2>18. Object-Oriented Patterns in Varian</h2>
+<h3>18.1. Characteristics of Object-Oriented Languages (Encapsulation)</h3>
+<p>Varian encapsulates data in structs and behavior in <code>impl</code> blocks.</p>
+<h3>18.2. Trait Objects and Structural Typing Parameters</h3>
+<p>Implicit traits function as trait objects, enabling polymorphic method dispatching.</p>
+<h3>18.3. Decoupling State and Behavior with impl Blocks</h3>
+<p>Keep structs clean by isolating their algorithms inside decoupled implementation blocks.</p>
+<hr />
+<h2>19. Pattern Matching and Guards</h2>
+<h3>19.1. Where Pattern Matching Applies</h3>
+<p>Pattern matching is supported inside <code>match</code> blocks for structs, enums, values, and range checks.</p>
+<h3>19.2. Match Guards and Exhaustiveness Warnings</h3>
+<p>Apply <code>if</code> conditions as guards on match arms:</p>
+<pre><code class="language-varian">match status_code {
+    500 if server_active == false =&gt; print(&quot;Fatal Error&quot;),
+    _ =&gt; print(&quot;Default case&quot;)
+}
+</code></pre>
+<h3>19.3. Pattern Syntax (Constants, Ranges, Wildcards, Bindings)</h3>
+<p>Varian matches integers, strings, enum constructors, and wildcards (<code>_</code>).</p>
+<hr />
+<h2>20. Advanced Features</h2>
+<h3>20.1. Direct C FFI via @ffi</h3>
+<p>Bind C shared libraries directly without wrapper scripts:</p>
+<pre><code class="language-varian">@ffi(&quot;libm.so.6&quot;, &quot;sqrt&quot;)
+fn c_sqrt(x: c_double) -&gt; c_double
+</code></pre>
+<h3>20.2. Advanced Structural Traits</h3>
+<p>Traits are resolved during static linting to ensure method compliance across inputs.</p>
+<h3>20.3. Runtime Primitive Casting and Type Validation</h3>
+<p>Cast strings to numbers using native parsing libraries, or check type fields dynamically.</p>
+<h3>20.4. First-Class Functions and Closures</h3>
+<p>Pass functions and closures as variables, capturing environmental scope parameters by value.</p>
+<h3>20.5. Compile-Time Evaluation with comptime</h3>
+<p>Bake query values or math constants during compilation:</p>
+<pre><code class="language-varian">let val = comptime {
+    return 100 * 200
+}
+</code></pre>
+<hr />
+<h2>21. Final Project: Web Programming with Zenith</h2>
+<h3>21.1. Zenith App Routing and Tri-Tries</h3>
+<p>Zenith registers route paths using segment-based radix tries:</p>
+<pre><code class="language-varian">let app = new_app()
+app.get(&quot;/welcome&quot;, |req| {
+    return Response { status: 200, body: &quot;Welcome!&quot;, content_type: &quot;text/plain&quot; }
+}, &quot;Welcome Route&quot;)
+</code></pre>
+<h3>21.2. Middleware Chains</h3>
+<p>Middlewares intercept and process requests sequentially:</p>
+<pre><code class="language-varian">app.add_middleware(|req, next| {
+    print(&quot;Path: &quot; + req.path)
+    return next(req)
+})
+</code></pre>
+<h3>21.3. Comptime Database ORM</h3>
+<p>Bake query statements at compile time to eliminate string-concatenation SQL overhead:</p>
+<pre><code class="language-varian">let select_user = comptime {
+    select(&quot;users&quot;)
+        .fields([&quot;id&quot;, &quot;name&quot;])
+        .where(&quot;id&quot;, &quot;=&quot;)
+        .build()
+}
+</code></pre>
+<h3>21.4. Graceful Shutdown and Cleanup</h3>
+<p>Close listening server sockets and finish active worker channel jobs prior to exiting.</p>
+<hr />
+<h2>22. Appendices</h2>
+<h3>22.1. Appendix A: Keywords and Special Identifiers</h3>
+<p><code>let</code>, <code>fn</code>, <code>struct</code>, <code>impl</code>, <code>actor</code>, <code>enum</code>, <code>trait</code>, <code>match</code>, <code>try</code>, <code>catch</code>, <code>throw</code>, <code>loop</code>, <code>break</code>, <code>continue</code>, <code>while</code>, <code>for</code>, <code>in</code>, <code>null</code>.</p>
+<h3>22.2. Appendix B: Language Tooling (vn fmt and vn lint)</h3>
+<ul>
+<li><code>vn fmt</code>: Comment-preserving re-lexer.</li>
+<li><code>vn lint</code>: AST-walking lint rules (detects correctness, security, performance).</li>
+</ul>
+<h3>22.3. Appendix C: Field Decorators</h3>
+<p>Supported rules: <code>@is_email</code>, <code>@is_url</code>, <code>@is_alphanumeric</code>, <code>@min_len(n)</code>, <code>@max_len(n)</code>, <code>@is_uuid</code>.</p>
+<h3>22.4. Appendix D: Useful Development Tools</h3>
+<p>Use <code>vn doctor</code> to check DB states, env variables, N+1 loops, and project code hygiene.</p>
+<h3>22.5. Appendix E: Editions and VM Releases</h3>
+<p>Varian follows semantic version releases tracked under the language specification roadmap.</p>
+<h3>22.6. Appendix F: Global Documentation and Translations</h3>
+<p>Varian documentation supports internationalization standards to localize compiler warnings and specs.</p>
+<h3>22.7. Appendix G: The owo Syntax Color Scheme</h3>
+<p>Varian editor extensions utilize the <strong>owo color scheme</strong>, designed to present a high-contrast, playful syntax layout distinct from standard language themes:</p>
+<table>
+<thead>
+<tr>
+<th style="text-align: left;">Element</th>
+<th style="text-align: left;">Color Type</th>
+<th style="text-align: left;">Hex Code</th>
+<th style="text-align: left;">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="text-align: left;"><strong>Keywords</strong></td>
+<td style="text-align: left;">Pastel Pink</td>
+<td style="text-align: left;"><code>#ff9ebb</code></td>
+<td style="text-align: left;">Used for <code>let</code>, <code>fn</code>, <code>struct</code>, <code>impl</code>, <code>match</code>, <code>loop</code>, etc.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Operators</strong></td>
+<td style="text-align: left;">Warm Coral</td>
+<td style="text-align: left;"><code>#ff6f69</code></td>
+<td style="text-align: left;">Highlight for <code>&lt;-</code>, <code>?.</code>, <code>??</code>, <code>+</code>, <code>-</code>, <code>=</code>, and comparative tokens.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Functions</strong></td>
+<td style="text-align: left;">Soft Lavender</td>
+<td style="text-align: left;"><code>#d0bdf4</code></td>
+<td style="text-align: left;">Applied to function declarations and method call identifiers.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Types</strong></td>
+<td style="text-align: left;">Mint Green</td>
+<td style="text-align: left;"><code>#a8e6cf</code></td>
+<td style="text-align: left;">Used for type annotations (<code>int</code>, <code>float</code>, <code>string</code>, <code>c_double</code>).</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Strings</strong></td>
+<td style="text-align: left;">Creamy Peach</td>
+<td style="text-align: left;"><code>#ffd3b6</code></td>
+<td style="text-align: left;">Represents string literals and character data.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Numbers</strong></td>
+<td style="text-align: left;">Butter Yellow</td>
+<td style="text-align: left;"><code>#fffaaa</code></td>
+<td style="text-align: left;">Highlights constant integer and float values.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Comments</strong></td>
+<td style="text-align: left;">Slate Gray</td>
+<td style="text-align: left;"><code>#8892b0</code></td>
+<td style="text-align: left;">Demarcates line comments and documentation text.</td>
+</tr>
+<tr>
+<td style="text-align: left;"><strong>Decorators</strong></td>
+<td style="text-align: left;">Neon Purple</td>
+<td style="text-align: left;"><code>#b388ff</code></td>
+<td style="text-align: left;">Identifies field constraints and macros like <code>@ffi</code> or <code>@is_email</code>.</td>
+</tr>
+</tbody>
+</table>
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>
