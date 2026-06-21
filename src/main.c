@@ -124,12 +124,51 @@ static char *read_directory_sources(const char *dir_path) {
     return result;
 }
 
+/* Locate the vn_modules prelude directory independent of CWD, so the tooling
+ * (vn dev / vn run) works from any project folder, not just the repo root.
+ * Search order: $VARIAN_HOME, ./vn_modules (repo dev), then relative to the
+ * executable (install layouts). Returns a pointer to a static buffer or NULL. */
+static const char *resolve_vn_modules_dir(void) {
+    static char found[2048];
+    DIR *d;
+
+    const char *home = getenv("VARIAN_HOME");
+    if (home && *home) {
+        snprintf(found, sizeof(found), "%s/vn_modules", home);
+        if ((d = opendir(found))) { closedir(d); return found; }
+    }
+
+    if ((d = opendir("vn_modules"))) {
+        closedir(d);
+        snprintf(found, sizeof(found), "vn_modules");
+        return found;
+    }
+
+    char exe[2048];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n > 0) {
+        exe[n] = '\0';
+        char *slash = strrchr(exe, '/');
+        if (slash) {
+            *slash = '\0';
+            snprintf(found, sizeof(found), "%s/vn_modules", exe);
+            if ((d = opendir(found))) { closedir(d); return found; }
+            snprintf(found, sizeof(found), "%s/../share/varian/vn_modules", exe);
+            if ((d = opendir(found))) { closedir(d); return found; }
+            snprintf(found, sizeof(found), "%s/../lib/varian/vn_modules", exe);
+            if ((d = opendir(found))) { closedir(d); return found; }
+        }
+    }
+    return NULL;
+}
+
 /* ─── Read source with module prelude from vn_modules/ ─── */
 char *read_file_with_modules(const char *path) {
     char *main_source = read_file(path);
     if (!main_source) return NULL;
 
-    char *prelude = read_directory_sources("vn_modules");
+    const char *mod_dir = resolve_vn_modules_dir();
+    char *prelude = mod_dir ? read_directory_sources(mod_dir) : NULL;
     if (!prelude) {
         g_prelude_line_count = 0;
         return main_source;
@@ -273,6 +312,77 @@ static int run_source(const char *source, const char *filename) {
     return 0;
 }
 
+/* ─── Lumen file-based dev server (`vn dev`) ───
+ * The language has no eval, so this is two passes: (1) run a tiny bootstrap
+ * that calls the prelude's _lumen_build_dir() to compile pages/ into ONE
+ * runnable app file; (2) run that generated app to serve it. Both passes go
+ * through the normal read_file_with_modules + run_source pipeline so the
+ * Lumen prelude is available to the generated code. */
+/* Pass 1: compile pages/ into one runnable app at `out`. */
+static int lumen_build(const char *pages, const char *out, const char *port) {
+    const char *boot = ".lumen-boot.vn";
+    FILE *bf = fopen(boot, "wb");
+    if (!bf) { fprintf(stderr, "lumen: cannot create %s\n", boot); return 1; }
+    fprintf(bf, "_lumen_build_dir(\"%s\", \"%s\", %s)\n", pages, out, port);
+    fclose(bf);
+
+    char *bsrc = read_file_with_modules(boot);
+    if (!bsrc) { remove(boot); return 1; }
+    g_varian_script_path = boot;
+    int r = run_source(bsrc, boot);
+    free(bsrc);
+    remove(boot);
+    return r;
+}
+
+/* `vn dev`: build pages/ then serve the generated app (blocks). */
+static int lumen_dev(const char *pages, const char *port) {
+    const char *app = ".lumen-build.vn";
+    int r = lumen_build(pages, app, port);
+    if (r != 0) { fprintf(stderr, "lumen: build failed.\n"); return r; }
+
+    char *asrc = read_file_with_modules(app);
+    if (!asrc) return 1;
+    g_varian_script_path = app;
+    r = run_source(asrc, app);
+    free(asrc);
+    return r;
+}
+
+/* Scaffold a starter Lumen project: <name>/pages/index.lumen */
+static int lumen_new(const char *name) {
+    char dir[1024];
+    snprintf(dir, sizeof(dir), "%s/pages", name);
+    char cmd[1200];
+    snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+    if (system(cmd) != 0) { fprintf(stderr, "lumen: cannot create %s\n", dir); return 1; }
+
+    char page[1100];
+    snprintf(page, sizeof(page), "%s/index.lumen", dir);
+    FILE *f = fopen(page, "wb");
+    if (!f) { fprintf(stderr, "lumen: cannot write %s\n", page); return 1; }
+    fputs(
+        "<template>\n"
+        "<main style=\"font-family:system-ui;max-width:640px;margin:64px auto;text-align:center\">\n"
+        "  <h1>Welcome to {{ name }}</h1>\n"
+        "  <p>Count: <b>{{ count }}</b></p>\n"
+        "  <button @click=\"inc\">+1</button>\n"
+        "  <button @click=\"dec\">-1</button>\n"
+        "</main>\n"
+        "</template>\n"
+        "<script>\n"
+        "fn state() {\n"
+        "  return { name: \"Lumen\", count: 0 }\n"
+        "}\n"
+        "fn inc(s, v) { return s.set(\"count\", s.get(\"count\") + 1) }\n"
+        "fn dec(s, v) { return s.set(\"count\", s.get(\"count\") - 1) }\n"
+        "</script>\n", f);
+    fclose(f);
+
+    printf("⚡ Created Lumen app '%s'\n\n  cd %s\n  vn dev pages\n\nThen open http://localhost:8090\n", name, name);
+    return 0;
+}
+
 /* ─── REPL ─── */
 static void repl(void) {
     printf("Varian v" VARIAN_VERSION " REPL\n");
@@ -311,6 +421,12 @@ static void print_help(const char *prog) {
     printf("  %s add <pkg>     Add a package dependency\n", prog);
     printf("  %s wrap <target> Generate wrapper for a foreign library\n", prog);
     printf("  %s lsp           Start LSP server\n", prog);
+    printf("\n");
+    printf("Lumen (frontend):\n");
+    printf("  %s lumen new <name>          Scaffold a new Lumen app\n", prog);
+    printf("  %s dev [dir] [port]          Serve a pages/ dir with live reload (default ./pages :8090)\n", prog);
+    printf("  %s lumen build <dir> <out>   Compile pages/ into one runnable app\n", prog);
+    printf("\n");
     printf("  %s --help        Show this help\n", prog);
     printf("\n");
     printf("Environment variables:\n");
@@ -620,6 +736,33 @@ int main(int argc, char *argv[]) {
         int result = run_source(source, argv[2]);
         free(source);
         return result;
+    }
+
+    /* `vn dev [pagesdir] [port]` — Lumen file-based dev server. */
+    if (strcmp(argv[1], "dev") == 0) {
+        const char *pages = (argc >= 3) ? argv[2] : "pages";
+        const char *port  = (argc >= 4) ? argv[3] : "8090";
+        return lumen_dev(pages, port);
+    }
+
+    /* `vn lumen <new|dev|build> ...` — Lumen project tooling. */
+    if (strcmp(argv[1], "lumen") == 0) {
+        if (argc >= 3 && strcmp(argv[2], "new") == 0) {
+            if (argc < 4) { fprintf(stderr, "Usage: %s lumen new <name>\n", argv[0]); return 1; }
+            return lumen_new(argv[3]);
+        }
+        if (argc >= 3 && strcmp(argv[2], "dev") == 0) {
+            const char *pages = (argc >= 4) ? argv[3] : "pages";
+            const char *port  = (argc >= 5) ? argv[4] : "8090";
+            return lumen_dev(pages, port);
+        }
+        if (argc >= 3 && strcmp(argv[2], "build") == 0) {
+            if (argc < 5) { fprintf(stderr, "Usage: %s lumen build <pagesdir> <out.vn> [port]\n", argv[0]); return 1; }
+            const char *port = (argc >= 6) ? argv[5] : "8090";
+            return lumen_build(argv[3], argv[4], port);
+        }
+        fprintf(stderr, "Usage: %s lumen <new <name> | dev [dir] [port] | build <dir> <out.vn> [port]>\n", argv[0]);
+        return 1;
     }
 
     /* Default: try to run file directly (backward compat) */

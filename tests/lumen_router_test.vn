@@ -1,0 +1,35 @@
+// tests/lumen_router_test.vn
+// File-based routing generator (the `vn dev` tool).
+
+test "pascal-cases a file base into a component name" {
+    assert_eq(_lumen_pascal("index"), "Index")
+    assert_eq(_lumen_pascal("about"), "About")
+    assert_eq(_lumen_pascal("user-card"), "UserCard")
+    assert_eq(_lumen_pascal("blog_post"), "BlogPost")
+}
+
+test "maps file bases to routes (index is root)" {
+    assert_eq(_lumen_route("index"), "/")
+    assert_eq(_lumen_route("about"), "/about")
+}
+
+test "build_dir compiles a pages directory into one runnable app" {
+    let dir = "/tmp/lumen_router_test_pages"
+    io.mkdir(dir)
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Home</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/about.lumen",
+        "<template><h1>About</h1></template><script>fn state() \{ return \{\} \}</script>")
+
+    let out = "/tmp/lumen_router_test_app.vn"
+    let count = _lumen_build_dir(dir, out, 8099)
+    assert_eq(count, 2)
+
+    let app = io.read_text(out)
+    // Both components registered and mounted at their file routes.
+    assert_ne(app.index_of("lumen_register_component(\"Index\""), -1)
+    assert_ne(app.index_of("lumen_register_component(\"About\""), -1)
+    assert_ne(app.index_of("lumen_mount(app, \"/\", _lumen_get_component(\"Index\"))"), -1)
+    assert_ne(app.index_of("lumen_mount(app, \"/about\", _lumen_get_component(\"About\"))"), -1)
+    assert_ne(app.index_of("app.listen(8099)"), -1)
+}

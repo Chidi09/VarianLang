@@ -1,0 +1,10 @@
+<template>
+<main style="font-family:system-ui;max-width:640px;margin:64px auto;text-align:center">
+  <h1>About</h1>
+  <p>Built with Lumen ⚡ — server-driven live UI, zero dependencies.</p>
+  <p><a href="/">← Home</a></p>
+</main>
+</template>
+<script>
+fn state() { return {} }
+</script>

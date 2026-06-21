@@ -1,0 +1,16 @@
+<template>
+<main style="font-family:system-ui;max-width:640px;margin:64px auto;text-align:center">
+  <h1>Welcome to {{ name }}</h1>
+  <p>Count: <b>{{ count }}</b></p>
+  <button @click="inc">+1</button>
+  <button @click="dec">-1</button>
+  <p style="margin-top:24px"><a href="/about">About →</a></p>
+</main>
+</template>
+<script>
+fn state() {
+  return { name: "Lumen", count: 0 }
+}
+fn inc(s, v) { return s.set("count", s.get("count") + 1) }
+fn dec(s, v) { return s.set("count", s.get("count") - 1) }
+</script>
