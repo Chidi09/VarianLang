@@ -413,6 +413,146 @@ fn _lumen_extract_fns(script) {
     return names
 }
 
+fn _lumen_scope_selector(sel, comp_name) {
+    let suffix = "[data-lumen-css=\"" + comp_name + "\"]"
+    let parts = sel.split(" ")
+    let out = ""
+    for j in 0..parts.len() {
+        if j > 0 { out = out + " " }
+        let part = _sanitize.trim(parts[j])
+        if part == "" { continue }
+        if j == parts.len() - 1 {
+            let colon_pos = part.index_of(":")
+            if colon_pos >= 0 {
+                out = out + part.substring(0, colon_pos) + suffix + part.substring(colon_pos, part.len())
+            } else {
+                out = out + part + suffix
+            }
+        } else {
+            out = out + part
+        }
+    }
+    return out
+}
+
+fn _lumen_scope_css(css, comp_name) {
+    let out = ""
+    let i = 0
+    let n = css.len()
+    let last_rule_end = 0
+    while i < n {
+        let open_brace = css.index_of("{", i)
+        if open_brace < 0 {
+            out = out + css.substring(last_rule_end, n)
+            break
+        }
+        
+        let raw_selector = css.substring(last_rule_end, open_brace)
+        let trimmed_selector = _sanitize.trim(raw_selector)
+        let parsed_selector = ""
+        
+        if trimmed_selector.starts_with("@") {
+            parsed_selector = raw_selector
+        } else if trimmed_selector != "" {
+            let selector_parts = trimmed_selector.split(",")
+            let new_sel = ""
+            for p in 0..selector_parts.len() {
+                if p > 0 { new_sel = new_sel + ", " }
+                let single_sel = _sanitize.trim(selector_parts[p])
+                new_sel = new_sel + _lumen_scope_selector(single_sel, comp_name)
+            }
+            parsed_selector = new_sel
+        }
+        
+        out = out + parsed_selector + " {"
+        let close_brace = css.index_of("}", open_brace)
+        if close_brace < 0 {
+            out = out + css.substring(open_brace + 1, n)
+            break
+        }
+        out = out + css.substring(open_brace + 1, close_brace + 1)
+        last_rule_end = close_brace + 1
+        i = last_rule_end
+    }
+    return out
+}
+
+fn _lumen_scope_html(html, comp_name) {
+    let attr = "data-lumen-css=\"" + comp_name + "\""
+    let out = ""
+    let i = 0
+    let n = html.len()
+    while i < n {
+        let tag_start = html.index_of("<", i)
+        if tag_start < 0 {
+            out = out + html.substring(i, n)
+            break
+        }
+        out = out + html.substring(i, tag_start)
+        
+        let is_opening = false
+        if tag_start + 1 < n {
+            let c = html.code_at(tag_start + 1)
+            if (c >= 65 and c <= 90) or (c >= 97 and c <= 122) {
+                is_opening = true
+            }
+        }
+        
+        if tag_start + 1 < n {
+            let next_c = html.substring(tag_start + 1, tag_start + 2)
+            if next_c == "/" or next_c == "!" {
+                is_opening = false
+            }
+        }
+        
+        if is_opening == false {
+            out = out + "<"
+            i = tag_start + 1
+            continue
+        }
+        
+        let tag_end = -1
+        let in_quote = false
+        let quote_char = ""
+        let scan = tag_start + 1
+        while scan < n {
+            let char_at = html.substring(scan, scan + 1)
+            if in_quote {
+                if char_at == quote_char {
+                    in_quote = false
+                }
+            } else {
+                if char_at == "\"" or char_at == "'" {
+                    in_quote = true
+                    quote_char = char_at
+                } else if char_at == ">" {
+                    tag_end = scan
+                    break
+                }
+            }
+            scan = scan + 1
+        }
+        
+        if tag_end < 0 {
+            out = out + html.substring(tag_start, n)
+            break
+        }
+        
+        let tag_content = html.substring(tag_start + 1, tag_end)
+        let space_or_slash = tag_content.len()
+        if tag_content.ends_with("/") {
+            space_or_slash = tag_content.len() - 1
+            let base_tag = tag_content.substring(0, space_or_slash)
+            out = out + "<" + base_tag + " " + attr + "/>"
+        } else {
+            out = out + "<" + tag_content + " " + attr + ">"
+        }
+        
+        i = tag_end + 1
+    }
+    return out
+}
+
 fn lumen_compile_source(name, lumen_src) {
     let temp_start = lumen_src.index_of("<template>")
     let temp_end = lumen_src.index_of("</template>")
@@ -426,14 +566,31 @@ fn lumen_compile_source(name, lumen_src) {
     let template = lumen_src.substring(temp_start + 10, temp_end)
     let script = lumen_src.substring(script_start + 8, script_end)
 
+    // Optional Scoped CSS extraction
+    let has_style = false
+    let css = ""
+    let style_start = lumen_src.index_of("<style>")
+    let tag_len = 7
+    if style_start < 0 {
+        style_start = lumen_src.index_of("<style scoped>")
+        tag_len = 14
+    }
+    let style_end = -1
+    if style_start >= 0 {
+        style_end = lumen_src.index_of("</style>")
+        if style_end > style_start {
+            has_style = true
+            css = lumen_src.substring(style_start + tag_len, style_end)
+        }
+    }
+
+    if has_style {
+        let scoped_css = _lumen_scope_css(css, name)
+        template = _lumen_scope_html(template, name)
+        template = template + "<style>" + scoped_css + "</style>"
+    }
+
     // ─── M8: client islands ───
-    // An optional <client> block ships verbatim client-side JS for a
-    // browser-only widget (charts, maps, canvas…). It's appended to the
-    // component's markup as a <script>, so it runs once on first paint and is
-    // left untouched by the live DOM morph (cloneNode/innerHTML never re-run
-    // scripts). This is the honest island: real client code where you ask for
-    // it, with the rest of the component still server-driven — no
-    // Varian-in-browser, no hydration mismatch.
     let client_start = lumen_src.index_of("<client>")
     let client_end = lumen_src.index_of("</client>")
     if client_start >= 0 and client_end > client_start {
@@ -455,9 +612,6 @@ fn lumen_compile_source(name, lumen_src) {
         fn_str = fn_str + names[idx]
     }
     
-    // Braces meant to appear literally in the GENERATED Varian source are
-    // written as \{ / \} here, otherwise Varian's lexer would treat them as
-    // string interpolation in *this* file before they ever reach the output.
     let out = "// Auto-generated by Lumen compiler from " + name + "\n"
     out = out + "fn _lumen_init_component_" + name + "() \{\n"
     out = out + "    let _tpl = \"" + escaped_tpl + "\"\n"
@@ -528,6 +682,24 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
         throw("Lumen: pages directory not found: " + pages_dir)
     }
     let combined = "// Auto-generated by `vn dev` from " + pages_dir + " — do not edit.\n"
+    
+    // Compile components in pages/components/ if the directory exists
+    let comp_dir = pages_dir + "/components"
+    let comp_files = io.list_dir(comp_dir)
+    if comp_files != null {
+        for i in 0..comp_files.len() {
+            let f = comp_files[i]
+            if f.ends_with(".lumen") {
+                let base = f.substring(0, f.len() - 6)
+                let comp_name = _lumen_pascal(base)
+                let src = io.read_text(comp_dir + "/" + f)
+                if src != null {
+                    combined = combined + lumen_compile_source(comp_name, src) + "\n"
+                }
+            }
+        }
+    }
+
     let mounts = ""
     let count = 0
     for i in 0..files.len() {
@@ -773,16 +945,19 @@ fn _lumen_head() {
     return "<meta charset=\"utf-8\">" +
            "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">" +
            "<title>Lumen</title>" +
-           "<meta name=\"theme-color\" content=\"#1b2233\">" +
+           "<meta name=\"theme-color\" content=\"#ffffff\" media=\"(prefers-color-scheme: light)\">" +
+           "<meta name=\"theme-color\" content=\"#0a0e16\" media=\"(prefers-color-scheme: dark)\">" +
            "<link rel=\"icon\" href=\"/favicon.ico\" sizes=\"any\">" +
            "<link rel=\"icon\" type=\"image/png\" sizes=\"32x32\" href=\"/favicon-32x32.png\">" +
            "<link rel=\"icon\" type=\"image/png\" sizes=\"16x16\" href=\"/favicon-16x16.png\">" +
            "<link rel=\"apple-touch-icon\" href=\"/apple-touch-icon.png\">" +
            "<link rel=\"manifest\" href=\"/manifest.json\">" +
            "<link rel=\"stylesheet\" href=\"https://use.typekit.net/jsj7zpl.css\">" +
-           "<style>:root\{--lumen-font:\"degular\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif\}" +
-           "html\{font-family:var(--lumen-font);-webkit-font-smoothing:antialiased\}" +
-           "body\{margin:0\}</style>"
+           "<script>!function()\\{var d=document.documentElement,t=localStorage.getItem('lumen-theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches))d.classList.add('dark')\\}();</script>" +
+           "<style>:root\\{--lumen-font:\"degular\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;--lumen-bg:#ffffff;--lumen-fg:#0f1422;--lumen-primary:#f5b829;--lumen-primary-fg:#0f1422;--lumen-primary-hover:#ffd24d;--lumen-muted:#f1f5f9;--lumen-muted-fg:#64748b;--lumen-card:#ffffff;--lumen-border:#e2e8f0;--lumen-input:#ffffff;--lumen-ring:rgba(245,184,41,0.2);--lumen-danger:#ff6b6b;--lumen-danger-bg:rgba(255,107,107,0.15);--lumen-success:#4dd4ac;--lumen-success-bg:rgba(77,212,172,0.15);--lumen-info:#5b9cff;--lumen-info-bg:rgba(91,156,255,0.1);--lumen-overlay:rgba(255,255,255,0.8)\\}" +
+           ":root.dark\\{--lumen-bg:#0a0e16;--lumen-fg:#e8eaf0;--lumen-primary:#f5b829;--lumen-primary-fg:#0f1422;--lumen-primary-hover:#ffd24d;--lumen-muted:#222b40;--lumen-muted-fg:#8b93a7;--lumen-card:#1b2233;--lumen-border:#2c3650;--lumen-input:#0f1422;--lumen-ring:rgba(245,184,41,0.2);--lumen-danger:#ff6b6b;--lumen-danger-bg:rgba(255,107,107,0.15);--lumen-success:#4dd4ac;--lumen-success-bg:rgba(77,212,172,0.15);--lumen-info:#5b9cff;--lumen-info-bg:rgba(91,156,255,0.1);--lumen-overlay:rgba(10,14,22,0.8)\\}" +
+           "html\\{font-family:var(--lumen-font);-webkit-font-smoothing:antialiased\\}" +
+           "body\\{margin:0;background:var(--lumen-bg);color:var(--lumen-fg);transition:background 0.3s ease,color 0.3s ease\\}</style>"
 }
 
 // Wrap the rendered component in the live shell (data-lumen-root + client).

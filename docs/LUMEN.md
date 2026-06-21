@@ -166,6 +166,23 @@ island — real client code where you ask for it, the rest still server-driven. 
 deliberately does **not** compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.
 
+### Lumen UI (Component Registry)
+
+Lumen ships with an official, Shadcn-inspired component registry called **Lumen UI**. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in `pages/components/`) so you fully own and customize the code.
+
+Add components via the CLI:
+```sh
+vn lumen add button
+vn lumen add card
+```
+
+**Features:**
+- **Zero Client JS:** Components like `Accordion`, `Dialog`, and `Select` are driven entirely by server-side Varian state and scoped CSS.
+- **Theme-Aware:** Lumen is "Light Mode First" but ships with native Dark Mode. Global CSS variables (`var(--lumen-bg)`, `var(--lumen-primary)`, etc.) adapt automatically when the `dark` class is toggled on the `<html>` element. Use `vn lumen add theme-toggle` for a pre-built switcher.
+- **Inline SVG Icons:** Icons are pure, inline Lucide SVG vectors baked directly into the `.lumen` files. They inherit `currentColor`, cause zero layout shift, and require no external CDN scripts.
+- **Batteries Included:** Available components: `button`, `card`, `input`, `dialog`, `badge`, `accordion`, `alert`, `progress`, `select`, `checkbox`, `switch`, `separator`, and `theme-toggle`.
+
+
 ### CLI reference
 
 | Command | Effect |

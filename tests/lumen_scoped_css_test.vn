@@ -1,0 +1,32 @@
+// tests/lumen_scoped_css_test.vn
+// Test scoped CSS compilation and component templates.
+
+let COMP_LUMEN = "<template>" +
+                 "<div class=\"card\">" +
+                 "<h1 class=\"title\">Hello</h1>" +
+                 "<p>Text</p>" +
+                 "</div>" +
+                 "</template>" +
+                 "<style>" +
+                 ".card \{ color: red; \}" +
+                 ".card .title \{ font-size: 20px; \}" +
+                 "p \{ margin: 0; \}" +
+                 "</style>" +
+                 "<script>" +
+                 "fn state() \{ return \{\} \}" +
+                 "</script>"
+
+test "lumen scopes CSS and templates correctly" {
+    let code = lumen_compile_source("TestScoped", COMP_LUMEN)
+    assert_ne(code, null)
+    
+    // Check that style rules are scoped with [data-lumen-css="TestScoped"]
+    assert_ne(code.index_of(".card[data-lumen-css=\\\"TestScoped\\\"]"), -1)
+    assert_ne(code.index_of(".card .title[data-lumen-css=\\\"TestScoped\\\"]"), -1)
+    assert_ne(code.index_of("p[data-lumen-css=\\\"TestScoped\\\"]"), -1)
+    
+    // Check that HTML elements in template have the scoping attribute injected
+    assert_ne(code.index_of("<div class=\\\"card\\\" data-lumen-css=\\\"TestScoped\\\">"), -1)
+    assert_ne(code.index_of("<h1 class=\\\"title\\\" data-lumen-css=\\\"TestScoped\\\">"), -1)
+    assert_ne(code.index_of("<p data-lumen-css=\\\"TestScoped\\\">"), -1)
+}
