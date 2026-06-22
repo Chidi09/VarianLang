@@ -156,16 +156,96 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<p align="center">
-  <img src="/assets/lumen-logo.png" alt="Lumen" width="150" />
-</p>
 
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Lumen — server-driven live components</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
-<p>Lumen is the Varian frontend framework — Varian's answer to Next.js / Nuxt. Components
-render to HTML <strong>on the server</strong> (on top of Zenith WebSocket routes). A tiny (~5 KB)
-client runtime forwards events over a WebSocket; the server re-renders and morphs the new
-HTML into the live DOM. No page reload, no client state, no Varian in the browser, and —
-because the server is the only place state lives and renders — <strong>no hydration mismatch</strong>.</p>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-8);">
+  <div>
+    <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4);">
+      <img src="/assets/lumen-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+      <h1 style="margin:0;font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Lumen</h1>
+    </div>
+    <p style="font-size:var(--text-lg);color:var(--text-secondary);margin:0;">Server-driven reactive UI — no client framework, no hydration mismatch, no JS in the browser.</p>
+  </div>
+  <a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;">
+    <span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page
+  </a>
+</div>
+
+<p>Lumen (<code>vn_modules/lumen.vn</code>, <code>vn_modules/lumen_ui.vn</code>, and the LumenJS client) compiles <code>.lumen</code> files into component structs at runtime via <code>lumen_compile_source</code>. The compiler generates WebSocket route handlers that serve HTML and morph DOM diffs — <strong>no build step, no JavaScript framework, no hydration</strong>. The same <code>vn_modules/</code> prelude that auto-imports <code>ZenithApp</code> also makes <code>lumen_component</code>, <code>lumen_mount</code>, and the entire Lumen UI registry available in every <code>.lumen</code> file.</p>
+
+<!-- ============ WHY LUMEN ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Lumen?</h2>
+<p>Lumen's pitch is not "another JavaScript framework" (the browser already has one). It's <strong>zero JS on the client, zero build steps, zero hydration bugs — just server-side state and DOM morphing over a WebSocket.</strong></p>
+
+<div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);padding:var(--space-6);margin:var(--space-6) 0;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);font-size:var(--text-sm);">
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">wifi</span>
+        <h4 style="margin:0;font-size:var(--text-base);">HTML-over-WebSocket</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">A 5 KB client sends events; the server re-renders and morphs only the changed DOM nodes. No Varian in the browser, no VDOM, no serialization — just raw HTML diffs over a persistent connection.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">checklist</span>
+        <h4 style="margin:0;font-size:var(--text-base);">No hydration mismatch</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">The server owns state <em>and</em> rendering. There is one source of truth — the string of HTML it last sent. The client never tries to guess or reconcile state.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">palette</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Scoped CSS</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Each <code>.lumen</code> file's <code>&lt;style&gt;</code> block is automatically scoped to that component. Selectors are rewritten to include a unique <code>data-lumen-css</code> attribute — zero class-name collisions.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">autorenew</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Live reload, zero config</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn dev</code> watches your <code>pages/</code> directory, recompiles <code>.lumen</code> files on change, and hot-pushes the update over the existing WebSocket — no browser refresh, no build pipeline.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">publish</span>
+        <h4 style="margin:0;font-size:var(--text-base);">File-based routing</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Drop a <code>.lumen</code> file in <code>pages/</code> and it becomes a route — <code>pages/hello.lumen</code> → <code>/hello</code>. Static files from <code>public/</code> are served automatically. No config file needed.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">inventory_2</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Batteries included</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Lumen UI registry (dropdowns, modals, toasts), LumenJS with event modifiers (<code>debounce</code>, <code>prevent</code>, <code>key</code>, <code>confirm</code>), test helpers — all built in through <code>vn_modules/</code>.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">share</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Import system</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Call <code>lumen_import("other_component")</code> from a render string to mount a child component. The parent passes data via <code>&#123;&#123; slots &#125;&#125;</code>; children get their own state and lifecycle — true composability.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">science</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Headless test helpers</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;"><code>lumen_click</code>, <code>lumen_input</code>, <code>lumen_assert_html</code>, <code>lumen_snapshot</code> — test components with zero browser, zero WebSocket. Assert rendered output directly without Playwright or Selenium.</p>
+    </div>
+
+  </div>
+</div>
+
 <p>This page has two halves:</p>
 <ol>
 <li><strong><a href="#the-developer-guide-lumen--vn-dev">The developer guide</a></strong> — <code>.lumen</code> files, <code>vn dev</code>,
