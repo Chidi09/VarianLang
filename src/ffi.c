@@ -1,9 +1,20 @@
 #include "varian_ffi.h"
 #include <stdlib.h>
 #include <string.h>
-#include <dlfcn.h>
 #include <stdio.h>
 #include <pthread.h>
+
+#ifdef _WIN32
+#include <windows.h>
+#define dlopen(name, flags) (void *)LoadLibraryA(name)
+#define dlsym(handle, name) (void *)GetProcAddress((HMODULE)(handle), name)
+#define dlclose(handle) FreeLibrary((HMODULE)(handle))
+#define dlerror() "Windows DLL load error"
+#define RTLD_LAZY 0
+#define RTLD_LOCAL 0
+#else
+#include <dlfcn.h>
+#endif
 
 /* ─── Library handle cache (linked list) ───
  * Process-wide (not per-VM), so every cluster worker thread's independent

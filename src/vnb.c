@@ -160,6 +160,7 @@ ObjFunction *vnb_load(VM *vm, const char *in_path) {
         fclose(f); return NULL;
     }
     if (ffi_count > 0) {
+#ifndef VN_NO_FFI
         vm->ffi_entries = (VMFFIEntry *)calloc((size_t)ffi_count, sizeof(VMFFIEntry));
         if (!vm->ffi_entries) {
             fclose(f); return NULL;
@@ -185,6 +186,10 @@ ObjFunction *vnb_load(VM *vm, const char *in_path) {
                 fclose(f); return NULL;
             }
         }
+#else
+        fprintf(stderr, "FFI: bundled bytecode uses FFI but this build has FFI disabled\n");
+        fclose(f); return NULL;
+#endif
     }
     
     // All counts/lengths below come straight from the file, so each is range-

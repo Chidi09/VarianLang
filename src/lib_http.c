@@ -7,7 +7,7 @@
 #include <curl/curl.h>
 #include <stdio.h>
 #include <sys/uio.h>
-#include <liburing.h>
+#include "platform_io.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -22,7 +22,6 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <sys/time.h>
-#include <sys/epoll.h>
 #include <pthread.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>

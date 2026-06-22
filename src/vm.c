@@ -2422,6 +2422,7 @@ void vm_init(VM *vm, Compiler *compiler) {
 /* ─── FFI Resolution ─── */
 /* Called at the start of vm_run to resolve all FFI declarations */
 static bool vm_resolve_ffi(VM *vm) {
+#ifndef VN_NO_FFI
     Compiler *compiler = vm->compiler;
     if (!compiler) return true;
     if (compiler->ffi_decl_count == 0) return true;
@@ -2455,6 +2456,10 @@ static bool vm_resolve_ffi(VM *vm) {
     }
 
     return true;
+#else
+    (void)vm;
+    return true;
+#endif
 }
 
 void runtime_error(VM *vm, const char *format, ...) {
@@ -3049,15 +3054,23 @@ bool vm_run(VM *vm, bool run_tests) {
         extern void lib_env_init(VM *vm);
         extern void lib_io_init(VM *vm);
         extern void lib_string_init(VM *vm);
+#ifndef VN_NO_HTTP
         extern void lib_http_init(VM *vm);
+#endif
         extern void lib_python_init(VM *vm);
+#ifndef VN_NO_POSTGRES
         extern void lib_postgres_init(VM *vm);
+#endif
         extern void lib_validate_init(VM *vm);
         extern void lib_sanitize_init(VM *vm);
         extern void lib_auth_init(VM *vm);
         extern void lib_task_init(VM *vm);
+#ifndef VN_NO_SQLITE
         extern void lib_sqlite_init(VM *vm);
+#endif
+#ifndef VN_NO_REDIS
         extern void lib_redis_init(VM *vm);
+#endif
         extern void lib_mock_init(VM *vm);
         extern void lib_smtp_init(VM *vm);
         extern void lib_time_init(VM *vm);
@@ -3067,15 +3080,23 @@ bool vm_run(VM *vm, bool run_tests) {
         lib_env_init(vm);
         lib_io_init(vm);
         lib_string_init(vm);
+#ifndef VN_NO_HTTP
         lib_http_init(vm);
+#endif
         lib_python_init(vm);
+#ifndef VN_NO_POSTGRES
         lib_postgres_init(vm);
+#endif
         lib_validate_init(vm);
         lib_sanitize_init(vm);
         lib_auth_init(vm);
         lib_task_init(vm);
+#ifndef VN_NO_SQLITE
         lib_sqlite_init(vm);
+#endif
+#ifndef VN_NO_REDIS
         lib_redis_init(vm);
+#endif
         lib_mock_init(vm);
         lib_smtp_init(vm);
         lib_time_init(vm);
@@ -3146,7 +3167,9 @@ bool vm_run(VM *vm, bool run_tests) {
                     prev_ip = t->frames[t->frame_count - 1].ip;
                 }
                 task_run(vm, t);
+#ifndef VN_NO_HTTP
                 bool tick_had_error = vm->had_error;
+#endif
                 if (vm->had_error) {
                     t->dead = true;
                     vm->had_error = false; /* don't let one task's error kill the next */
@@ -3159,8 +3182,10 @@ bool vm_run(VM *vm, bool run_tests) {
                      * message on an open WebSocket). Either way this must
                      * not crash the server -- just finalize this one
                      * connection's response/close. */
+#ifndef VN_NO_HTTP
                     extern void http_finalize_deferred_response(VM *vm, Task *t, bool had_error);
                     http_finalize_deferred_response(vm, t, tick_had_error);
+#endif
                 }
                 if (t->dead || t->frame_count == 0 || (t->frame_count > 0 && t->frames[t->frame_count - 1].ip != prev_ip)) {
                     made_progress = true;
@@ -3185,8 +3210,10 @@ bool vm_run(VM *vm, bool run_tests) {
             Task *rt = vm->tasks[ri];
             if (rt->dead) {
                 if (rt->http_pending_conns) {
+#ifndef VN_NO_HTTP
                     extern void http_cleanup_pending_conns(Task *t);
                     http_cleanup_pending_conns(rt); /* closes fds, frees buffers */
+#endif
                 }
                 /* Push to free-list instead of free() — Phase 1: Task Pooling */
                 /* Phase 2: reset arena (keep the base allocation for reuse) */
@@ -4920,6 +4947,7 @@ L_BC_LOOP_TOP:
 
             L_BC_FFI_CALL:
             {
+#ifndef VN_NO_FFI
                 uint8_t ffi_idx = READ_BYTE();
                 uint8_t arg_count = READ_BYTE();
 
@@ -4935,7 +4963,6 @@ L_BC_LOOP_TOP:
                     return false;
                 }
 
-                /* Marshal arguments from Varian stack to libffi */
                 void *value_storage[MAX_FFI_PARAMS];
                 void *args[MAX_FFI_PARAMS];
                 int storage_used = 0;
@@ -4965,14 +4992,10 @@ L_BC_LOOP_TOP:
                             break;
                         }
                         case FFI_PTR: {
-                            /* ffi_call expects args[i] to point TO the argument
-                             * value, so we need a slot containing the void*. */
                             void **slot = (void **)malloc(sizeof(void *));
                             if (v.type == VAL_INT) {
                                 *slot = (void *)(uintptr_t)v.as.integer;
                             } else if (v.type == VAL_STRING) {
-                                /* CRITICAL: Copy the string to prevent C from
-                                 * mutating Varian's interned string data. */
                                 size_t slen = (size_t)v.as.string->length;
                                 char *copy = (char *)malloc(slen + 1);
                                 memcpy(copy, v.as.string->chars, slen);
@@ -4999,7 +5022,6 @@ L_BC_LOOP_TOP:
                     }
                 }
 
-                /* Prepare return value buffer */
                 void *ret_val = NULL;
                 ffi_type *ret_ffi_type = ffi_type_from_kind(entry->return_kind);
                 bool has_return = (entry->return_kind != FFI_VOID);
@@ -5008,13 +5030,10 @@ L_BC_LOOP_TOP:
                     ret_val = calloc(1, ret_ffi_type->size);
                 }
 
-                /* Call via libffi */
                 ffi_call(&entry->cif, FFI_FN(entry->fn_ptr), ret_val, args);
 
-                /* Pop arguments from stack */
                 t->stack_top -= arg_count;
 
-                /* Push return value */
                 switch (entry->return_kind) {
                     case FFI_VOID:
                         PUSH(val_nil());
@@ -5038,11 +5057,13 @@ L_BC_LOOP_TOP:
                         break;
                 }
 
-                /* Free temporary storage */
                 for (int i = 0; i < storage_used; i++)
                     free(value_storage[i]);
                 if (ret_val) free(ret_val);
-
+#else
+                runtime_error(vm, "FFI not supported in this build");
+                return false;
+#endif
                 DISPATCH();
             }
 
@@ -5223,7 +5244,9 @@ void vm_free(VM *vm) {
     }
 
     /* Close all loaded FFI library handles */
+#ifndef VN_NO_FFI
     ffi_close_all_libs();
+#endif
 
     /* Free the task free-list */
     Task *ft = vm->free_tasks;
