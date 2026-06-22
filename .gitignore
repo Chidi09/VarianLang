@@ -49,7 +49,6 @@ favicons*.zip
 website/debug_source.vn
 
 # User wants these kept locally but not tracked
-appveyor.yml
 *Swagger UI*
 docs/planning/
 docs/PROBLEMS.md
