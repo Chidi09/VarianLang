@@ -434,6 +434,12 @@ static pid_t lumen_spawn_server(const char *app) {
     pid_t pid = fork();
     if (pid == 0) {
         setenv("LUMEN_QUIET", "1", 1);  /* silence the child's own listen banner */
+        /* Dev-mode marker so the prelude injects the browser devtools overlay.
+         * Default "aurora" (the fullstack badge, matching the `vn dev` banner);
+         * a user can `LUMEN_DEV=lumen vn dev` to get the Lumen-only badge, so we
+         * don't overwrite an existing value (overwrite flag = 0). */
+        setenv("LUMEN_DEV", "aurora", 0);
+        setenv("VN_VERSION", VARIAN_VERSION, 1);
         char exe[2048];
         ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
         if (n <= 0) { _exit(127); }
@@ -446,13 +452,15 @@ static pid_t lumen_spawn_server(const char *app) {
 
 /* ─── Lumen dev console — the interactive Nuxt/Next-style startup banner ─── */
 #define LUM_RESET   "\033[0m"
-#define LUM_AMBER   "\033[38;5;214m"
-#define LUM_AMBERB  "\033[1;38;5;214m"
+#define LUM_AURA1   "\033[38;5;75m"     /* Aurora blue #4FACFE */
+#define LUM_AURA2   "\033[38;5;51m"     /* Aurora cyan #00F2FE */
+#define LUM_AURAB   "\033[1;38;5;75m"   /* bold blue */
+#define LUM_AMBER   "\033[38;5;214m"    /* Lumen amber (kept for lumen_add/lumen_dev) */
 #define LUM_DIM     "\033[2m"
 #define LUM_GRAY    "\033[38;5;245m"
 #define LUM_WHITEB  "\033[1;38;5;231m"
 #define LUM_GREEN   "\033[38;5;42m"
-#define LUM_CHIP    "\033[48;5;236m\033[1;38;5;214m"
+#define LUM_CHIP    "\033[48;5;236m\033[1;38;5;75m"
 
 /* Colour only when writing to a real terminal and the user hasn't opted out. */
 static int lumen_color(void) {
@@ -486,40 +494,42 @@ static int lumen_collect_pages(const char *dir, char **names, int max) {
     return n;
 }
 
-/* The branded "server is up" banner: a LUMEN chip, the local URL, and a
- * file→route table — the same orienting summary Nuxt/Next/Vite print. */
+/* The branded "server is up" banner — clean Nuxt/Next-style startup summary
+ * with the Aurora blue-cyan identity. */
 static void lumen_print_banner(const char *pages, const char *port, double ms) {
     int c = lumen_color();
-    const char *A    = c ? LUM_AMBER  : "";
+    const char *B    = c ? LUM_AURA1  : "";   /* Aurora blue */
+    const char *C    = c ? LUM_AURA2  : "";   /* Aurora cyan */
+    const char *BB   = c ? LUM_AURAB  : "";   /* bold blue */
     const char *D    = c ? LUM_DIM    : "";
     const char *G    = c ? LUM_GRAY   : "";
     const char *W    = c ? LUM_WHITEB : "";
     const char *GR   = c ? LUM_GREEN  : "";
     const char *R    = c ? LUM_RESET  : "";
-    const char *CHIP = c ? LUM_CHIP   : "";
 
     char *names[256];
     int n = lumen_collect_pages(pages, names, 256);
 
-    printf("\n  %s AURORA %s  %sv%s%s   %sfullstack Varian platform%s\n\n",
-           CHIP, R, G, VARIAN_VERSION, R, D, R);
-    printf("  %s➜%s  %sLocal%s     %shttp://localhost:%s/%s\n", A, R, W, R, A, port, R);
-    printf("  %s➜%s  %sPages%s     %s%d%s %sin %s/%s\n\n", A, R, W, R, W, n, R, D, pages, R);
+    /* Title line: diamond + "Aurora" + version + tagline */
+    printf("\n  %s☯%s  %sAurora%s %sv%s%s  %s──  %sfullstack Varian platform%s\n\n",
+           B, R, BB, R, G, VARIAN_VERSION, R, D, D, R);
+    printf("    %s➜%s  %sLocal%s    %shttp://localhost:%s/%s\n", B, R, W, R, B, port, R);
+    printf("    %s➜%s  %sPages%s    %s%d%s %sin %s/%s\n\n", B, R, W, R, W, n, R, D, pages, R);
 
     for (int i = 0; i < n; i++) {
-        size_t bl = strlen(names[i]) - 6;          /* strip ".lumen" */
+        size_t bl = strlen(names[i]) - 6;
         char base[256], route[300];
         if (bl >= sizeof(base)) bl = sizeof(base) - 1;
         memcpy(base, names[i], bl);
         base[bl] = '\0';
         if (strcmp(base, "index") == 0) snprintf(route, sizeof(route), "/");
         else                            snprintf(route, sizeof(route), "/%s", base);
-        printf("     %s●%s %s%-18s%s %s%s%s\n", A, R, W, route, R, G, names[i], R);
+        printf("       %s●%s %s%-18s%s %s%s%s\n", C, R, W, route, R, G, names[i], R);
         free(names[i]);
     }
     if (n) printf("\n");
-    printf("  %s✔%s ready in %s%.0f ms%s  %s· watching %s/ — edit a page to hot-reload%s\n\n",
-           GR, R, W, ms, R, D, pages, R);
+    printf("  %s✔%s %sReady%s in %s%.0f ms%s  %s· watching %s/ — edit a page to hot-reload%s\n\n",
+           GR, R, W, R, W, ms, R, D, pages, R);
 }
 
 /* Copy one file byte-for-byte (binary-safe). Returns 0 on success. */
@@ -736,24 +746,24 @@ static int lumen_new(const char *name) {
     int assets = lumen_copy_assets(pub);
 
     int color = lumen_color();
-    const char *A    = color ? LUM_AMBER  : "";
+    const char *B    = color ? LUM_AURA1  : "";
+    const char *BB   = color ? LUM_AURAB  : "";
     const char *D    = color ? LUM_DIM    : "";
     const char *W    = color ? LUM_WHITEB : "";
     const char *GR   = color ? LUM_GREEN  : "";
     const char *R    = color ? LUM_RESET  : "";
-    const char *CHIP = color ? LUM_CHIP   : "";
 
-    printf("\n  %s AURORA %s  %screated %s%s%s\n\n", CHIP, R, D, W, name, R);
-    printf("  %s✔%s pages/index.lumen\n", GR, R);
-    printf("  %s✔%s main.vn\n", GR, R);
-    printf("  %s✔%s constellation.toml\n", GR, R);
-    printf("  %s✔%s lib/\n", GR, R);
+    printf("\n  %s☯%s  %sAurora%s  %screated %s%s%s\n\n", B, R, BB, R, D, W, name, R);
+    printf("  %s✔%s %spages/index.lumen%s\n", GR, R, W, R);
+    printf("  %s✔%s %smain.vn%s\n", GR, R, W, R);
+    printf("  %s✔%s %sconstellation.toml%s\n", GR, R, W, R);
+    printf("  %s✔%s %slib/%s\n", GR, R, W, R);
     if (assets > 0)
         printf("  %s✔%s public/ %s(%d assets — favicons + manifest)%s\n", GR, R, D, assets, R);
     printf("\n  %sNext steps:%s\n\n", D, R);
-    printf("    %scd%s %s\n", A, R, name);
-    printf("    %svn dev%s\n\n", A, R);
-    printf("  %sthen open%s %shttp://localhost:8090/%s\n\n", D, R, A, R);
+    printf("    %scd%s %s\n", B, R, name);
+    printf("    %svn dev%s\n\n", B, R);
+    printf("  %sthen open%s %shttp://localhost:8090/%s\n\n", D, R, B, R);
     return 0;
 }
 
