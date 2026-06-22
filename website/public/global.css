@@ -314,6 +314,7 @@ a:hover { color: var(--accent-hover); }
 .token-builtin { color: #8be9fd; }
 .token-tag { color: #ff79c6; }
 .token-attr { color: #f1fa8c; }
+.token-selector { color: #e5c07b; }
 
 .code-block .code-block-body pre {
   background: none;

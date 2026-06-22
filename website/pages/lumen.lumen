@@ -178,26 +178,32 @@ because the server is the only place state lives and renders — <strong>no hydr
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">rocket_launch</span> From zero to live</h2>
 
 <h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">play_arrow</span> Quick start</h3>
-<pre><code class="language-sh">vn lumen new myapp     # scaffold pages/ + public/ (favicons, manifest) + a starter component
-cd myapp
-vn dev                 # serve ./pages with live reload + the dev console (default :8090)
-</code></pre>
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+  <div class="code-block-body"><pre>vn lumen new myapp     <span class="token-comment"># scaffold pages/ + public/ + starter component</span>
+<span class="token-builtin">cd</span> myapp
+vn dev                 <span class="token-comment"># serve ./pages with live reload + dev console (:8090)</span>
+</pre></div>
+</div>
 <p>Open <code>http://localhost:8090/</code> and click the logo — its colour is reactive server state.</p>
 <h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">draft</span> The <code>.lumen</code> file format</h3>
 <p>A component is up to three blocks in one file:</p>
-<pre><code class="language-html">&lt;template&gt;            &lt;!-- markup with &#123;&#123; &#125;&#125; bindings and @event hooks --&gt;
-  &lt;button @click=&quot;pulse&quot;&gt;&#123;&#123; count &#125;&#125;&lt;/button&gt;
-&lt;/template&gt;
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">counter.lumen</span></div>
+  <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>            <span class="token-comment">&lt;!-- &#123;&#123; &#125;&#125; bindings + @event hooks --&gt;</span>
+  <span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"pulse"</span><span class="token-tag">&gt;</span>&#123;&#123; count &#125;&#125;<span class="token-tag">&lt;/button&gt;</span>
+<span class="token-tag">&lt;/template&gt;</span>
 
-&lt;script&gt;              &lt;!-- plain Varian: a state() fn + handler fns + helpers --&gt;
-fn state() { return { count: 0 } }
-fn pulse(s, v) { return s.set(&quot;count&quot;, s.get(&quot;count&quot;) + 1) }
-&lt;/script&gt;
+<span class="token-tag">&lt;script&gt;</span>              <span class="token-comment">&lt;!-- plain Varian: state() + handlers --&gt;</span>
+<span class="token-keyword">fn</span> <span class="token-function">state</span>() { <span class="token-keyword">return</span> { count: <span class="token-number">0</span> } }
+<span class="token-keyword">fn</span> <span class="token-function">pulse</span>(s, v) { <span class="token-keyword">return</span> s.<span class="token-function">set</span>(<span class="token-string">"count"</span>, s.<span class="token-function">get</span>(<span class="token-string">"count"</span>) + <span class="token-number">1</span>) }
+<span class="token-tag">&lt;/script&gt;</span>
 
-&lt;client&gt;              &lt;!-- OPTIONAL: verbatim browser JS for a client-only island --&gt;
-/* runs once on first paint; left untouched by the live DOM morph */
-&lt;/client&gt;
-</code></pre>
+<span class="token-tag">&lt;client&gt;</span>              <span class="token-comment">&lt;!-- OPTIONAL: browser JS island --&gt;</span>
+<span class="token-comment">/* runs once on first paint; untouched by DOM morph */</span>
+<span class="token-tag">&lt;/client&gt;</span>
+</pre></div>
+</div>
 <p>How it compiles (<code>lumen_compile_source</code> in <code>vn_modules/lumen.vn</code>):</p>
 <ul>
 <li><code>&lt;template&gt;</code> is escaped and embedded as the component's render string.</li>
@@ -211,10 +217,13 @@ fn pulse(s, v) { return s.set(&quot;count&quot;, s.get(&quot;count&quot;) + 1) }
 <h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">import_export</span> Import system</h3>
 <p><code>.lumen</code> files can import other components, utilities, and Lumen UI components
 using a standard ES-module-like syntax:</p>
-<pre><code class="language-varian">import UserCard from "./components/UserCard"
-import { Button, Card } from "lumen-ui"
-import { format } from "./helpers"
-</code></pre>
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">component.lumen</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">import</span> <span class="token-type">UserCard</span> <span class="token-keyword">from</span> <span class="token-string">"./components/UserCard"</span>
+<span class="token-keyword">import</span> { <span class="token-type">Button</span>, <span class="token-type">Card</span> } <span class="token-keyword">from</span> <span class="token-string">"lumen-ui"</span>
+<span class="token-keyword">import</span> { format } <span class="token-keyword">from</span> <span class="token-string">"./helpers"</span>
+</pre></div>
+</div>
 <p>Three kinds of imports are supported:</p>
 <ul>
 <li><strong>Relative paths</strong> (<code>"./components/X"</code>) — resolved relative to the importing
@@ -235,16 +244,18 @@ Circular imports are detected and produce a build error.</p>
 <code>&lt;style scoped&gt;</code> block is rewritten so that every selector is prefixed with
 <code>[data-lumen-css="ComponentName"]</code>, isolating the component's styles from
 the rest of the page:</p>
-<pre><code class="language-html">&lt;style scoped&gt;
-.card { background: var(--lumen-surface); border-radius: 8px; }
-.card h3 { color: var(--lumen-primary); }
-&lt;/style&gt;
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">component.lumen</span></div>
+  <div class="code-block-body"><pre><span class="token-tag">&lt;style</span> <span class="token-attr">scoped</span><span class="token-tag">&gt;</span>
+<span class="token-selector">.card</span> { background: <span class="token-function">var</span>(--lumen-surface); border-radius: <span class="token-number">8px</span>; }
+<span class="token-selector">.card h3</span> { color: <span class="token-function">var</span>(--lumen-primary); }
+<span class="token-tag">&lt;/style&gt;</span>
 
-&lt;!-- Plain &lt;style&gt; (no scoped) emits global CSS as-is --&gt;
-&lt;style&gt;
-body { font-family: var(--lumen-font); }
-&lt;/style&gt;
-</code></pre>
+<span class="token-tag">&lt;style&gt;</span>
+<span class="token-selector">body</span> { font-family: <span class="token-function">var</span>(--lumen-font); }
+<span class="token-tag">&lt;/style&gt;</span>
+</pre></div>
+</div>
 <p>The scoping is implemented by <code>_lumen_scope_css</code> which rewrites the CSS
 selectors, and <code>_lumen_scope_html</code> which injects <code>data-lumen-css</code> attributes
 onto the component's root elements. This means zero class-name collisions
@@ -253,15 +264,20 @@ attribute selector.</p>
 <h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">bolt</span> Reactivity model</h3>
 <p>State is <strong>plain Varian data on the server</strong>. There is no <code>useState</code>, no signals, no
 effect dependency arrays, no virtual DOM in the browser. The whole loop is:</p>
-<pre><code>click ─▶ data-lumen-click ──WS──▶ run handler ▶ new state ▶ re-render ▶ diff ──WS──▶ morph
-</code></pre>
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">reactive flow</span></div>
+  <div class="code-block-body"><pre>click <span style="color:var(--accent);">─▶</span> data-lumen-click <span style="color:var(--accent);">──WS──▶</span> run handler <span style="color:var(--accent);">▶</span> new state <span style="color:var(--accent);">▶</span> re-render <span style="color:var(--accent);">▶</span> diff <span style="color:var(--accent);">──WS──▶</span> morph</pre></div>
+</div>
 <p>A handler takes <code>(state, value)</code> and returns the <strong>new</strong> state. State helpers are immutable
 and arena-safe — <code>s.set(k, v)</code> returns a <em>new</em> struct, and they chain:</p>
-<pre><code class="language-varian">fn pulse(s, v) {
-  let n = s.get(&quot;count&quot;) + 1
-  return s.set(&quot;count&quot;, n).set(&quot;color&quot;, _hue(n))   // immutable, chainable
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">handler.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">pulse</span>(s, v) {
+  <span class="token-keyword">let</span> n = s.<span class="token-function">get</span>(<span class="token-string">"count"</span>) + <span class="token-number">1</span>
+  <span class="token-keyword">return</span> s.<span class="token-function">set</span>(<span class="token-string">"count"</span>, n).<span class="token-function">set</span>(<span class="token-string">"color"</span>, <span class="token-function">_hue</span>(n))   <span class="token-comment">// immutable, chainable</span>
 }
-</code></pre>
+</pre></div>
+</div>
 <p>The scaffolded starter wires <code>&#123;&#123; color &#125;&#125;</code> into an SVG <code>fill</code>, so each click recomputes a
 colour server-side and Lumen morphs <strong>only the changed attribute</strong> into the DOM — a live
 demonstration of the model with zero client code.</p>
@@ -376,20 +392,23 @@ LumenJS handles WebSocket reconnect with exponential backoff, event delegation,
 DOM morphing, and a small set of opt-in browser API shims.</p>
 <p><strong>Event modifiers</strong> can be attached to any <code>@event</code> handler using the
 <code>data-lumen-mod</code> attribute:</p>
-<pre><code class="language-html">&lt;!-- Prevent default + stop propagation --&gt;
-&lt;form @submit=&quot;save&quot; data-lumen-mod=&quot;prevent stop&quot;&gt;...&lt;/form&gt;
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">events.lumen</span></div>
+  <div class="code-block-body"><pre><span class="token-comment">&lt;!-- Prevent default + stop propagation --&gt;</span>
+<span class="token-tag">&lt;form</span> <span class="token-attr">@submit</span>=<span class="token-string">"save"</span> <span class="token-attr">data-lumen-mod</span>=<span class="token-string">"prevent stop"</span><span class="token-tag">&gt;</span>...<span class="token-tag">&lt;/form&gt;</span>
 
-&lt;!-- Debounce input by 300ms --&gt;
-&lt;input @input=&quot;search&quot; data-lumen-mod=&quot;debounce:300&quot; /&gt;
+<span class="token-comment">&lt;!-- Debounce input by 300ms --&gt;</span>
+<span class="token-tag">&lt;input</span> <span class="token-attr">@input</span>=<span class="token-string">"search"</span> <span class="token-attr">data-lumen-mod</span>=<span class="token-string">"debounce:300"</span> <span class="token-tag">/&gt;</span>
 
-&lt;!-- Confirmation dialog before delete --&gt;
-&lt;button @click=&quot;deleteItem&quot; data-lumen-mod=&quot;confirm:Delete this item?&quot;&gt;
+<span class="token-comment">&lt;!-- Confirmation dialog --&gt;</span>
+<span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"deleteItem"</span> <span class="token-attr">data-lumen-mod</span>=<span class="token-string">"confirm:Delete?"</span><span class="token-tag">&gt;</span>
   Delete
-&lt;/button&gt;
+<span class="token-tag">&lt;/button&gt;</span>
 
-&lt;!-- Only fire on Enter key --&gt;
-&lt;input @keydown=&quot;submitSearch&quot; data-lumen-mod=&quot;key:Enter&quot; /&gt;
-</code></pre>
+<span class="token-comment">&lt;!-- Only fire on Enter --&gt;</span>
+<span class="token-tag">&lt;input</span> <span class="token-attr">@keydown</span>=<span class="token-string">"submitSearch"</span> <span class="token-attr">data-lumen-mod</span>=<span class="token-string">"key:Enter"</span> <span class="token-tag">/&gt;</span>
+</pre></div>
+</div>
 <p>Available modifiers: <code>prevent</code>, <code>stop</code>, <code>once</code>, <code>debounce(ms)</code>,
 <code>throttle(ms)</code>, <code>confirm("msg")</code>, <code>key(KeyName)</code>. All are handled
 client-side without a server round-trip.</p>
@@ -787,20 +806,23 @@ state via actors is a future milestone.</p>
 (EAGAIN), not <code>null</code>. The per-connection live loop calls <code>task.yield()</code> when there's no
 message, allowing the scheduler to service other connections/tasks on the next tick.</p>
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">play_circle</span> Example</h2>
-<pre><code class="language-varian">let counter = lumen_component(
-    | | { return { count: 0 } },
-    |s| { return lumen_render(&quot;&lt;div&gt;&lt;p&gt;Count: &#123;&#123; count &#125;&#125;&lt;/p&gt;&quot; +
-                              &quot;&lt;button @click=\&quot;inc\&quot;&gt;+&lt;/button&gt;&quot; +
-                              &quot;&lt;button @click=\&quot;dec\&quot;&gt;-&lt;/button&gt;&lt;/div&gt;&quot;, s) },
-    [&quot;inc&quot;, &quot;dec&quot;],
-    [ |s, v| { s.count = s.count + 1; return s },
-      |s, v| { s.count = s.count - 1; return s } ]
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">counter.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">let</span> counter = <span class="token-function">lumen_component</span>(
+    | | { <span class="token-keyword">return</span> { count: <span class="token-number">0</span> } },
+    |s| { <span class="token-keyword">return</span> <span class="token-function">lumen_render</span>(<span class="token-string">"&lt;div&gt;&lt;p&gt;Count: &#123;&#123; count &#125;&#125;&lt;/p&gt;"</span> +
+                              <span class="token-string">"&lt;button @click=\\"inc\\"&gt;+&lt;/button&gt;"</span> +
+                              <span class="token-string">"&lt;button @click=\\"dec\\"&gt;-&lt;/button&gt;&lt;/div&gt;"</span>, s) },
+    [<span class="token-string">"inc"</span>, <span class="token-string">"dec"</span>],
+    [ |s, v| { s.count = s.count + <span class="token-number">1</span>; <span class="token-keyword">return</span> s },
+      |s, v| { s.count = s.count - <span class="token-number">1</span>; <span class="token-keyword">return</span> s } ]
 )
 
-let app = new_app()
-lumen_mount(app, &quot;/&quot;, counter)
-app.listen(8090)
-</code></pre>
+<span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+<span class="token-function">lumen_mount</span>(app, <span class="token-string">"/"</span>, counter)
+app.<span class="token-function">listen</span>(<span class="token-number">8090</span>)
+</pre></div>
+</div>
 <p>Run it: <code>./vn run examples/lumen_counter.vn</code>, open <code>http://localhost:8090</code>.</p>
     </main>
   </div>
