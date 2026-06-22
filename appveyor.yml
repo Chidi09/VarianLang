@@ -178,14 +178,16 @@ for:
           Write-Host "Setting up libpq..."
           curl.exe -sL https://get.enterprisedb.com/postgresql/postgresql-16.2-1-windows-x64-binaries.zip -o "$deps\pg.zip"
           Expand-Archive -Path "$deps\pg.zip" -DestinationPath "$deps\pg" -Force
-          $pg_lib_dir = Get-ChildItem "$deps\pg" -Recurse -Directory | Where-Object { $_.Name -eq 'lib' -and (Test-Path "$($_.FullName)\libpq.dll") } | Select-Object -First 1
-          $pg_root = (Get-Item $pg_lib_dir).Parent.FullName
+          $pg_dll = Get-ChildItem "$deps\pg" -Recurse -File | Where-Object { $_.Name -eq 'libpq.dll' } | Select-Object -First 1
+          if (-not $pg_dll) { throw "libpq.dll not found in PostgreSQL zip" }
+          $pg_bin = $pg_dll.DirectoryName
+          $pg_root = (Get-Item $pg_bin).Parent.FullName
           md "$deps\pg\include" -Force | Out-Null
-          Copy-Item "$pg_root\include\*.h" "$deps\pg\include\"
           md "$deps\pg\lib" -Force | Out-Null
-          Copy-Item "$($pg_lib_dir.FullName)\libpq.dll" "$deps\pg\lib\" -Force
-          Copy-Item "$($pg_lib_dir.FullName)\libpq.dll" "$deps\" -Force
-          Push-Location $pg_lib_dir.FullName
+          Copy-Item "$pg_root\include\*.h" "$deps\pg\include\"
+          Copy-Item $pg_dll.FullName "$deps\pg\lib\" -Force
+          Copy-Item $pg_dll.FullName "$deps\" -Force
+          Push-Location $pg_bin
           gendef libpq.dll 2>$null
           dlltool -d libpq.def -l "$deps\pg\lib\libpq.a" -k 2>$null
           Pop-Location
