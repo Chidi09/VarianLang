@@ -31,6 +31,9 @@ test_array_assignment.vn
 # Secrets / local env
 .env
 
+# Node (husky)
+node_modules/
+
 # Scratch files from interactive sessions
 *.mp4
 *ChatGPT Image*.png

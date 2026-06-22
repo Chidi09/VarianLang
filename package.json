@@ -1,0 +1,12 @@
+{
+  "name": "varian",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Varian programming language toolchain — git hooks only",
+  "scripts": {
+    "prepare": "husky"
+  },
+  "devDependencies": {
+    "husky": "^9.1.0"
+  }
+}

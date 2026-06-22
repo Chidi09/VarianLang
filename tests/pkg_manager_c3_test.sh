@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Capture project root before any cd
+PROJECT_ROOT="${VARIAN_PROJECT_ROOT:-$PWD}"
+
 # Setup directories
 TEST_DIR="/tmp/varian_pkg_c3_test"
 rm -rf "$TEST_DIR"
@@ -123,7 +126,7 @@ echo '[deps]' >> constellation.toml
 echo 'dep_a = "^1.0.0"' >> constellation.toml
 
 # Copy our built 'vn' binary
-cp /root/dev/VarianLang/vn "$APP_DIR/vn"
+cp "$PROJECT_ROOT/vn" "$APP_DIR/vn"
 
 echo "=== Running 'vn search dep' ==="
 ./vn search dep

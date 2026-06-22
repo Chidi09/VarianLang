@@ -1,6 +1,9 @@
 #!/bin/bash
 set -e
 
+# Capture project root before any cd
+PROJECT_ROOT="${VARIAN_PROJECT_ROOT:-$PWD}"
+
 # Setup directories
 TEST_DIR="/tmp/varian_pkg_test"
 rm -rf "$TEST_DIR"
@@ -50,7 +53,7 @@ echo '[deps]' >> constellation.toml
 echo "dep_a = { git = \"$DEP_A_DIR\", tag = \"v2.0.0\" }" >> constellation.toml
 
 # Copy our built 'vn' binary
-cp /root/dev/VarianLang/vn "$APP_DIR/vn"
+cp "$PROJECT_ROOT/vn" "$APP_DIR/vn"
 
 echo "=== Running 'vn install' ==="
 ./vn install
