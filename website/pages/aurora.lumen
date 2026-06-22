@@ -110,6 +110,12 @@
   </style>
 </head>
 <body class="theme-aurora">
+  <div class="ambient-bg ambient-bg-strong" aria-hidden="true">
+    <video autoplay muted loop playsinline poster="/aurora-bg.jpg" preload="metadata">
+      <source src="/aurora-bg.webm" type="video/webm">
+      <source src="/aurora-bg.mp4" type="video/mp4">
+    </video>
+  </div>
   <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
     <a href="/" class="nav-brand">
       <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
@@ -818,6 +824,44 @@ app.<span class="token-function">listen</span>(c.port)
 
     </main>
   </div>
+
+  <footer class="footer-main">
+    <div class="container">
+      <div class="footer-grid">
+        <div class="footer-col">
+          <h4>Product</h4>
+          <ul>
+            <li><a href="/aurora">Aurora</a></li>
+            <li><a href="/zenith">Zenith</a></li>
+            <li><a href="/lumen">Lumen</a></li>
+            <li><a href="/kiln">Kiln</a></li>
+            <li><a href="/constellation">Constellation</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Learn</h4>
+          <ul>
+            <li><a href="/the_varian_book">The Book</a></li>
+            <li><a href="/language">Language Spec</a></li>
+            <li><a href="/stdlib">Standard Library</a></li>
+            <li><a href="/tooling">Tooling</a></li>
+            <li><a href="/security">Security</a></li>
+          </ul>
+        </div>
+        <div class="footer-col">
+          <h4>Community</h4>
+          <ul>
+            <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
+            <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
+            <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
+          </ul>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        &copy; 2026 VarianLang. Built with Aurora.
+      </div>
+    </div>
+  </footer>
 </body>
 </html>
 </template>
