@@ -147,7 +147,7 @@
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-8);">
   <div>
     <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4);">
-      <img src="/assets/aurora-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+      <img src="/aurora-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
       <h1 style="margin:0;font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Aurora</h1>
     </div>
     <p style="font-size:var(--text-lg);color:var(--text-secondary);margin:0;">The fullstack Varian platform — Zenith backend + Lumen frontend, one language, one binary.</p>
