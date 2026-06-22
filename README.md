@@ -14,6 +14,7 @@
   <a href="#lumen--the-frontend-framework">Lumen</a> ·
   <a href="#aurora--the-fullstack-framework">Aurora</a> ·
   <a href="#zenith--the-web-framework">Zenith</a> ·
+  <a href="#standard-library">Stdlib</a> ·
   <a href="#cli">CLI</a> ·
   <a href="#documentation">Docs</a>
 </p>
@@ -89,10 +90,6 @@ reactive app.
 
 ### The core idea: server-driven live
 
-Most React/Next apps run your component logic *twice* — once on the server (SSR) and again
-in the browser (hydration) — which is the entire source of the dreaded "hydration mismatch"
-class of bugs. Lumen does not do this.
-
 In Lumen, **the server owns all state and does all rendering.** The browser runs a tiny
 runtime whose only jobs are: forward DOM events over a WebSocket, and patch the DOM with
 whatever HTML the server sends back. State lives in plain Varian on the server — no
@@ -124,33 +121,43 @@ mismatch to debug.
 </template>
 
 <script>
-fn _hue(n) {
-  let palette = ["#f5b829", "#ff6b6b", "#4dd4ac", "#5b9cff", "#c77dff", "#ff9f43"]
-  return palette[n % 6]
-}
 fn state() { return { count: 0, color: "#f5b829" } }
 fn pulse(s, v) {
   let n = s.get("count") + 1
-  return s.set("count", n).set("color", _hue(n))
+  return s.set("count", n).set("color", ["#f5b829", "#ff6b6b", "#4dd4ac"][n % 3])
 }
 </script>
 ```
 
-Click the logo → the server runs `pulse` → computes a new colour → re-renders → Lumen
-morphs **only the changed `fill` attribute** into the live DOM.
+### API
 
-### Markup syntax
+| Function | What it does |
+|---|---|
+| `lumen_mount(app, path, comp)` | Mount a live component at a route on a Zenith app |
+| `lumen_mount_data(app, path, comp, provider)` | Same, with a request-scoped data provider for initial state |
+| `lumen_mount_dynamic(app, path, comp, param)` | Same, with a URL path param injected into state |
+| `lumen_store(initial)` | Zustand-style store: `get(key)`, `set(key, val)`, `all()` |
+| `lumen_resource(fetcher)` | React-Query-style resource: `state()`, `refetch()` |
+| `lumen_async_resource(fetcher)` | Same, but refetch spawns a background task and re-renders on completion |
+| `lumen_publish(topic, key, val)` | Broadcast a value to all connections on a topic |
+| `lumen_subscribe(topic)` | Returns a `{ get(key) }` reader for a topic |
+| `lumen_form(schemas)` | Zod-style form validator: `validate(values)` → `{ ok, values, errors }` |
+| `lumen_register_component(name, comp)` | Register a reusable component by name |
+| `lumen_meta(title, desc, og)` | Declare per-page SEO metadata |
+| `lumen_render(tpl, ctx)` | Render a Lumen template string to HTML |
+| `lumen_build_dir(dir, out, port)` | Compile a `pages/` directory into a runnable app (file-based routing) |
+| `lumen_build_static_dir(dir, out, base)` | SSG: render all pages to static HTML + sitemap.xml |
 
-| Syntax | Meaning |
-| --- | --- |
-| `{{ expr }}` | Interpolate, **HTML-escaped by default** (XSS-safe) |
-| `{{! expr }}` | Interpolate raw / unescaped (trusted content only) |
-| `{{#if expr}} … {{else}} … {{/if}}` | Conditionals |
-| `{{#each items as item}} … {{/each}}` | Loops |
-| `@click="handler"` | Live event hook (also `@input`, `@change`, `@submit`, `@keydown`, …) |
-| `<UserCard id="u1" name="Ada" />` | Child component with props |
-| `<Card> … </Card>` + `{{! children }}` | Slots |
-| `<client> … </client>` | Browser-only JS island (charts, maps, canvas) |
+### Built-in UI components (~27)
+
+`Page`, `Container`, `Section`, `Stack`, `Row`, `Grid`, `Card`, `Heading`, `Text`,
+`Eyebrow`, `Button`, `Badge`, `Feature`, `Divider`, `Spacer`, `Hero`, `Nav`, `Footer`,
+`Split`, `Field`, `Stat`, `Tag`, `Avatar`, `Alert`, `Empty`, `Skeleton`, `Icon`
+
+### Test helpers
+
+`lumen_test_render`, `lumen_test_event`, `lumen_test_contains`, `lumen_test_attr`,
+`lumen_test_count`, `lumen_test_render_response`
 
 ### Dev console
 
@@ -173,24 +180,12 @@ morphs **only the changed `fill` attribute** into the live DOM.
 - **Batteries included.** Favicons, manifest, responsive viewport, Degular typeface —
   all scaffolded by `vn lumen new`.
 
-### Lumen vs React / Next / TypeScript
-
-| React / Next / TS pain | Lumen's answer |
-| --- | --- |
-| Config & build hell (tsconfig, webpack/vite/babel, dozens of deps) | **Zero-config.** One binary, `vn dev`, nothing to wire. |
-| Hydration mismatches, SSR/CSR divergence | **Server-driven live** — the server renders; no client/server divergence. |
-| `node_modules` + supply-chain risk | **Batteries-included**, ships in the binary. No npm, no lockfile. |
-| Reactivity footguns (effect deps, stale closures, memo ceremony) | State is plain Varian on the server. No dependency arrays, no stale closures. |
-| XSS-by-omission (forgot to escape) | `{{ }}` **escapes by default**; raw is the explicit `{{! }}`. |
-| Cryptic wall-of-text errors | Friendly errors with file/line/caret + a fix hint, branded browser overlay. |
-| Fragmented commands (npm/npx/tsc/eslint/jest/vite) | One `vn` CLI with consistent verbs — same DX as the backend. |
-
 ### CLI
 
 ```sh
-vn lumen new myapp       # Scaffold pages/ + public/ + starter component
-vn dev                   # Serve ./pages with live reload (default :8090)
-vn dev pages 3000        # Custom dir + port
+vn lumen new myapp              # Scaffold pages/ + public/ + starter component
+vn dev                          # Serve ./pages with live reload (default :8090)
+vn dev pages 3000               # Custom dir + port
 vn lumen build pages app.vn 8090   # Compile pages/ into one runnable app
 ```
 
@@ -199,12 +194,12 @@ vn lumen build pages app.vn 8090   # Compile pages/ into one runnable app
 ## Aurora — the fullstack framework
 
 <p align="center">
-  <img src="docs/assets/aurora-logo.png" alt="Aurora" width="150" />
+  <img src="docs/assets/aurora-logo.png" alt="Aurora Logo" width="150" />
 </p>
 
-Aurora combines Zenith (server) and Lumen (frontend) into one unified project structure.
-It is Varian's answer to Next.js / Nuxt / Rails — a single framework that spans database
-to browser.
+Aurora combines Zenith (server) and Lumen (frontend) into one unified project
+structure — Varian's answer to Next.js / Nuxt / Rails. A `constellation.toml` with
+`kind = "aurora"` tells the toolchain to bundle both frameworks.
 
 ```sh
 vn new myapp          # Scaffold a full Aurora project
@@ -212,10 +207,6 @@ cd myapp
 vn dev                # http://localhost:8090 — live reload
 vn build --release    # Compile to a native binary
 ```
-
-An Aurora project has code examples, real-world demo apps (product catalog, cart,
-checkout, auth), and the full Aurora-vs-Next.js comparison at
-[`/aurora`](https://varian.sh/aurora).
 
 ---
 
@@ -225,36 +216,93 @@ checkout, auth), and the full Aurora-vs-Next.js comparison at
   <img src="docs/assets/zenith-logo.png" alt="Zenith Logo" width="300" />
 </p>
 
-Zenith is Varian's built-in HTTP web framework — a non-blocking, `io_uring`-powered
-server that lives inside the `vn` binary. It handles routing, WebSockets, middleware,
-CORS, CSRF, rate limiting, sessions, static file serving, TLS, and OpenAPI docs.
+Zenith is Varian's built-in HTTP web framework — a non-blocking,
+`io_uring`-powered server that lives inside the `vn` binary.
 
 ```swift
 let app = new_app()
 
 app.get("/users/:id", |req| {
     let user_id = req.params["id"]
-    return Response {
-        status: 200,
-        body: json_encode({ "user": user_id, "status": "active" }),
-        content_type: "application/json"
-    }
+    return json_response({ "user": user_id, "status": "active" }, 200)
 })
 
 app.listen(3000)
 ```
 
-- **Batteries included.** SQLite, Postgres, Redis, JWT auth, SMTP, validation, HTML
-  sanitization, regex, background queues, signed sessions — all built in, zero deps.
-- **No imports.** Everything in `vn_modules/` is auto-loaded. You write `new_app()` and
-  `app.get(...)` — no `require`/`import`, no plugin registration.
-- **Per-request arenas.** Memory for each request lives in a task-local arena; when the
-  request ends, memory is bulk-reclaimed by resetting a pointer — zero GC overhead.
-- **Radix trie routing.** Routes resolve in O(path segment) trie descent.
-- **WebSockets & SSE.** Real-time communication, no external dependencies.
-- **AOT compilation.** `vn build --release` compiles your app to a native C binary.
+**Features:**
 
-See [`docs/ZENITH.md`](docs/ZENITH.md) for the full reference.
+| Feature | Implementation |
+|---|---|
+| **Routing** | Radix (segment) trie — O(depth) lookup. All HTTP methods: GET/POST/PUT/DELETE/PATCH/OPTIONS/HEAD |
+| **Middleware** | Closure chain with `next(req)` — CORS, CSRF, auth, logging, etc. |
+| **Static serving** | `serve_static(prefix, dir)` with path-traversal protection, MIME resolution |
+| **WebSocket** | Full RFC 6455 — masking, opcodes, close frames |
+| **SSE** | `sse_handshake(req)` → `SseSender.send(data)` |
+| **OpenAPI** | `enable_docs(endpoint)` → `/openapi.json` + Swagger UI with schema registration |
+| **Sessions** | Stateless JWT-signed cookies — `session_get`, `session_set`, `session_clear` |
+| **Templating** | `render(tpl, ctx)` — `<%= %>` escaped, `<%- %>` raw, `<% if %>`, `<% for %>` |
+| **Request helpers** | `query(req, key, default)`, `form(req, key, default)`, `cookie(req, name, default)` |
+| **Response helpers** | `json_response`, `redirect`, `redirect_with`, `set_cookie`, `clear_cookie`, `with_header` |
+| **Listen modes** | `listen(port)`, `listen_cluster(port, workers)`, `listen_tls(...)`, `listen_tls_cluster(...)` |
+| **Error handling** | `on_error(handler)` — custom error responses |
+
+**Caveat (from source):** WebSocket/SSE upgrades write directly to the raw socket FD
+and are not TLS-aware — `wss://` is unsupported. For production HTTPS, terminate TLS at
+a reverse proxy (nginx/Caddy) proxying `ws://` to Zenith.
+
+**Security middleware** (`shield.vn` — auto-loaded):
+
+| Middleware | What it protects |
+|---|---|
+| `cors(origins, methods, headers)` | Cross-origin requests + OPTIONS preflight |
+| `csrf()` | Double-submit cookie pattern, constant-time compare |
+| `rate_limit(max_reqs, window_ms)` | In-memory token bucket (single-worker) |
+| `rate_limit_redis(conn, max_reqs, window_s)` | Redis-backed fixed-window (cluster-safe) |
+
+---
+
+## Standard Library — Varian modules (auto-loaded)
+
+All `vn_modules/*.vn` files are automatically concatenated as a prelude — no imports
+needed. Every function and struct below is in scope the moment you run `vn`.
+
+| Module | What it provides |
+|---|---|
+| `zenith.vn` | Web framework — `new_app()`, routing, middleware, static serving, WebSocket, SSE, OpenAPI, templating, sessions, request/response helpers |
+| `lumen.vn` | Frontend framework — `lumen_mount`, `lumen_store`, `lumen_resource`, `lumen_form`, file-based routing, SSG, 27 UI components, test DSL |
+| `shield.vn` | Security middleware — `cors()`, `csrf()`, `rate_limit()`, `rate_limit_redis()` |
+| `auth.vn` | Auth middleware — `zenith_auth.jwt(secret)`, `zenith_auth.session_store()`, `zenith_auth.session(store, cookie)` + password helpers |
+| `db.vn` | Compile-time SQL query builder — `select()`, `bind()`, `run_sqlite()`, `run_postgres()`, `test_transaction()` |
+| `queue.vn` | Background jobs — `WorkerPool.spawn(n)`, `.submit(fn)`, `.stop()` — also `cron(interval_ms, handler)` |
+| `mail.vn` | Email — `send_smtp(host, port, ...)`, `send_resend(api_key, ...)` |
+| `storage.vn` | Local file blob store — `new_storage(dir)`, `.put(key, bytes)`, `.get(key)`, `.delete(key)` |
+| `observe.vn` | Structured logging (`Logger.info`/`.warn`/`.error`/`.info_with`) + Prometheus metrics handler |
+| `validate.vn` | Declarative validation — `validate.str().is_email().parse(v)`, `validate.object({...}).parse(v)` |
+
+## Standard Library — C native modules
+
+| Module | Functions |
+|---|---|
+| `http` | `get`, `post`, `serve`, `serve_tls`, `create_struct`, `write_socket`, `read_socket`, `close_socket`, `test_request` |
+| `auth` | `hash_sha256`, `sign_jwt`, `verify_jwt`, `hash_password`, `verify_password`, `generate_token`, `constant_time_eq`, `sha1_base64` |
+| `sqlite` | `connect`, `query`, `close` |
+| `postgres` | `connect`, `query`, `close` |
+| `redis` | `connect`, `cmd`, `close` |
+| `smtp` | `send` |
+| `math` | `sin`, `cos`, `sqrt`, `abs`, `floor`, `ceil`, `bit_and`, `bit_or`, `bit_xor` |
+| `regex` | `test`, `match`, `groups`, `find_all`, `replace` |
+| `io` | `read_text`, `write_text`, `read_bytes`, `write_bytes`, `exists`, `mkdir`, `delete`, `list_dir` |
+| `task` | `spawn`, `sleep`, `yield`, `id`, `channel`, `close`, `try_receive` |
+| `time` | `now_ms`, `now_iso8601` |
+| `env` | `get`, `require`, `load` |
+| `errors` | `explain`, `kind`, `is`, `make` |
+| `_sanitize` | `escape_html`, `strip_html`, `trim` |
+| `_validate` | `is_email`, `is_url`, `is_alphanumeric`, `min_len`, `max_len`, `get_field`, `get_keys` |
+| `struct` | `set`, `get`, `has`, `keys` |
+| `mock` | `intercept`, `restore` |
+| `python` | `run` |
+| Top-level | `print`, `json_encode`, `json_decode`, `throw`, `assert_eq`, `assert_ne`, `assert_throws` |
 
 ---
 
