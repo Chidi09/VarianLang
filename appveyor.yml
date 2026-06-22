@@ -1,136 +1,86 @@
-# Varian CI / release — multi-platform (Linux, macOS, Windows).
-# Builds the hardened `vn` toolchain and packages a release tarball/zip.
-# On a pushed git tag, publishes all platform artifacts to a GitHub Release.
-# Tests are run locally — not in CI.
-# NOTE: macOS and Windows builds may need C-level porting (liburing is Linux-only).
-# They are allowed to fail while Linux is stable.
+# AppVeyor CI — builds the Linux `vn` toolchain and publishes to GitHub
+# Releases whenever a vX.Y.Z tag is pushed.
+#
+# Setup (one-time):
+#   1. https://ci.appveyor.com/ → Log in with GitHub → New Project → pick Chidi09/VarianLang
+#   2. Settings → Environment → add secret: GITHUB_TOKEN (a classic PAT with repo scope)
+#   3. Push a tag — AppVeyor picks it up automatically.
 
-version: 0.1.0-{build}
-image:
-  - Ubuntu2204
-  - macos-ventura
-  - Visual Studio 2022
+skip_non_tags: true
+
+image: Ubuntu2204
+
 clone_depth: 1
 
-for:
-  -
-    matrix:
-      only:
-        - image: Ubuntu2204
-    install:
-      - sh: sudo apt-get update -qq
-      - sh: >
-          sudo apt-get install -y -qq
-          build-essential
-          libffi-dev
-          libcurl4-openssl-dev
-          libpq-dev
-          libssl-dev
-          libsqlite3-dev
-          libhiredis-dev
-          liburing-dev
-    build_script:
-      - sh: make -j$(nproc) release
-    after_test:
-      - sh: |
-          set -e
-          PKG=varian-linux-x64
-          rm -rf dist && mkdir -p dist/$PKG
-          cp vn libvarian.a dist/$PKG/
-          cp -r include vn_modules dist/$PKG/
-          cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
-          tar -czf $PKG.tar.gz -C dist $PKG
-          sha256sum $PKG.tar.gz | tee $PKG.tar.gz.sha256
-    artifacts:
-      - path: varian-linux-x64.tar.gz
-        name: varian-linux-x64
-      - path: varian-linux-x64.tar.gz.sha256
-        name: varian-linux-x64-sha256
+environment:
+  GITHUB_TOKEN: $(GITHUB_TOKEN)
 
-  -
-    matrix:
-      only:
-        - image: macos-ventura
-    install:
-      - sh: brew install libffi curl openssl sqlite3 hiredis postgresql
-    build_script:
-      # macOS porting note: remove liburing from LDFLAGS and ifdef io_uring code
-      - sh: make -j$(sysctl -n hw.logicalcpu) release 2>/dev/null || echo "macOS build needs porting — see docs/"
-    after_test:
-      - sh: |
-          PKG=varian-macos-x64
-          rm -rf dist && mkdir -p dist/$PKG
-          cp vn libvarian.a dist/$PKG/ 2>/dev/null || true
-          cp -r include vn_modules dist/$PKG/ 2>/dev/null || true
-          cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
-          tar -czf $PKG.tar.gz -C dist $PKG 2>/dev/null || touch $PKG.tar.gz
-          shasum -a 256 $PKG.tar.gz | tee $PKG.tar.gz.sha256 2>/dev/null || true
-    artifacts:
-      - path: varian-macos-x64.tar.gz
-        name: varian-macos-x64
-      - path: varian-macos-x64.tar.gz.sha256
-        name: varian-macos-x64-sha256
+install:
+  - sh: sudo apt-get update -qq
+  - sh: >
+      sudo apt-get install -y -qq
+      build-essential
+      libffi-dev
+      libcurl4-openssl-dev
+      libpq-dev
+      libssl-dev
+      libsqlite3-dev
+      libhiredis-dev
+      liburing-dev
 
-  -
-    matrix:
-      only:
-        - image: Visual Studio 2022
-    install:
-      - cmd: choco install mingw make curl openssl sqlite hiredis 2>nul || ver>nul
-    build_script:
-      # Windows porting note: needs mingw32-make, remove liburing, adjust paths
-      - cmd: mingw32-make release 2>nul || echo Windows build needs porting
-    after_test:
-      - cmd: |
-          set PKG=varian-windows-x64
-          mkdir dist\%PKG% 2>nul
-          copy vn.exe dist\%PKG%\ 2>nul
-          copy libvarian.a dist\%PKG%\ 2>nul
-          xcopy /E /I include dist\%PKG%\include 2>nul
-          xcopy /E /I vn_modules dist\%PKG%\vn_modules 2>nul
-          copy README.md dist\%PKG%\ 2>nul
-          copy LICENSE dist\%PKG%\ 2>nul
-          cd dist && 7z a -tzip ..\%PKG%.zip %PKG%\
-          cd ..
-          certutil -hashfile %PKG%.zip SHA256 | findstr /v "hash" > %PKG%.zip.sha256 2>nul || echo nohash > %PKG%.zip.sha256
-    artifacts:
-      - path: varian-windows-x64.zip
-        name: varian-windows-x64
-      - path: varian-windows-x64.zip.sha256
-        name: varian-windows-x64-sha256
+build_script:
+  - sh: make -j$(nproc) release
 
-# ── GitHub Release on tag ──
-# One-time setup: set GITHUB_TOKEN as a secure env var in AppVeyor project settings.
-# Then cut a release:  git tag v0.1.0 && git push origin v0.1.0
-deploy:
-  - provider: GitHub
-    description: |
-      Varian v0.1.0 — compiled, concurrent, batteries-included language.
+after_build:
+  - sh: |
+      set -e
+      PKG=varian-linux-x64
+      rm -rf dist && mkdir -p dist/$PKG
+      cp vn libvarian.a dist/$PKG/
+      cp -r include vn_modules dist/$PKG/
+      cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
+      tar -czf $PKG.tar.gz -C dist $PKG
+      sha256sum $PKG.tar.gz | tee $PKG.tar.gz.sha256
 
-      Downloads:
-      - `varian-linux-x64.tar.gz` — Linux binary + toolchain
-      - `varian-macos-x64.tar.gz` — macOS binary + toolchain (experimental)
-      - `varian-windows-x64.zip` — Windows binary + toolchain (experimental)
+      # Upload to GitHub Release via API (like crush does)
+      TAG="$APPVEYOR_REPO_TAG_NAME"
+      if [ -z "$TAG" ]; then echo "No tag — skipping release upload"; exit 0; fi
 
-      What's in the box:
-      - `vn` — the language runtime, REPL, and CLI
-      - `libvarian.a` + `include/` — static library for `vn build --release`
-      - `vn_modules/` — standard library prelude (zenith, lumen, shield, auth, db, queue, mail, storage, observe, validate)
+      echo "Fetching release for tag $TAG..."
+      REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+        "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
 
-      Toolchain commands:
-      - `vn run`, `vn fmt`, `vn test`, `vn lint`, `vn lsp`
-      - `vn dev`, `vn build`, `vn build --release`
-      - `vn add`, `vn install`, `vn publish`, `vn search`
-      - `vn new`, `vn lumen new`, `vn lumen build`
+      # If release doesn't exist yet, create it
+      if echo "$REL" | grep -q '"message": "Not Found"'; then
+        echo "Creating new release for $TAG..."
+        REL=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Varian v${TAG#v} — compiled, concurrent, batteries-included language.\\n\\nSee README.md and docs/ for full reference.\"}" \
+          "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases")
+      fi
 
-      See README.md and docs/ for full reference.
-    auth_token: $(GITHUB_TOKEN)
-    artifact: >-
-      varian-linux-x64, varian-linux-x64-sha256,
-      varian-macos-x64, varian-macos-x64-sha256,
-      varian-windows-x64, varian-windows-x64-sha256
-    draft: false
-    prerelease: true
-    force_update: true
-    on:
-      APPVEYOR_REPO_TAG: true
+      REL_ID=$(echo "$REL" | grep -o '"id": [0-9]*' | head -1 | cut -d' ' -f2)
+      if [ -z "$REL_ID" ]; then echo "Failed to get release ID"; exit 1; fi
+      echo "Release ID: $REL_ID"
+
+      # Upload tarball
+      echo "Uploading $PKG.tar.gz..."
+      curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Content-Type: application/gzip" \
+        --data-binary @"$PKG.tar.gz" \
+        "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
+
+      # Upload checksum
+      echo "Uploading $PKG.tar.gz.sha256..."
+      curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+        -H "Content-Type: text/plain" \
+        --data-binary @"$PKG.tar.gz.sha256" \
+        "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
+
+      echo "Release published."
+
+artifacts:
+  - path: varian-linux-x64.tar.gz
+    name: varian-linux-x64
+  - path: varian-linux-x64.tar.gz.sha256
+    name: varian-linux-x64-sha256
