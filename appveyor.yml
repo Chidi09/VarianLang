@@ -73,8 +73,7 @@ deploy:
       - `vn new`, `vn lumen new`, `vn lumen build`
 
       See README.md and docs/ for full reference.
-    auth_token:
-      secure: REPLACE_WITH_APPVEYOR_ENCRYPTED_GITHUB_TOKEN
+    auth_token: $(GITHUB_TOKEN)
     artifact: varian-linux-x64, varian-linux-x64-sha256
     draft: false
     prerelease: false
