@@ -163,50 +163,84 @@
   </a>
 </div>
 
-<p>Zenith (<code>vn_modules/zenith.vn</code>) and the comptime ORM (<code>vn_modules/db.vn</code>) are Varian source files —
-not native C modules. Every file under <code>vn_modules/</code> is automatically concatenated as a prelude
-when you run your program, so <code>ZenithApp</code>, <code>new_app()</code>, etc. are always in scope — <strong>no <code>import</code> needed</strong>.</p>
+<p>Zenith (<code>vn_modules/zenith.vn</code>) and the comptime ORM (<code>vn_modules/db.vn</code>) are Varian source files — not native C modules. Every file under <code>vn_modules/</code> is automatically concatenated as a prelude when you run your program, so <code>ZenithApp</code>, <code>new_app()</code>, etc. are always in scope — <strong>no <code>import</code> needed</strong>.</p>
 
-<h2>Why Zenith?</h2>
+<!-- ============ WHY ZENITH ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Zenith?</h2>
 <p>Zenith's pitch is not "fastest raw throughput" (Go and Rust win there). It's <strong>everything a real web app needs, built in, secure by default, in one binary, with zero dependency tree.</strong></p>
 
 <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);padding:var(--space-6);margin:var(--space-6) 0;">
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);font-size:var(--text-sm);">
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">Batteries included</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">inventory_2</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Batteries included</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;">SQLite, Postgres and Redis drivers, JWT auth, password hashing, request validation, HTML templates, signed sessions, OpenAPI docs — all built in. No <code>node_modules</code>, no supply-chain to audit.</p>
     </div>
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">No imports, no wiring</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">flash_on</span>
+        <h4 style="margin:0;font-size:var(--text-base);">No imports, no wiring</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;">Write <code>new_app()</code> and <code>app.get(...)</code> — no <code>require</code>, no plugin registration, no <code>app.use(...)</code> ceremony. Everything is automatically in scope.</p>
     </div>
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">Secure by default</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">shield</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Secure by default</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;">Templates HTML-escape by default. Session cookies are <code>HttpOnly; SameSite=Lax</code> and JWT-signed. DB drivers use bound parameters. No opt-in required.</p>
     </div>
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">Comptime ORM</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">neurology</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Comptime ORM</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;">Query shapes are built at compile time — SQL strings are checked and baked into the binary before your program ever runs. <code>bind()</code> throws on param count mismatch.</p>
     </div>
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">OpenAPI for free</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">description</span>
+        <h4 style="margin:0;font-size:var(--text-base);">OpenAPI for free</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;">The <code>summary</code> you pass to each route feeds a generated OpenAPI spec. No decorator soup, no separate spec file to keep in sync.</p>
     </div>
 
     <div>
-      <h4 style="margin-bottom:var(--space-2);font-size:var(--text-base);">Deploys as one binary</h4>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">package_2</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Deploys as one binary</h4>
+      </div>
       <p style="color:var(--text-secondary);line-height:1.6;"><code>vn build --release</code> produces a single hardened executable. No runtime to install, no lockfile to reconcile, no "works on my machine."</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">track_changes</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Multi-core out the box</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Clusters across threads with independent VMs, SIMD parsing, <code>writev</code> single-syscall responses, and a per-request arena that skips GC entirely.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">code</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Python escape hatch</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Anything not built in (S3, niche SDKs) is one <code>python.run()</code> call away. "Batteries included" never becomes "stuck when you need something exotic."</p>
     </div>
 
   </div>
 </div>
 
-<h2>Quick start</h2>
+<!-- ============ QUICK START ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">play_arrow</span> Quick start</h2>
 <p>Create a server, register a route, start listening. That's it.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -218,8 +252,14 @@ app.<span class="token-function">get</span>(<span class="token-string">"/"</span
 app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
 </div>
 
-<h2>Building an app</h2>
-<p>A more complete example with middleware, route params, and JSON responses:</p>
+<div style="background:color-mix(in srgb, var(--accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--accent) 20%, transparent);border-radius:var(--radius-lg);padding:var(--space-4);margin-bottom:var(--space-6);display:flex;align-items:flex-start;gap:var(--space-3);">
+  <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">terminal</span>
+  <div><strong style="color:var(--text-primary);">Run it:</strong> <code style="background:var(--bg-main);padding:2px 8px;border-radius:4px;">./vn run server.vn</code> — then open <code>http://localhost:8080</code></div>
+</div>
+
+<!-- ============ BUILDING AN APP ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">construction</span> Building an app</h2>
+<p>A more complete example with middleware, route params, CRUD operations, and JSON responses:</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">app.vn</span></div>
@@ -228,13 +268,15 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
 
 <span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
 
+<span class="token-comment">// Logging middleware</span>
 app.<span class="token-function">add_middleware</span>(|req, next| {
     <span class="token-function">print</span>(<span class="token-string">"saw:"</span>, req.method, req.path)
     <span class="token-keyword">return</span> <span class="token-function">next</span>(req)
 })
 
+<span class="token-comment">// Routes</span>
 app.<span class="token-function">get</span>(<span class="token-string">"/"</span>, |req| {
-    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"Welcome!"</span>, content_type: <span class="token-string">"text/plain"</span> }
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"Welcome!"</span> }
 }, <span class="token-string">"Root"</span>)
 
 app.<span class="token-function">get</span>(<span class="token-string">"/api/users/:id"</span>, |req| {
@@ -243,97 +285,167 @@ app.<span class="token-function">get</span>(<span class="token-string">"/api/use
             <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-function">json_encode</span>(users[i]) }
         }
     }
-    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">404</span>, body: <span class="token-string">"User not found"</span> }
-}, <span class="token-string">"Get user by ID"</span>)
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">404</span>, body: <span class="token-string">"Not found"</span> }
+}, <span class="token-string">"Get user"</span>)
 
 app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
 </div>
 
 <p><code>new_app()</code> returns an independent <code>ZenithApp</code> struct — you can run several apps with separate route tables in the same program. Route params (<code>:id</code>) are available via <code>req.params.id</code>. The third argument to <code>app.get()</code> is a <code>summary</code> string used only for auto-generated OpenAPI docs.</p>
 
-<h2>Routing &amp; performance</h2>
-<p>Routes are stored in a <strong>radix/segment trie</strong> (<code>RadixNode</code> in <code>zenith.vn</code>) keyed on <code>METHOD + path</code>. A lookup costs one trie descent per path segment — not scanning every registered route. Param segments (<code>:id</code>) match as wildcard child nodes.</p>
+<!-- ============ ROUTING ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">signpost_2</span> Routing &amp; HTTP methods</h2>
+<p>Zenith supports all standard HTTP methods. Routes are stored in a <strong>radix/segment trie</strong> (<code>RadixNode</code> in <code>zenith.vn</code>) keyed on <code>METHOD + path</code>. A lookup costs one trie descent per path segment — not scanning every registered route.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">routes.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+
+<span class="token-comment">// GET, POST, PUT, DELETE — all standard methods supported</span>
+app.<span class="token-function">get</span>(<span class="token-string">"/items"</span>, |req| { <span class="token-comment">/* list */</span> }, <span class="token-string">"List items"</span>)
+app.<span class="token-function">post</span>(<span class="token-string">"/items"</span>, |req| { <span class="token-comment">/* create */</span> }, <span class="token-string">"Create item"</span>)
+app.<span class="token-function">put</span>(<span class="token-string">"/items/:id"</span>, |req| { <span class="token-comment">/* update */</span> }, <span class="token-string">"Update item"</span>)
+app.<span class="token-function">delete</span>(<span class="token-string">"/items/:id"</span>, |req| { <span class="token-comment">/* delete */</span> }, <span class="token-string">"Delete item"</span>)
+
+<span class="token-comment">// Route groups with shared prefix and middleware</span>
+<span class="token-keyword">let</span> admin = app.<span class="token-function">group</span>(<span class="token-string">"/admin"</span>)
+admin.<span class="token-function">add_middleware</span>(<span class="token-function">auth_middleware</span>)
+admin.<span class="token-function">get</span>(<span class="token-string">"/dashboard"</span>, |req| { <span class="token-comment">/* admin only */</span> })
+
+app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
+</div>
+
+<h3>Route params &amp; query strings</h3>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">params.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-comment">// Path params: /users/42 → req.params.id == "42"</span>
+app.<span class="token-function">get</span>(<span class="token-string">"/users/:id"</span>, |req| {
+    <span class="token-keyword">let</span> id = req.params.id
+    <span class="token-keyword">let</span> page = <span class="token-function">query</span>(req, <span class="token-string">"page"</span>, <span class="token-string">"1"</span>)  <span class="token-comment">// ?page=2 → "2"</span>
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"User "</span> + id + <span class="token-string">", page "</span> + page }
+})</pre></div>
+</div>
+
 <p>With the <strong>per-request struct arena</strong> and <strong>computed-goto bytecode dispatch</strong>, Zenith achieves <strong>~10,500 req/s</strong> single-process on a plaintext benchmark — a ~40% improvement over base GC-heap allocation.</p>
 
-<h2>Middleware</h2>
+<!-- ============ MIDDLEWARE ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">layers</span> Middleware</h2>
 <p>Each middleware is a closure <code>|req, next| { ... return next(req) }</code> that wraps the next handler in the chain. There's no global state — the whole chain is passed explicitly through <code>_run_middleware</code>, so multiple <code>app</code> instances don't interfere.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">middleware.vn</span></div>
-  <div class="code-block-body"><pre><span class="token-comment">// Logging middleware</span>
+  <div class="code-block-body"><pre><span class="token-comment">// Custom logging middleware</span>
 app.<span class="token-function">add_middleware</span>(|req, next| {
     <span class="token-function">print</span>(req.method, req.path)
     <span class="token-keyword">return</span> <span class="token-function">next</span>(req)
 })
 
-<span class="token-comment">// Security middleware from shield.vn</span>
+<span class="token-comment">// Timing middleware</span>
+app.<span class="token-function">add_middleware</span>(|req, next| {
+    <span class="token-keyword">let</span> start = <span class="token-function">time_now</span>()
+    <span class="token-keyword">let</span> resp = <span class="token-function">next</span>(req)
+    <span class="token-function">print</span>(<span class="token-string">"took"</span>, <span class="token-function">time_now</span>() - start, <span class="token-string">"ms"</span>)
+    <span class="token-keyword">return</span> resp
+})
+
+<span class="token-comment">// Security: CORS + rate limiting (from shield.vn)</span>
 app.<span class="token-function">add_middleware</span>(<span class="token-function">cors</span>([<span class="token-string">"*"</span>], [<span class="token-string">"GET"</span>, <span class="token-string">"POST"</span>], [<span class="token-string">"Content-Type"</span>]))
-app.<span class="token-function">add_middleware</span>(<span class="token-function">rate_limit</span>(<span class="token-number">100</span>, <span class="token-number">60000</span>))</pre></div>
+app.<span class="token-function">add_middleware</span>(<span class="token-function">rate_limit</span>(<span class="token-number">100</span>, <span class="token-number">60000</span>))  <span class="token-comment">// 100 req/min</span></pre></div>
 </div>
 
-<p>Ready-made middleware from <code>vn_modules/shield.vn</code>: <code>cors(origins, methods, headers)</code>, <code>csrf()</code>, <code>rate_limit(max_reqs, window_ms)</code>, and <code>rate_limit_redis(conn, max_reqs, window_seconds)</code>.</p>
+<p>Ready-made middleware from <code>vn_modules/shield.vn</code>:</p>
+<ul>
+  <li><code>cors(origins, methods, headers)</code> — CORS headers</li>
+  <li><code>csrf()</code> — CSRF token validation</li>
+  <li><code>rate_limit(max_reqs, window_ms)</code> — in-memory rate limiter</li>
+  <li><code>rate_limit_redis(conn, max_reqs, window_seconds)</code> — Redis-backed rate limiter</li>
+</ul>
 
-<h2>Global error handler</h2>
+<!-- ============ ERROR HANDLING ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">error</span> Error handling</h2>
 <p>Catch uncaught errors from any middleware or route handler with <code>app.on_error()</code>:</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
-  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">error-handler.vn</span></div>
-  <div class="code-block-body"><pre>app.<span class="token-function">on_error</span>(|err, req| {
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">errors.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-comment">// Global error handler — catches all uncaught errors</span>
+app.<span class="token-function">on_error</span>(|err, req| {
+    <span class="token-function">print</span>(<span class="token-string">"ERROR:"</span>, err.kind, err.message)
     <span class="token-keyword">return</span> <span class="token-type">Response</span> {
         status: <span class="token-number">500</span>,
-        body: <span class="token-function">json_encode</span>({ error: err.message, kind: err.kind }),
+        body: <span class="token-function">json_encode</span>({
+            error: err.message,
+            kind: err.kind,
+            hint: err.hint
+        }),
         content_type: <span class="token-string">"application/json"</span>
     }
-})</pre></div>
+})
+
+<span class="token-comment">// Without a custom handler, returns clean JSON 500 that never leaks internals</span></pre></div>
 </div>
 
-<p>Without a custom handler, Zenith returns a clean JSON 500 response that never leaks internals.</p>
-
-<h2>Request &amp; response helpers</h2>
+<!-- ============ REQUEST / RESPONSE ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">swap_horiz</span> Request &amp; response helpers</h2>
 
 <h3>Reading from the request</h3>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">request.vn</span></div>
-  <div class="code-block-body"><pre><span class="token-function">query</span>(req, <span class="token-string">"page"</span>, <span class="token-string">"1"</span>)     <span class="token-comment">// ?page=2 → "2"</span>
-<span class="token-function">query_params</span>(req)              <span class="token-comment">// all query params as a struct</span>
-<span class="token-function">form</span>(req, <span class="token-string">"email"</span>, <span class="token-string">""</span>)       <span class="token-comment">// form body field</span>
-<span class="token-function">form_params</span>(req)               <span class="token-comment">// all form fields as a struct</span>
-<span class="token-function">cookie</span>(req, <span class="token-string">"sid"</span>, <span class="token-string">""</span>)      <span class="token-comment">// a single cookie</span>
-<span class="token-function">cookies</span>(req)                   <span class="token-comment">// all cookies as a struct</span></pre></div>
+  <div class="code-block-body"><pre><span class="token-function">query</span>(req, <span class="token-string">"page"</span>, <span class="token-string">"1"</span>)       <span class="token-comment">// ?page=2 → "2" (with default)</span>
+<span class="token-function">query_params</span>(req)                <span class="token-comment">// all query params as a struct</span>
+<span class="token-function">form</span>(req, <span class="token-string">"email"</span>, <span class="token-string">""</span>)         <span class="token-comment">// form body field with default</span>
+<span class="token-function">form_params</span>(req)                 <span class="token-comment">// all form fields as a struct</span>
+<span class="token-function">cookie</span>(req, <span class="token-string">"sid"</span>, <span class="token-string">""</span>)        <span class="token-comment">// single cookie by name</span>
+<span class="token-function">cookies</span>(req)                     <span class="token-comment">// all cookies as a struct</span></pre></div>
 </div>
 
 <h3>Building responses</h3>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">response.vn</span></div>
-  <div class="code-block-body"><pre><span class="token-function">redirect</span>(<span class="token-string">"/login"</span>)                     <span class="token-comment">// 302 with Location</span>
-<span class="token-function">json_response</span>(value, <span class="token-number">200</span>)              <span class="token-comment">// JSON body + content_type</span>
-<span class="token-function">with_header</span>(resp, <span class="token-string">"X-Trace"</span>, id)      <span class="token-comment">// copy of resp with extra header</span>
-<span class="token-function">set_cookie</span>(resp, <span class="token-string">"sid"</span>, v, <span class="token-keyword">null</span>)     <span class="token-comment">// Set-Cookie: ...; HttpOnly; SameSite=Lax</span>
-<span class="token-function">clear_cookie</span>(resp, <span class="token-string">"sid"</span>)             <span class="token-comment">// expires the cookie</span></pre></div>
+  <div class="code-block-body"><pre><span class="token-function">redirect</span>(<span class="token-string">"/login"</span>)                       <span class="token-comment">// 302 redirect</span>
+<span class="token-function">redirect_with</span>(<span class="token-string">"/login"</span>, <span class="token-number">301</span>)             <span class="token-comment">// 301 permanent redirect</span>
+<span class="token-function">json_response</span>(value, <span class="token-number">200</span>)                <span class="token-comment">// JSON response</span>
+<span class="token-function">html_response</span>(<span class="token-string">"&lt;h1&gt;OK&lt;/h1&gt;"</span>)              <span class="token-comment">// HTML response</span>
+<span class="token-function">with_header</span>(resp, <span class="token-string">"X-Trace"</span>, id)        <span class="token-comment">// add header to response</span>
+<span class="token-function">set_cookie</span>(resp, <span class="token-string">"sid"</span>, v, <span class="token-keyword">null</span>)       <span class="token-comment">// Set-Cookie: HttpOnly; SameSite=Lax</span>
+<span class="token-function">clear_cookie</span>(resp, <span class="token-string">"sid"</span>)               <span class="token-comment">// expire cookie</span></pre></div>
 </div>
 
-<h3>Signed sessions (JWT-backed)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:18px;color:var(--accent);vertical-align:middle;">key</span> Signed sessions (JWT-backed)</h3>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sessions.vn</span></div>
-  <div class="code-block-body"><pre><span class="token-keyword">let</span> resp = <span class="token-function">session_set</span>(resp, data, secret, <span class="token-keyword">null</span>)   <span class="token-comment">// set signed session cookie</span>
-<span class="token-keyword">let</span> data = <span class="token-function">session_get</span>(req, secret)                    <span class="token-comment">// struct or null if forged</span>
-<span class="token-keyword">let</span> resp = <span class="token-function">session_clear</span>(resp)                        <span class="token-comment">// log out</span></pre></div>
+  <div class="code-block-body"><pre><span class="token-keyword">let</span> secret = <span class="token-string">"my-signing-secret"</span>
+
+<span class="token-comment">// Store data in a signed session cookie</span>
+<span class="token-keyword">let</span> resp = <span class="token-function">session_set</span>(resp, { user_id: <span class="token-number">42</span>, role: <span class="token-string">"admin"</span> }, secret, <span class="token-keyword">null</span>)
+
+<span class="token-comment">// Read it back — returns null if absent or forged</span>
+<span class="token-keyword">let</span> data = <span class="token-function">session_get</span>(req, secret)
+<span class="token-keyword">if</span> data != <span class="token-keyword">null</span> { <span class="token-function">print</span>(data.user_id) }
+
+<span class="token-comment">// Log out</span>
+<span class="token-keyword">let</span> resp = <span class="token-function">session_clear</span>(resp)</pre></div>
 </div>
 
 <p>A forged/absent secret yields <code>null</code> — tamper-evident by design.</p>
 
-<h2>HTML templates</h2>
-<p><code>render(template, ctx)</code> renders an ERB-style template against a context struct.
-<code>render_response(template, ctx)</code> wraps the result in a <code>text/html</code> Response.</p>
+<!-- ============ HTML TEMPLATES ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">web</span> HTML templates</h2>
+<p><code>render(template, ctx)</code> renders an ERB-style template against a context struct. <code>render_response(template, ctx)</code> wraps the result in a <code>text/html</code> Response.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">templates.vn</span></div>
-  <div class="code-block-body"><pre><span class="token-function">render</span>(<span class="token-string">"Hi &lt;%= name %&gt;"</span>, ctx)                       <span class="token-comment">// HTML-escaped</span>
-<span class="token-function">render</span>(<span class="token-string">"&lt;%- raw_html %&gt;"</span>, ctx)                       <span class="token-comment">// raw (trusted only)</span>
-<span class="token-function">render</span>(<span class="token-string">"&lt;% for x in xs %&gt;[&lt;%= x %&gt;]&lt;% endfor %&gt;"</span>, ctx)  <span class="token-comment">// loop</span></pre></div>
+  <div class="code-block-body"><pre><span class="token-function">render</span>(<span class="token-string">"Hi &lt;%= name %&gt;"</span>, ctx)                         <span class="token-comment">// HTML-escaped</span>
+<span class="token-function">render</span>(<span class="token-string">"&lt;%- raw_html %&gt;"</span>, ctx)                         <span class="token-comment">// raw (trusted only)</span>
+<span class="token-function">render</span>(<span class="token-string">"&lt;% for x in xs %&gt;[&lt;%= x %&gt;]&lt;% endfor %&gt;"</span>, ctx)    <span class="token-comment">// loop</span>
+
+<span class="token-comment">// Full page render as response</span>
+app.<span class="token-function">get</span>(<span class="token-string">"/profile"</span>, |req| {
+    <span class="token-keyword">return</span> <span class="token-function">render_response</span>(<span class="token-string">"&lt;h1&gt;Welcome, &lt;%= name %&gt;&lt;/h1&gt;"</span>, { name: <span class="token-string">"Ada"</span> })
+})</pre></div>
 </div>
 
 <table>
@@ -341,36 +453,105 @@ app.<span class="token-function">add_middleware</span>(<span class="token-functi
     <tr><th>Delimiter</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>&lt;%= expr %&gt;</code></td><td>Interpolate, <strong>HTML-escaped</strong> (default, safe)</td></tr>
+    <tr><td><code>&lt;%= expr %&gt;</code></td><td><span class="material-symbols-outlined" style="font-size:14px;color:var(--accent);vertical-align:middle;">check_circle</span> Interpolate, <strong>HTML-escaped</strong> (safe by default)</td></tr>
     <tr><td><code>&lt;%- expr %&gt;</code></td><td>Interpolate raw/unescaped (trusted content only)</td></tr>
     <tr><td><code>&lt;% if cond %&gt;...&lt;% endif %&gt;</code></td><td>Conditional block</td></tr>
     <tr><td><code>&lt;% for x in items %&gt;...&lt;% endfor %&gt;</code></td><td>Loop over array</td></tr>
   </tbody>
 </table>
 
-<h2>Testing without a socket</h2>
+<!-- ============ STATIC FILES ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">folder</span> Serving static files</h2>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">static.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+
+<span class="token-comment">// Serve a directory at a route prefix</span>
+app.<span class="token-function">serve_static</span>(<span class="token-string">"/assets"</span>, <span class="token-string">"./public"</span>)
+
+<span class="token-comment">// Now /assets/style.css serves ./public/style.css</span>
+app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
+</div>
+
+<p><code>serve_static(route_prefix, directory)</code> maps URL paths to files on disk. Directory traversal is blocked. Missing files return 404 — no framework internals exposed.</p>
+
+<!-- ============ VALIDATION ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">fact_check</span> Request validation</h2>
+<p>Declarative decorators on struct fields — no Zod, no Joi, no JSON Schema:</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">validation.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-comment">// Validation decorators go directly on struct fields</span>
+<span class="token-keyword">struct</span> <span class="token-type">SignupInput</span> {
+    <span class="token-attr">@is_email</span> email: <span class="token-type">string</span>,
+    <span class="token-attr">@min_len(8)</span> password: <span class="token-type">string</span>,
+    <span class="token-attr">@is_uuid</span> invite_code: <span class="token-type">string</span>,
+    <span class="token-attr">@is_url</span> website: <span class="token-type">string</span>
+}
+
+<span class="token-comment">// Using validated input in a handler</span>
+app.<span class="token-function">post</span>(<span class="token-string">"/signup"</span>, |req| {
+    <span class="token-keyword">let</span> input = <span class="token-function">form_params</span>(req)
+    <span class="token-comment">// If input is invalid, it throws automatically</span>
+    <span class="token-comment">// If it passes, all fields are validated and sanitized</span>
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">201</span>, body: <span class="token-string">"Created"</span> }
+})</pre></div>
+</div>
+
+<!-- ============ TESTING ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">science</span> Testing</h2>
 <p>Test route behavior directly with <code>app.handle(req)</code> — no real HTTP socket involved:</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">test.vn</span></div>
   <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">fake_req</span>(method, path) {
-    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>([<span class="token-string">"method"</span>, <span class="token-string">"path"</span>, <span class="token-string">"body"</span>, <span class="token-string">"json"</span>], [method, path, <span class="token-string">""</span>, <span class="token-keyword">null</span>])
+    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"method"</span>, <span class="token-string">"path"</span>, <span class="token-string">"body"</span>, <span class="token-string">"json"</span>],
+        [method, path, <span class="token-string">""</span>, <span class="token-keyword">null</span>]
+    )
 }
-<span class="token-function">print</span>(app.<span class="token-function">handle</span>(<span class="token-function">fake_req</span>(<span class="token-string">"GET"</span>, <span class="token-string">"/api/users/2"</span>)).body)</pre></div>
+
+<span class="token-comment">// Test a route directly — no socket, no server needed</span>
+<span class="token-keyword">let</span> resp = app.<span class="token-function">handle</span>(<span class="token-function">fake_req</span>(<span class="token-string">"GET"</span>, <span class="token-string">"/api/users/2"</span>))
+<span class="token-function">print</span>(resp.status, resp.body)
+
+<span class="token-comment">// Assertions in tests</span>
+<span class="token-function">assert</span>(resp.status == <span class="token-number">200</span>)
+<span class="token-function">assert</span>(resp.body.<span class="token-function">contains</span>(<span class="token-string">"Bob"</span>))</pre></div>
 </div>
 
 <p><code>app.handle(req)</code> runs routing + middleware + handler synchronously. <code>app.listen(port)</code> wraps <code>app.handle</code> in <code>http.serve(port, |req| { return app.handle(req) })</code>.</p>
 
-<h2>OpenAPI docs</h2>
+<!-- ============ OPENAPI ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">description</span> OpenAPI docs</h2>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">docs.vn</span></div>
   <div class="code-block-body"><pre>app.<span class="token-function">enable_docs</span>(<span class="token-string">"/docs"</span>)</pre></div>
 </div>
 
-<p>Adds two routes: <code>GET /openapi.json</code> (the spec, built from real structs and serialized via <code>json_encode</code>) and <code>GET /docs</code> (Swagger UI). Only routes registered <em>before</em> <code>enable_docs()</code> with a non-empty <code>summary</code> appear in the spec.</p>
+<p>Adds two routes: <code>GET /openapi.json</code> (the spec, built from real structs and serialized via <code>json_encode</code>) and <code>GET /docs</code> (Swagger UI page). Only routes registered <em>before</em> <code>enable_docs()</code> with a non-empty <code>summary</code> appear in the spec.</p>
 
-<h2>The comptime ORM</h2>
+<!-- ============ WEBSOCKETS ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">wifi</span> WebSockets</h2>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">ws.vn</span></div>
+  <div class="code-block-body"><pre>app.<span class="token-function">ws</span>(<span class="token-string">"/live"</span>, |ws| {
+    <span class="token-comment">// Handle WebSocket messages</span>
+    <span class="token-keyword">let</span> msg = ws.<span class="token-function">read</span>()
+    <span class="token-keyword">if</span> msg != <span class="token-string">""</span> {
+        <span class="token-function">print</span>(<span class="token-string">"received:"</span>, msg)
+        ws.<span class="token-function">write</span>(<span class="token-string">"Echo: "</span> + msg)
+    }
+})</pre></div>
+</div>
+
+<p>Zenith handles the WebSocket upgrade (RFC 6455) automatically when you register a <code>ws(path, handler)</code> route. The handler receives a WebSocket struct with <code>read()</code> and <code>write()</code> methods. Server-sent events (SSE) are also supported via the standard response streaming API.</p>
+
+<!-- ============ COMPTIME ORM ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">database</span> The comptime ORM</h2>
 <p>The query builder in <code>vn_modules/db.vn</code> separates <strong>shape</strong> (table, fields, WHERE clauses) from <strong>values</strong> (the actual data). Since the shape of a query is almost always static, it can run inside <code>comptime { }</code> — the SQL string is built and checked at compile time, then baked into the binary at zero runtime cost.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -386,8 +567,11 @@ app.<span class="token-function">add_middleware</span>(<span class="token-functi
 <span class="token-comment">// compiled.sql == "SELECT id, name, email FROM users WHERE id = ? AND status = ? LIMIT 10"</span>
 
 <span class="token-keyword">let</span> conn = sqlite.<span class="token-function">connect</span>(<span class="token-string">":memory:"</span>)
-<span class="token-keyword">let</span> bound = <span class="token-function">bind</span>(compiled, [<span class="token-number">1</span>, <span class="token-string">"active"</span>])   <span class="token-comment">// throws if param count mismatch</span>
-<span class="token-keyword">let</span> rows = <span class="token-function">run_sqlite</span>(bound, conn)</pre></div>
+<span class="token-keyword">let</span> bound = <span class="token-function">bind</span>(compiled, [<span class="token-number">1</span>, <span class="token-string">"active"</span>])   <span class="token-comment">// throws on count mismatch</span>
+<span class="token-keyword">let</span> rows = <span class="token-function">run_sqlite</span>(bound, conn)
+
+<span class="token-comment">// Without comptime (for dynamic shapes):</span>
+<span class="token-keyword">let</span> q = <span class="token-function">select</span>(<span class="token-string">"users"</span>).<span class="token-function">fields</span>([<span class="token-string">"id"</span>, <span class="token-string">"name"</span>]).<span class="token-function">build</span>()  <span class="token-comment">// works at runtime too</span></pre></div>
 </div>
 
 <h3>Query builder API</h3>
@@ -396,19 +580,37 @@ app.<span class="token-function">add_middleware</span>(<span class="token-functi
     <tr><th>Method</th><th>Description</th></tr>
   </thead>
   <tbody>
-    <tr><td><code>select(table)</code></td><td>Start building a SELECT query</td></tr>
+    <tr><td><code>select(table)</code></td><td><span class="material-symbols-outlined" style="font-size:14px;color:var(--accent);vertical-align:middle;">play_arrow</span> Start building a SELECT query</td></tr>
     <tr><td><code>.fields(["id", "name"])</code></td><td>Select specific columns</td></tr>
-    <tr><td><code>.where(field, op)</code></td><td>Add WHERE clause (value bound later)</td></tr>
+    <tr><td><code>.where(field, op)</code></td><td>Add WHERE clause (value bound later via <code>bind</code>)</td></tr>
     <tr><td><code>.limit(n)</code> / <code>.offset(n)</code></td><td>Pagination</td></tr>
     <tr><td><code>.paginate(page, per_page)</code></td><td>Page-based pagination helper</td></tr>
     <tr><td><code>.cursor_paginate(field, cursor, limit)</code></td><td>Cursor-based pagination</td></tr>
-    <tr><td><code>.use_dialect("postgres")</code></td><td>Switch to $1, $2 placeholders</td></tr>
+    <tr><td><code>.order_by(field, dir)</code></td><td>Sort results</td></tr>
+    <tr><td><code>.use_dialect("postgres")</code></td><td>Switch to <code>$1, $2</code> placeholders</td></tr>
+    <tr><td><code>.find_by_key(field)</code></td><td>Shorthand for <code>.where(field, "=").limit(1)</code></td></tr>
     <tr><td><code>.build()</code></td><td>Produce <code>CompiledQuery { sql, param_count }</code></td></tr>
   </tbody>
 </table>
-<p><code>bind(compiled, params)</code> attaches runtime values and validates count. <code>run_sqlite(bound, conn)</code> / <code>run_postgres(bound, conn)</code> execute. You don't have to use <code>comptime</code> — <code>select(...)...build()</code> works at runtime too if the shape depends on dynamic input.</p>
+<p><code>bind(compiled, params)</code> attaches runtime values and validates count. <code>run_sqlite(bound, conn)</code> / <code>run_postgres(bound, conn)</code> execute.</p>
 
-<h2>Lumen integration</h2>
+<!-- ============ SMTP / EMAIL ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">mail</span> Sending email</h2>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">email.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-function">smtp.send</span>({
+    to: <span class="token-string">"user@example.com"</span>,
+    from: <span class="token-string">"noreply@myapp.com"</span>,
+    subject: <span class="token-string">"Welcome!"</span>,
+    body: <span class="token-string">"Thanks for signing up."</span>
+})</pre></div>
+</div>
+
+<p>SMTP is built into the runtime — no separate mailer library, no API key, no third-party service required. The <code>smtp.send</code> function blocks header injection and validates addresses.</p>
+
+<!-- ============ LUMEN ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">web</span> Lumen integration</h2>
 <p><a href="/lumen">Lumen</a> is the server-driven UI framework built on top of Zenith. A Lumen component renders HTML on the server (via Zenith routes), and a tiny embedded JS runtime forwards browser events over a WebSocket so the server re-renders and morphs the DOM.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -420,16 +622,20 @@ app.<span class="token-function">add_middleware</span>(<span class="token-functi
 <ul>
   <li><code>GET /counter</code> — serves initial HTML + client JS shell</li>
   <li><code>GET /counter/live</code> — WebSocket upgrade</li>
-  <li>Events: <code>{"t":"event","h":"handler","v":"value"}</code> → <code>{"t":"html","html":"..."}</code></li>
+  <li>Events flow as JSON: <code>{"t":"event","h":"handler","v":"value"}</code> → <code>{"t":"html","html":"..."}</code></li>
 </ul>
 
-<h2>Extending via Python bridge</h2>
+<!-- ============ PYTHON BRIDGE ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> Extending via Python bridge</h2>
 <p>Anything not built in (S3, niche SDKs) is one <code>python.run()</code> call away:</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">extend.vn</span></div>
   <div class="code-block-body"><pre><span class="token-keyword">let</span> s3 = python.<span class="token-function">run</span>(<span class="token-string">"boto3"</span>, <span class="token-string">"client"</span>, [<span class="token-string">"s3"</span>])
-<span class="token-keyword">let</span> buckets = s3.<span class="token-function">list_buckets</span>()</pre></div>
+<span class="token-keyword">let</span> buckets = s3.<span class="token-function">list_buckets</span>()
+
+<span class="token-comment">// Or generate an image with Pillow</span>
+<span class="token-keyword">let</span> img = python.<span class="token-function">run</span>(<span class="token-string">"PIL.Image"</span>, <span class="token-string">"new"</span>, [<span class="token-string">"RGB"</span>, [<span class="token-number">100</span>, <span class="token-number">100</span>], [<span class="token-number">255</span>, <span class="token-number">0</span>, <span class="token-number">0</span>]])</pre></div>
 </div>
 
     </main>
