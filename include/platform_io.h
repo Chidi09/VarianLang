@@ -71,8 +71,14 @@ static inline int epoll_wait(int kq, struct epoll_event *events, int max, int ti
 
 /* io_uring stubs — always fail, causing graceful fallback to epoll/kqueue */
 struct io_uring { int _dummy; };
-struct io_uring_cqe { int _dummy; };
+struct io_uring_cqe { int _dummy; int res; void *user_data; };
 struct io_uring_sqe { int _dummy; };
+#ifndef SOCK_NONBLOCK
+#define SOCK_NONBLOCK 0x1000
+#endif
+#ifndef SOCK_CLOEXEC
+#define SOCK_CLOEXEC  0x80000
+#endif
 #define io_uring_for_each_cqe(ring, head, cqe) for (int _i_ = 0; _i_ < 0; _i_++)
 
 static inline int io_uring_queue_init(unsigned entries, struct io_uring *ring, unsigned flags) {
