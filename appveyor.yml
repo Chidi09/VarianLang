@@ -69,7 +69,25 @@ artifacts:
 #   3. Cut a release:  git tag v0.1.0 && git push origin v0.1.0
 deploy:
   - provider: GitHub
-    description: 'Varian $(APPVEYOR_REPO_TAG_NAME)'
+    description: |
+      Varian v0.1.0 — compiled, concurrent, batteries-included language.
+
+      Downloads:
+      - `varian-linux-x64.tar.gz` — single binary runtime + toolchain
+      - `varian-linux-x64.tar.gz.sha256` — checksum
+
+      What's in the box:
+      - `vn` — the language runtime, REPL, and CLI
+      - `libvarian.a` + `include/` — static library for `vn build --release`
+      - `vn_modules/` — standard library prelude (zenith, lumen, shield, auth, db, queue, mail, storage, observe, validate)
+
+      Toolchain commands:
+      - `vn run`, `vn fmt`, `vn test`, `vn lint`, `vn lsp`
+      - `vn dev`, `vn build`, `vn build --release`
+      - `vn add`, `vn install`, `vn publish`, `vn search`
+      - `vn new`, `vn lumen new`, `vn lumen build`
+
+      See README.md and docs/ for full reference.
     auth_token:
       secure: REPLACE_WITH_APPVEYOR_ENCRYPTED_GITHUB_TOKEN
     artifact: varian-linux-x64, varian-linux-x64-sha256
