@@ -100,6 +100,21 @@ static Value lib_task_close_channel(VM *vm, int arg_count, Value *args) {
     return val_nil();
 }
 
+/* ─── task.try_receive(channel) — non-blocking channel poll, returns nil if empty ─── */
+static Value lib_task_try_receive(VM *vm, int arg_count, Value *args) {
+    int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
+    if (arg_count < base + 1 || args[base].type != VAL_CHANNEL) {
+        runtime_error(vm, "task.try_receive() requires a channel");
+        return val_nil();
+    }
+    ObjChannel *ch = args[base].as.channel;
+    Value result;
+    if (channel_try_receive(ch, &result)) {
+        return result;
+    }
+    return val_nil();
+}
+
 /* ─── task.yield() ─── */
 static Value lib_task_yield(VM *vm, int arg_count, Value *args) {
     int base = (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
@@ -152,4 +167,5 @@ void lib_task_init(VM *vm) {
     vm_register_dispatch(vm, "task", "id",     val_native_fn((void *)lib_task_id));
     vm_register_dispatch(vm, "task", "channel", val_native_fn((void *)lib_task_channel));
     vm_register_dispatch(vm, "task", "close",   val_native_fn((void *)lib_task_close_channel));
+    vm_register_dispatch(vm, "task", "try_receive", val_native_fn((void *)lib_task_try_receive));
 }

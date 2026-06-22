@@ -107,7 +107,7 @@ test "lumen live round trip with child component event routing" {
         ]
     )
 
-    _lumen_live_loop(mock_ws, parent_comp)
+    _lumen_live_loop(mock_ws, parent_comp, null, null)
 
     assert_ne(result.msg, "")
     assert_ne(result.msg.index_of("Votes: 1"), -1)

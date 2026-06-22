@@ -45,13 +45,15 @@ static void report_lint(LintContext *ctx, SourceLoc loc, const char *category, c
     if (loc.line <= ctx->line_offset) {
         return;
     }
-    int line = loc.line - ctx->line_offset;
+    int line = loc.line - ctx->line_offset + ctx->line_base;
 
     char msg[512];
     va_list args;
     va_start(args, fmt);
     vsnprintf(msg, sizeof(msg), fmt, args);
     va_end(args);
+
+    const char *fname = ctx->current_path ? ctx->current_path : (loc.filename ? loc.filename : "unknown");
 
     if (ctx->sink) {
         ctx->sink(ctx->sink_ud, line, loc.column, category, msg);
@@ -62,9 +64,9 @@ static void report_lint(LintContext *ctx, SourceLoc loc, const char *category, c
     if (ctx->format && strcmp(ctx->format, "json") == 0) {
         // Simple JSON escape for message
         printf("{\"category\":\"%s\",\"file\":\"%s\",\"line\":%d,\"message\":\"%s\"}\n",
-               category, loc.filename ? loc.filename : "unknown", line, msg);
+               category, fname, line, msg);
     } else {
-        printf("%s:%d: [%s] %s\n", loc.filename ? loc.filename : "unknown", line, category, msg);
+        printf("%s:%d: [%s] %s\n", fname, line, category, msg);
     }
     ctx->had_error = true;
 }
@@ -152,19 +154,21 @@ static bool is_sql_function_name(const char *name) {
  * Native functions can defend against this defensively, but it's easy to
  * miss, so flag the collision at its actual source: the impl declaration. */
 static const char *known_native_methods[] = {
-    "len", "push", "hash_sha256", "sign_jwt", "verify_jwt", "create_struct",
-    "get", "post", "serve", "serve_with_routes", "test_request", "delete",
-    "exists", "list_dir", "mkdir", "read_bytes", "read_text", "write_bytes",
-    "write_text", "abs", "ceil", "cos", "floor", "sin", "sqrt", "intercept",
-    "restore", "close", "connect", "query", "run", "cmd", "escape_html",
-    "strip_html", "trim", "split", "lower", "replace", "starts_with",
-    "ends_with", "index_of", "last_index_of", "contains",
-    "substring", "upper", "channel", "id", "sleep", "spawn", "yield",
-    "now_iso8601", "now_ms", "is_alphanumeric", "is_email", "is_url",
-    "is_uuid", "max_len", "min_len", "write_socket", "close_socket",
-    "read_socket", "code_at", "from_codes", "sha1_base64", "hash_password",
-    "verify_password", "bit_and", "bit_or", "bit_xor",
-    "generate_token", "constant_time_eq", "index_of", "contains",
+    "abs", "append", "bit_and", "bit_or", "bit_xor", "ceil", "channel",
+    "close", "close_socket", "cmd", "code_at", "connect", "constant_time_eq",
+    "contains", "cos", "create_struct", "delete", "ends_with", "escape_html",
+    "exists", "explain", "find_all", "floor", "from_codes", "generate_token",
+    "get", "get_field", "get_keys", "groups", "has", "hash_password",
+    "hash_sha256", "id", "index_of", "intercept", "is", "is_alphanumeric",
+    "is_email", "is_uuid", "is_url", "join", "keys", "kind", "last_index_of",
+    "len", "list_dir", "load", "lower", "make", "match", "max_len", "min_len",
+    "mkdir", "now_iso8601", "now_ms", "post", "push", "query", "read_bytes",
+    "read_socket", "read_text", "replace", "require", "restore", "run",
+    "send", "serve", "serve_tls", "serve_with_routes", "set", "sha1_base64",
+    "sign_jwt", "sin", "sleep", "spawn", "split", "sqrt", "starts_with",
+    "strip_html", "substring", "test", "test_request", "trim", "try_receive",
+    "upper", "verify_jwt", "verify_password", "write_bytes", "write_socket",
+    "write_text", "yield",
 };
 #define KNOWN_NATIVE_METHOD_COUNT (sizeof(known_native_methods) / sizeof(known_native_methods[0]))
 
@@ -611,9 +615,14 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
                     scope.bindings[idx].name[63] = '\0';
                     /* "self" is conventionally unread in many trivial methods
                      * (it's there for the dispatch, not necessarily the body)
-                     * -- exempt it to avoid noise; every other param is
-                     * tracked for real usage. */
-                    scope.bindings[idx].used = (strcmp(node->fn_decl.param_names[i], "self") == 0);
+                     * -- exempt it to avoid noise. Also exempt any param whose
+                     * name starts with '_': that's the universal "intentionally
+                     * unused" convention, and it matters here because Lumen event
+                     * handlers have a fixed (state, value) arity -- a handler that
+                     * ignores the event value (fn click(s, _v)) would otherwise
+                     * warn on every single one. Every other param is tracked. */
+                    const char *pn = node->fn_decl.param_names[i];
+                    scope.bindings[idx].used = (strcmp(pn, "self") == 0) || (pn[0] == '_');
                     scope.bindings[idx].loc = node->loc;
                 }
             }
@@ -818,7 +827,7 @@ int lint_buffer(const char *user_source, const char *path, LintContext *ctx) {
                 } else {
                     msg_text = emsg;
                 }
-                ctx->sink(ctx->sink_ud, el - line_offset, ec, "syntax", msg_text);
+                ctx->sink(ctx->sink_ud, el - line_offset + ctx->line_base, ec, "syntax", msg_text);
                 ctx->had_error = true;
             }
         } else {
@@ -849,11 +858,278 @@ int lint_buffer(const char *user_source, const char *path, LintContext *ctx) {
     return 0;
 }
 
+/* ─── SFC (Single File Component) helpers ─── */
+typedef struct {
+    const char *start;
+    int len;
+    int start_line;
+} SfcBlock;
+
+static int count_lines_before(const char *source, const char *pos) {
+    int lines = 1;
+    for (const char *p = source; p < pos; p++) {
+        if (*p == '\n') lines++;
+    }
+    return lines;
+}
+
+static bool find_sfc_block(const char *source, const char *tag, SfcBlock *block) {
+    char open_tag[64];
+    snprintf(open_tag, sizeof(open_tag), "<%s>", tag);
+    char close_tag[64];
+    snprintf(close_tag, sizeof(close_tag), "</%s>", tag);
+    const char *open = strstr(source, open_tag);
+    if (!open) return false;
+    const char *close = strstr(open + strlen(open_tag), close_tag);
+    if (!close) return false;
+    block->start = open + strlen(open_tag);
+    block->len = (int)(close - block->start);
+    block->start_line = count_lines_before(source, block->start);
+    return true;
+}
+
+/* ─── New Lumen/Aurora lint rules ─── */
+
+static bool is_known_lumen_component(const char *name, int name_len) {
+    static const char *builtins[] = {
+        "Page", "Container", "Section", "Stack", "Row", "Grid",
+        "Card", "Heading", "Text", "Eyebrow", "Button", "Badge",
+        "Feature", "Divider", "Spacer", "Hero", "Nav", "Footer",
+        "Split", "Field", "Stat", "Tag", "Avatar", "Alert",
+        "Empty", "Skeleton"
+    };
+    for (size_t i = 0; i < sizeof(builtins)/sizeof(builtins[0]); i++) {
+        if ((int)strlen(builtins[i]) == name_len &&
+            strncmp(builtins[i], name, name_len) == 0) return true;
+    }
+    return false;
+}
+
+/* 1.3a: --lmn- token typo */
+static void check_lmn_typo(LintContext *ctx, const char *text, int text_len, int base_line) {
+    (void)text_len;
+    const char *p = text;
+    const char *end = text + text_len;
+    while (p < end) {
+        const char *found = lint_strcasestr(p, "--lmn-");
+        if (!found || found >= end) break;
+        int line = base_line;
+        for (const char *t = text; t < found; t++) {
+            if (*t == '\n') line++;
+        }
+        SourceLoc loc;
+        loc.filename = NULL;
+        loc.line = line;
+        loc.column = 0;
+        report_lint(ctx, loc, "style",
+                    "'--lmn-' looks like a typo — use '--lumen-' instead");
+        p = found + 6;
+    }
+}
+
+/* 1.3b: Hardcoded color (#rrggbb or rgb(...)) in style block */
+static bool is_lumen_color_token(const char *name, int name_len) {
+    if (name_len < 8) return false;
+    if (strncmp(name, "--lumen-", 8) != 0) return false;
+    return true;
+}
+
+static void check_hardcoded_color(LintContext *ctx, const char *text, int text_len, int base_line) {
+    const char *end = text + text_len;
+    const char *p = text;
+    while (p < end) {
+        int line = base_line;
+        for (const char *t = text; t < p; t++) {
+            if (*t == '\n') line++;
+        }
+        /* #rrggbb / #rgb */
+        if (*p == '#' && (p + 7 <= end || p + 4 <= end)) {
+            bool is_hex = true;
+            int hex_len = 0;
+            const char *h = p + 1;
+            while (h < end && ((*h >= '0' && *h <= '9') || (*h >= 'a' && *h <= 'f') || (*h >= 'A' && *h <= 'F'))) {
+                hex_len++;
+                h++;
+            }
+            if ((hex_len == 6 || hex_len == 3) && (h == end || *h == ';' || *h == ' ' || *h == '\t' || *h == '\n' || *h == ',' || *h == ')' || *h == '!' || *h == '.')) {
+                /* Only flag if var(--lumen-*) exists in the same block */
+                if (lint_strcasestr(text, "--lumen-")) {
+                    char hex_str[8];
+                    int copy = hex_len < 7 ? hex_len : 6;
+                    memcpy(hex_str, p + 1, copy);
+                    hex_str[copy] = '\0';
+                    SourceLoc loc;
+                    loc.filename = NULL;
+                    loc.line = line;
+                    loc.column = 0;
+                    report_lint(ctx, loc, "style",
+                                "Hardcoded color '#%s' — consider using a --lumen-* token instead", hex_str);
+                }
+                p = h;
+                continue;
+            }
+        }
+        /* rgb(...) or rgba(...) */
+        if ((strncmp(p, "rgb(", 4) == 0 || strncmp(p, "rgba(", 5) == 0) && lint_strcasestr(text, "--lumen-")) {
+            SourceLoc loc;
+            loc.filename = NULL;
+            loc.line = line;
+            loc.column = 0;
+            report_lint(ctx, loc, "style",
+                        "Hardcoded rgb/rgba value — consider using a --lumen-* token instead");
+            while (p < end && *p != ';' && *p != '}') p++;
+            continue;
+        }
+        p++;
+    }
+}
+
+/* 1.3c: Unknown component tag in template */
+static void check_unknown_component(LintContext *ctx, const char *text, int text_len, int base_line) {
+    const char *end = text + text_len;
+    const char *p = text;
+    while (p < end) {
+        if (*p != '<') { p++; continue; }
+        p++;
+        if (p >= end) break;
+        if (*p == '!' && p + 2 < end && p[1] == '-' && p[2] == '-') {
+            p += 3;
+            while (p < end) {
+                if (*p == '-' && p + 2 < end && p[1] == '-' && p[2] == '>') { p += 3; break; }
+                p++;
+            }
+            continue;
+        }
+        if (*p == '/') { p++; continue; }
+        if (*p >= 'A' && *p <= 'Z') {
+            const char *tag_start = p;
+            while (p < end && *p != ' ' && *p != '>' && *p != '/' && *p != '\n' && *p != '\t' && *p != '\r') p++;
+            int tag_len = (int)(p - tag_start);
+            if (tag_len > 0 && !is_known_lumen_component(tag_start, tag_len)) {
+                char tag_name[128];
+                int copy = tag_len < 127 ? tag_len : 127;
+                memcpy(tag_name, tag_start, copy);
+                tag_name[copy] = '\0';
+                int line = base_line;
+                for (const char *t = text; t < tag_start; t++) {
+                    if (*t == '\n') line++;
+                }
+                SourceLoc loc;
+                loc.filename = NULL;
+                loc.line = line;
+                loc.column = 0;
+                report_lint(ctx, loc, "correctness",
+                            "Unknown component tag '<%s>' — not a built-in Lumen component", tag_name);
+            }
+        }
+    }
+}
+
+/* 1.3d: Client-JS advisory */
+static void check_client_js_advisory(LintContext *ctx, const char *source, int source_len, int base_line) {
+    (void)source_len;
+    (void)base_line;
+    const char *p = source;
+    while (*p) {
+        if (strncmp(p, "<client>", 8) == 0) {
+            const char *block_start = p + 8;
+            const char *block_end = strstr(block_start, "</client>");
+            if (!block_end) break;
+            bool only_fetch_or_dom = true;
+            const char *b = block_start;
+            while (b < block_end) {
+                while (b < block_end && (*b == ' ' || *b == '\t' || *b == '\n' || *b == '\r')) b++;
+                if (b >= block_end) break;
+                if (strncmp(b, "fetch(", 6) == 0 ||
+                    strstr(b, "document.querySelector") == b ||
+                    strstr(b, "document.getElementById") == b) {
+                    while (b < block_end && *b != ';' && *b != '\n') b++;
+                    if (b < block_end && *b == ';') b++;
+                    continue;
+                }
+                if (strstr(b, "classList.") ||
+                    strstr(b, "style.display") ||
+                    strstr(b, "innerText") == b ||
+                    strstr(b, "textContent") == b) {
+                    while (b < block_end && *b != ';' && *b != '\n') b++;
+                    if (b < block_end && *b == ';') b++;
+                    continue;
+                }
+                only_fetch_or_dom = false;
+                break;
+            }
+            if (only_fetch_or_dom) {
+                int line = 1;
+                for (const char *t = source; t < p; t++) if (*t == '\n') line++;
+                SourceLoc loc;
+                loc.filename = NULL;
+                loc.line = line;
+                loc.column = 0;
+                report_lint(ctx, loc, "style",
+                    "Client JS block only uses fetch/toggle — consider an on= handler instead");
+            }
+            p = block_end + 9;
+        } else {
+            p++;
+        }
+    }
+}
+
+static int lint_lumen_file(const char *source, const char *path, LintContext *ctx) {
+    SfcBlock script = {0}, tblock = {0}, sblock = {0};
+    bool has_script = find_sfc_block(source, "script", &script);
+    bool has_template = find_sfc_block(source, "template", &tblock);
+    bool has_style = find_sfc_block(source, "style", &sblock);
+
+    int saved_offset = ctx->line_offset;
+    int saved_base = ctx->line_base;
+    const char *saved_path = ctx->current_path;
+    ctx->line_offset = 0;
+    ctx->line_base = 0;
+    ctx->current_path = path;
+
+    if (has_template) {
+        check_lmn_typo(ctx, tblock.start, tblock.len, tblock.start_line);
+        check_unknown_component(ctx, tblock.start, tblock.len, tblock.start_line);
+    }
+    if (has_style) {
+        check_lmn_typo(ctx, sblock.start, sblock.len, sblock.start_line);
+        check_hardcoded_color(ctx, sblock.start, sblock.len, sblock.start_line);
+    }
+    check_client_js_advisory(ctx, source, (int)strlen(source), 1);
+
+    ctx->line_offset = saved_offset;
+    ctx->line_base = saved_base;
+    ctx->current_path = saved_path;
+
+    if (has_script) {
+        char *script_content = (char *)malloc(script.len + 1);
+        memcpy(script_content, script.start, script.len);
+        script_content[script.len] = '\0';
+
+        ctx->line_base = script.start_line - 1;
+        ctx->current_path = path;
+        int rc = lint_buffer(script_content, path, ctx);
+        free(script_content);
+        ctx->line_base = saved_base;
+        ctx->current_path = saved_path;
+        return rc;
+    }
+
+    return ctx->had_error ? 1 : 0;
+}
+
 static int lint_file(const char *path, LintContext *ctx) {
     char *own_source = read_file(path);
     if (!own_source) {
         fprintf(stderr, "lint: could not read file '%s'\n", path);
         return 1;
+    }
+    size_t len = strlen(path);
+    if (len > 6 && strcmp(path + len - 6, ".lumen") == 0) {
+        int rc = lint_lumen_file(own_source, path, ctx);
+        free(own_source);
+        return rc;
     }
     int rc = lint_buffer(own_source, path, ctx);
     free(own_source);
@@ -882,7 +1158,7 @@ static void collect_vn_files(const char *dir, char ***files, int *count, int *ca
 
         if (S_ISDIR(st.st_mode)) {
             collect_vn_files(full, files, count, cap);
-        } else if (S_ISREG(st.st_mode) && nlen > 3 && strcmp(entry->d_name + nlen - 3, ".vn") == 0) {
+        } else if (S_ISREG(st.st_mode) && ((nlen > 3 && strcmp(entry->d_name + nlen - 3, ".vn") == 0) || (nlen > 6 && strcmp(entry->d_name + nlen - 6, ".lumen") == 0))) {
             if (*count >= *cap) {
                 *cap = *cap ? *cap * 2 : 16;
                 *files = (char **)realloc(*files, (size_t)(*cap) * sizeof(char *));
@@ -902,6 +1178,8 @@ int run_lint(const char *path, const char *only_category, const char *format) {
     ctx.format = format;
     ctx.had_error = false;
     ctx.line_offset = 0;
+    ctx.line_base = 0;
+    ctx.current_path = NULL;
     ctx.sink = NULL;
     ctx.sink_ud = NULL;
 

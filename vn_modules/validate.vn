@@ -223,3 +223,8 @@ let sanitize = http.create_struct(
         |v| { return _sanitize.trim(v) }
     ]
 )
+
+// Helper for lumen_form: run a validator's parse (avoids prelude dispatch issues).
+fn _validate_parse(validator, v) {
+    return validator.parse(v)
+}

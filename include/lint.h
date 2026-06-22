@@ -9,6 +9,8 @@ typedef struct {
     const char *format;
     bool had_error;
     int line_offset; /* lines contributed by a prepended vn_modules prelude */
+    int line_base;   /* extra offset for .lumen script block (script_start_line - 1) */
+    const char *current_path; /* for template/style raw-line reporting */
     /* Optional diagnostic sink. When non-NULL, findings are delivered here
      * (line is already prelude-adjusted) instead of being printed to stdout --
      * this is how the LSP server (src/lsp.c) reuses the whole lint engine. */

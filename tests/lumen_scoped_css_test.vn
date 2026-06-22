@@ -7,7 +7,7 @@ let COMP_LUMEN = "<template>" +
                  "<p>Text</p>" +
                  "</div>" +
                  "</template>" +
-                 "<style>" +
+                 "<style scoped>" +
                  ".card \{ color: red; \}" +
                  ".card .title \{ font-size: 20px; \}" +
                  "p \{ margin: 0; \}" +
@@ -19,14 +19,35 @@ let COMP_LUMEN = "<template>" +
 test "lumen scopes CSS and templates correctly" {
     let code = lumen_compile_source("TestScoped", COMP_LUMEN)
     assert_ne(code, null)
-    
+
     // Check that style rules are scoped with [data-lumen-css="TestScoped"]
     assert_ne(code.index_of(".card[data-lumen-css=\\\"TestScoped\\\"]"), -1)
     assert_ne(code.index_of(".card .title[data-lumen-css=\\\"TestScoped\\\"]"), -1)
     assert_ne(code.index_of("p[data-lumen-css=\\\"TestScoped\\\"]"), -1)
-    
+
     // Check that HTML elements in template have the scoping attribute injected
     assert_ne(code.index_of("<div class=\\\"card\\\" data-lumen-css=\\\"TestScoped\\\">"), -1)
     assert_ne(code.index_of("<h1 class=\\\"title\\\" data-lumen-css=\\\"TestScoped\\\">"), -1)
     assert_ne(code.index_of("<p data-lumen-css=\\\"TestScoped\\\">"), -1)
+}
+
+// A plain <style> (no `scoped`) must be emitted as global CSS: no selector
+// rewriting and no data-lumen-css attribute injection into the template.
+let COMP_GLOBAL = "<template>" +
+                  "<div class=\"card\">Hi</div>" +
+                  "</template>" +
+                  "<style>" +
+                  ".card \{ color: red; \}" +
+                  "</style>" +
+                  "<script>" +
+                  "fn state() \{ return \{\} \}" +
+                  "</script>"
+
+test "lumen leaves a plain <style> block global (unscoped)" {
+    let code = lumen_compile_source("TestGlobal", COMP_GLOBAL)
+    assert_ne(code, null)
+    // No scoping suffix anywhere, and no attribute injected into the markup.
+    assert_eq(code.index_of("data-lumen-css"), -1)
+    // The original global selector survives untouched.
+    assert_ne(code.index_of(".card"), -1)
 }

@@ -4,8 +4,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VarianLang — The Systems Language of the Future</title>
-  <meta name="description" content="A blazing fast, concurrent, systems-level programming language built from scratch in C with a custom bytecode VM.">
+  <title>Varian — one language for the whole stack</title>
+  <meta name="description" content="A fast, memory-safe language with native actors and channels, a batteries-included web framework (Zenith), a server-driven UI framework (Lumen), a build tool (Kiln), and a package registry (Constellation). Aurora is all of it, together.">
   <link rel="stylesheet" href="/global.css">
   <style>
     .editor-container {
@@ -14,8 +14,7 @@
       border-radius: var(--radius-xl);
       overflow: hidden;
       margin: var(--space-8) auto;
-      max-width: 900px;
-      box-shadow: var(--shadow-glow);
+      max-width: 720px;
       text-align: left;
     }
     .editor-header {
@@ -23,246 +22,705 @@
       padding: var(--space-2) var(--space-4);
       display: flex;
       gap: var(--space-2);
+      align-items: center;
       border-bottom: 1px solid var(--border-subtle);
     }
-    .editor-dot { width: 12px; height: 12px; border-radius: 50%; }
-    .editor-dot.red { background: #ff5f56; }
-    .editor-dot.yellow { background: #ffbd2e; }
-    .editor-dot.green { background: #27c93f; }
     .editor-body {
       padding: var(--space-4);
       font-family: var(--font-mono);
       font-size: var(--text-sm);
-      display: flex;
+      line-height: 1.7;
+      overflow-x: auto;
     }
-    .editor-lines {
-      color: var(--text-muted);
-      padding-right: var(--space-4);
-      user-select: none;
-      text-align: right;
-    }
-    .editor-code { color: var(--text-primary); outline: none; flex: 1; }
     .editor-run-bar {
       border-top: 1px solid var(--border-subtle);
       padding: var(--space-2) var(--space-4);
       background: var(--bg-surface);
       display: flex;
       justify-content: flex-end;
+      align-items: center;
+      gap: var(--space-3);
     }
-    
-    .framework-section {
-      padding: var(--space-24) 0;
+    .output-pane {
+      padding: var(--space-3) var(--space-4);
       border-top: 1px solid var(--border-subtle);
+      background: #0a0a0a;
+      font-family: var(--font-mono);
+      font-size: var(--text-sm);
+      line-height: 1.6;
+      max-height: 160px;
+      overflow-y: auto;
+      color: #e4e4e7;
+    }
+    .output-pane.error { color: #f87171; }
+    .example-tabs {
+      display: flex;
+      gap: var(--space-2);
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: var(--space-4);
+    }
+    .example-tab {
+      padding: var(--space-1) var(--space-3);
+      border-radius: var(--radius-full);
+      font-size: var(--text-xs);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+    .example-tab:hover, .example-tab.active {
+      background: color-mix(in srgb, var(--accent) 15%, transparent);
+      border-color: var(--accent);
+    }
+    .tour-sections {
+      display: flex;
+      flex-direction: column;
+      gap: var(--space-12);
+      padding: var(--space-8) 0;
+      max-width: 860px;
+      margin: 0 auto;
+    }
+    .tour-section {
+      border-bottom: 1px solid var(--border-subtle);
+      padding-bottom: var(--space-8);
+    }
+    .tour-section:last-child {
+      border-bottom: none;
+    }
+    .tour-heading {
+      font-size: var(--text-2xl);
+      font-weight: 700;
       display: flex;
       align-items: center;
-      gap: var(--space-12);
+      gap: var(--space-3);
+      margin-bottom: var(--space-4);
     }
-    .framework-section.reverse {
-      flex-direction: row-reverse;
+    .tour-heading .material-symbols-outlined {
+      font-size: 28px;
+      color: var(--accent);
     }
-    .framework-content {
-      flex: 1;
+    .tour-text {
+      color: var(--text-secondary);
+      font-size: var(--text-base);
+      line-height: 1.8;
+      margin-bottom: var(--space-4);
     }
-    .framework-logo {
-      flex: 1;
-      text-align: center;
+    .bench-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: var(--space-6) 0;
+      font-size: var(--text-sm);
+      border-radius: var(--radius-lg);
+      overflow: hidden;
     }
-    .framework-logo img {
-      max-width: 250px;
-      border-radius: var(--radius-2xl);
+    .bench-table th, .bench-table td {
+      border: 1px solid var(--border-subtle);
+      padding: var(--space-3) var(--space-5);
+      text-align: left;
+    }
+    .bench-table th { background: var(--bg-surface); font-weight: 600; }
+    .hero-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-2);
+      padding: var(--space-1) var(--space-4);
+      border-radius: var(--radius-full);
+      font-size: var(--text-xs);
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      background: color-mix(in srgb, var(--accent) 12%, transparent);
+      color: var(--accent);
+      border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+      margin-bottom: var(--space-6);
+    }
+    .hero-badge::before {
+      content: "";
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      animation: pulse-dot 2s infinite;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .cmd-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: var(--space-1);
+      padding: var(--space-1) var(--space-3);
+      background: var(--bg-surface);
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      color: var(--text-secondary);
+      font-size: var(--text-xs);
+      font-family: var(--font-mono);
+    }
+    .btn-theme-toggle {
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all var(--transition-fast);
+      margin-left: var(--space-4);
+    }
+    .btn-theme-toggle:hover {
+      color: var(--text-primary);
+      border-color: var(--text-muted);
+    }
+    .btn-theme-toggle .material-symbols-outlined {
+      font-size: 18px;
+    }
+    .community-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--space-4);
+      justify-content: center;
+      padding: var(--space-8) 0;
+    }
+    @media (max-width: 768px) {
+      .hero h1 { font-size: var(--text-4xl); }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <nav class="navbar" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <nav class="navbar">
       <a href="/" class="nav-brand">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
-        Varian
+        <img src="/assets/varian-logo.png" alt="Varian" width="28" height="28">
+        <span>Varian</span>
       </a>
       <div class="nav-links">
-        <a href="#features">Features</a>
-        <a href="#ecosystem">Ecosystem</a>
-        <a href="/the_varian_book">Docs</a>
+        <a href="/#language">Language</a>
+        <a href="/#ecosystem">Ecosystem</a>
+        <a href="/aurora">Aurora</a>
+        <a href="/zenith">Zenith</a>
+        <a href="/lumen">Lumen</a>
+        <a href="/the_varian_book">The Book</a>
         <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
       </div>
+      <button id="theme-toggle" class="btn-theme-toggle" aria-label="Toggle theme">
+        <span class="material-symbols-outlined" id="theme-icon">light_mode</span>
+      </button>
     </nav>
 
     <main>
-      <!-- Varian Interactive Hero -->
+      <!-- 4.1 Hero -->
       <section class="hero">
-        <h1>Blazing fast.<br><span class="gradient-text">Beautifully concurrent.</span></h1>
-        <p>A systems-level programming language built from scratch in C with a custom bytecode VM. The speed of C, concurrency of Go, and ecosystem of Python.</p>
-        
-        <div class="editor-container">
-          <div class="editor-header">
-            <div class="editor-dot red"></div>
-            <div class="editor-dot yellow"></div>
-            <div class="editor-dot green"></div>
-            <span style="margin-left: 10px; color: var(--text-muted); font-size: 12px; font-family: var(--font-sans);">main.vn</span>
-          </div>
-          <div class="editor-body">
-            <div class="editor-lines">1<br>2<br>3<br>4<br>5<br>6<br>7<br>8<br>9<br>10</div>
-            <div class="editor-code" contenteditable="true" spellcheck="false">
-<span class="token-keyword">fn</span> <span class="token-function">main</span>() {
-  <span class="token-comment">// Native cooperative actors without the thread overhead</span>
-  <span class="token-keyword">let</span> ch <span class="token-keyword">=</span> <span class="token-function">make</span>(<span class="token-type">chan</span>, 10)
-  
-  <span class="token-keyword">spawn</span> <span class="token-keyword">fn</span>() {
-    <span class="token-function">send</span>(ch, <span class="token-string">"Hello from goroutine-like actor!"</span>)
-  }()
+        <div class="hero-badge">Varian v1.0 is live</div>
+        <h1>One language.<br><span class="gradient-text">The entire stack.</span></h1>
+        <p>A fast, memory-safe language with native actors and channels, a batteries-included web framework (Zenith), a server-driven UI framework (Lumen), a build tool (Kiln), and a package registry (Constellation). Aurora is all of it, together.</p>
+        <div class="button-group">
+          <a href="#install" class="btn btn-primary"><span class="material-symbols-outlined">download</span> Get started</a>
+          <a href="/the_varian_book" class="btn btn-secondary"><span class="material-symbols-outlined">menu_book</span> Read the book</a>
+        </div>
+      </section>
 
-  <span class="token-keyword">let</span> msg <span class="token-keyword">=</span> <span class="token-function">recv</span>(ch)
-  <span class="token-function">print</span>(msg)
-}
+      <!-- 4.2 Interactive console -->
+      <div class="example-tabs">
+        <button @click="loadExample('hello')" class="example-tab">Hello</button>
+        <button @click="loadExample('actors')" class="example-tab">Actors</button>
+        <button @click="loadExample('fib')" class="example-tab">Fibonacci</button>
+        <button @click="loadExample('structs')" class="example-tab">Struct</button>
+        <button @click="loadExample('channels')" class="example-tab">Channels</button>
+      </div>
+
+      <div class="editor-container">
+        <div class="editor-header">
+          <span class="code-block-dot red"></span>
+          <span class="code-block-dot yellow"></span>
+          <span class="code-block-dot green"></span>
+          <span style="margin-left: 8px; color: var(--text-muted); font-size: 12px;">main.vn</span>
+        </div>
+        <div class="editor-body">
+          <pre contenteditable="true" spellcheck="false" id="code-editor" style="margin:0;white-space:pre;outline:none;">{{ code }}</pre>
+        </div>
+        <div class="editor-run-bar">
+          <span style="color:var(--text-muted);font-size:var(--text-xs);" id="run-status"></span>
+          <button @click="runCode" class="btn btn-primary" style="padding:4px 14px;font-size:var(--text-sm);">
+            <span class="material-symbols-outlined" style="font-size:16px;">play_arrow</span> Run
+          </button>
+        </div>
+        {{ if outputVisible }}
+        <div class="output-pane">{{ output }}</div>
+        {{ endif }}
+      </div>
+
+      <!-- 4.3 Why Varian -->
+      <section id="language" style="padding: var(--space-16) 0;">
+        <h2 class="section-title">Why Varian?</h2>
+        <p class="section-subtitle">Three pillars that make Varian different.</p>
+        <div class="features">
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">bolt</span></div>
+            <h3>Fast</h3>
+            <p>Compiled bytecode VM with computed-goto dispatch. ~10,500 req/s single-process Zenith, ~35k multi-worker. No hidden allocation tax.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">hub</span></div>
+            <h3>Concurrent by default</h3>
+            <p>Green-thread actors + channels, cooperative scheduler, no locks. Spawn thousands of lightweight tasks in a single process.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">shield</span></div>
+            <h3>Safe</h3>
+            <p>Memory-safe core, escape-by-default HTML templating, friendly errors with line numbers, and built-in security middleware.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- 4.4 Language tour -->
+      <section style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">Language tour</h2>
+        <p class="section-subtitle">Real Varian code, every snippet runs. Comparisons to languages you already know.</p>
+
+        <div class="tour-sections">
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">code</span> Hello / values</h3>
+            <p class="tour-text">Varian uses type inference — you write <code>let x = 5</code>, not <code>int x = 5</code>. This works like Python or modern JavaScript: the compiler infers the type from the value. Strings are fully UTF-8 encoded and concatenate with <code>+</code>. Numbers are 64-bit floating point by default — there's no <code>int</code> vs <code>float</code> distinction at the value level.</p>
+            <p class="tour-text">Unlike Java, C++, or Go, Varian has no concept of "primitives" vs "objects". Every value — numbers, strings, booleans, structs — lives on the GC-managed heap and is a first-class citizen. This means you can pass a number to a function that expects a generic value, store it in an array, or return it from a function, all without boxing or special syntax.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">hello.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> name = <span class="token-string">"Varian"</span>
+<span class="token-function">print</span>(<span class="token-string">"Hello, "</span> + name)</pre></div>
             </div>
           </div>
-          <div class="editor-run-bar">
-            <button @click="runCode" class="btn btn-primary" style="padding: var(--space-1) var(--space-4); font-size: var(--text-sm);">Run &gt;</button>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">function</span> Functions</h3>
+            <p class="tour-text">Functions in Varian are first-class values — you can store them in variables, pass them as arguments to other functions, return them from other functions, and put them in data structures. This is the same model as JavaScript, Python, or Lua. A function is defined with <code>fn name(args) { body }</code> and called with <code>name(args)</code>.</p>
+            <p class="tour-text">Where Varian differs from JS and Lua is closure semantics: closures capture their enclosing scope <strong>by value</strong>, not by reference. The captured variables are snapshotted at the moment the closure is created. This eliminates the classic "loop variable capture" bug — you know, the one where every closure in a <code>for</code> loop sees the final iteration value because they all share the same mutable variable. In Varian, each closure gets its own copy, frozen at creation time.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">functions.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">add</span>(a, b) {
+  <span class="token-keyword">return</span> a + b
+}
+<span class="token-function">print</span>(<span class="token-function">add</span>(<span class="token-number">2</span>, <span class="token-number">3</span>))</pre></div>
+            </div>
           </div>
-          {{ if output }}
-          <div style="padding: var(--space-4); border-top: 1px solid var(--border-subtle); background: #111; font-family: var(--font-mono); font-size: var(--text-sm);">
-            <strong style="color: var(--brand-accent);">Output:</strong><br>
-            {{ output }}
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">category</span> Structs</h3>
+            <p class="tour-text">Structs are named collections of typed fields — like C structs, Rust structs, or Go structs. They bundle related data together into a single value that can be passed around, stored in arrays, or nested inside other structs. Fields are accessed with dot notation: <code>point.x</code>.</p>
+            <p class="tour-text">Varian structs don't have methods attached to them. Instead, you write functions that take the struct as the first parameter (conventionally named <code>self</code>), similar to Python. There's no inheritance, no vtables, no virtual dispatch, no diamond problem — just plain data on the GC heap, always passed by reference. If you've used Go or Rust, this will feel familiar. If you're coming from Java or C++, it takes some getting used to — but the simplicity pays off: no fragile class hierarchies, no <code>super()</code> calls to get wrong.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">structs.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">struct</span> <span class="token-type">Point</span> { x: <span class="token-type">int</span>, y: <span class="token-type">int</span> }
+<span class="token-keyword">let</span> p = <span class="token-type">Point</span> { x: <span class="token-number">10</span>, y: <span class="token-number">20</span> }
+<span class="token-function">print</span>(p.x)</pre></div>
+            </div>
           </div>
-          {{ endif }}
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">alt_route</span> Control flow</h3>
+            <p class="tour-text">Varian has all the control flow constructs you'd expect from a C-family language: <code>if/else</code>, <code>for</code> over ranges, <code>while</code>, and <code>loop/break</code>. But there's a key difference: <code>if</code> is an <strong>expression</strong>, not a statement. It returns a value. This means there's no need for a ternary operator — just write <code>let x = if cond { a } else { b }</code>. Rust and Kotlin work the same way.</p>
+            <p class="tour-text">Range syntax uses <code>0..n</code> (exclusive end), the same as Rust. The <code>for</code> loop iterates over each value in the range, binding it to the loop variable. You can also use <code>while cond { }</code> for condition-based looping and <code>loop { break }</code> for infinite loops with explicit exit. No <code>switch</code> statement — use <code>match</code> instead (see Enums & match below).</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">control.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">if</span> x > <span class="token-number">10</span> {
+  <span class="token-function">print</span>(<span class="token-string">"Big"</span>)
+} <span class="token-keyword">else</span> {
+  <span class="token-function">print</span>(<span class="token-string">"Small"</span>)
+}
+<span class="token-keyword">let</span> y = <span class="token-keyword">if</span> ok { <span class="token-number">10</span> } <span class="token-keyword">else</span> { <span class="token-number">20</span> }
+<span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..<span class="token-number">5</span> { <span class="token-function">print</span>(i) }</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">diversity_3</span> Actors</h3>
+            <p class="tour-text">Actors are Varian's primary concurrency primitive — inspired by Erlang and Elixir. An actor is an isolated unit of computation with its own private state and a message mailbox. Actors communicate by sending messages to each other, never by sharing memory. Each actor processes one message at a time, so there are no locks, no mutexes, no data races.</p>
+            <p class="tour-text">Define an actor with <code>actor Name { fields, fn methods }</code>. Call <code>Name.spawn()</code> to create an instance. Each method on the actor is a message handler — calling it sends a message to the actor's mailbox, and the actor processes it asynchronously. If you've used Akka (Scala/Java), Elixir agents, or Pony actors, this will feel familiar. Unlike threads, actors are lightweight green threads (a few KB each), so you can spawn thousands in a single process.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">actors.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">actor</span> <span class="token-type">Greeter</span> {
+    name: <span class="token-type">string</span>,
+    <span class="token-keyword">fn</span> <span class="token-function">greet</span>(self) {
+        <span class="token-function">print</span>(<span class="token-string">"Hello from actor!"</span>)
+    }
+}
+<span class="token-keyword">let</span> a = <span class="token-type">Greeter</span>.<span class="token-function">spawn</span>()
+a.<span class="token-function">greet</span>()</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">swap_horiz</span> Channels</h3>
+            <p class="tour-text">Channels are the other concurrency primitive in Varian, modeled after Go channels. A channel is a typed pipe that connects concurrent tasks: one task sends a value into the pipe, another task receives it out the other end. Channels are <strong>buffered</strong> — you specify the buffer capacity when creating one with <code>task.channel(size)</code>.</p>
+            <p class="tour-text">Send to a channel with <code>ch <- value</code> and receive with <code><- ch</code>. If the buffer is full, the sender blocks until space frees up — automatic backpressure. Unlike Go, Varian channels are always buffered (there's no unbuffered equivalent). This eliminates a whole category of accidental deadlocks where both sides block waiting for each other. If you want the equivalent of a rendezvous, use a channel with buffer size 1.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">channels.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">sender</span>(ch) {
+    ch <- <span class="token-number">42</span>
+    <span class="token-function">print</span>(<span class="token-string">"sent"</span>)
+}
+<span class="token-keyword">let</span> ch = task.<span class="token-function">channel</span>(<span class="token-number">10</span>)
+task.<span class="token-function">spawn</span>(sender, [ch])
+<span class="token-function">print</span>(<- ch)</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">error</span> Errors</h3>
+            <p class="tour-text">Varian uses <code>try/catch</code> for error handling, similar to Java, JavaScript, or Python. <code>throw("message")</code> raises an error, and <code>catch e { }</code> catches it with the error value bound to <code>e</code>. There are no checked exceptions, no <code>throws</code> declarations, no complex type gymnastics — just throw what you want and catch what you can handle.</p>
+            <p class="tour-text">For null safety, Varian provides the <code>?.</code> (optional chaining) and <code>??</code> (null coalescing) operators, which work like Dart or TypeScript. For unrecoverable bugs — situations where the program cannot meaningfully continue — use <code>fail("message")</code>, which prints a stack trace and terminates. This is equivalent to Go's <code>panic</code> or Rust's <code>panic!</code>.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">errors.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">try</span> {
+    <span class="token-function">throw</span>(<span class="token-string">"error!"</span>)
+} <span class="token-keyword">catch</span> e {
+    <span class="token-function">print</span>(<span class="token-string">"Caught: "</span> + e)
+}</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">globe</span> Web server (6 lines)</h3>
+            <p class="tour-text">Zenith is Varian's built-in web framework — it ships with the runtime, so there's no <code>npm install express</code> or <code>pip install fastapi</code> or <code>Cargo.toml</code> to edit. Create a server with <code>new_app()</code>, register routes with <code>app.get(path, handler, summary)</code>, and start listening with <code>app.listen(port)</code>. The handler is a closure that receives a request and returns a <code>Response</code> struct with status, body, and content type.</p>
+            <p class="tour-text">The <code>summary</code> parameter (third argument to <code>app.get</code>) is used for auto-generated OpenAPI documentation — describe what your route does in plain text, and the framework produces the spec for you. Beyond the router, Zenith ships with middleware chains, WebSocket support, server-sent events, JWT auth middleware, CORS middleware, rate limiting, and built-in database drivers for SQLite and Postgres. All of it is included — no imports needed.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">server.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+app.<span class="token-function">get</span>(<span class="token-string">"/"</span>, |req| {
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"Hello, World!"</span>, content_type: <span class="token-string">"text/plain"</span> }
+}, <span class="token-string">"Root"</span>)
+app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">category</span> Enums &amp; match</h3>
+            <p class="tour-text">Enums are tagged unions — a type that can be one of several variants, each of which may carry its own data. This is the same concept as Rust's <code>enum</code>, TypeScript's discriminated unions, or Swift's enums. Unlike C/C++ enums, Varian enums are not integers — they are full types with optional payloads per variant.</p>
+            <p class="tour-text">The <code>match</code> expression performs exhaustive pattern matching: the compiler checks that every variant of the enum is handled, so you can never accidentally miss a case. Variant payloads are destructured directly in the match arm. No <code>switch</code> fallthrough bugs, no unhandled cases, no stringly-typed enums. If you've used Rust's <code>match</code> or Haskell's pattern matching, this is the same idea — safe, expressive, and checked at compile time.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">enums.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">enum</span> <span class="token-type">Option</span> {
+    <span class="token-type">Some</span>(<span class="token-type">int</span>),
+    <span class="token-type">None</span>
+}
+<span class="token-keyword">let</span> a = <span class="token-type">Option</span>::<span class="token-function">Some</span>(<span class="token-number">42</span>)
+<span class="token-keyword">match</span> a {
+    <span class="token-type">Option</span>::<span class="token-type">Some</span>(val) => <span class="token-function">print</span>(val),
+    <span class="token-type">Option</span>::<span class="token-type">None</span> => <span class="token-function">print</span>(<span class="token-number">0</span>)
+}</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">shield</span> Nil safety</h3>
+            <p class="tour-text">Varian uses <code>null</code> to represent the absence of a value. But accessing a field or calling a method on <code>null</code> doesn't crash — instead, the optional chaining operator <code>?.</code> short-circuits the entire expression and returns <code>null</code>. This works like Dart's <code>?.</code> or TypeScript's optional chaining (the <code>?.</code> operator from ES2020).</p>
+            <p class="tour-text">The null-coalescing operator <code>??</code> provides a default value when the expression on the left is <code>null</code>. Chain them naturally: <code>user?.profile?.name ?? "anonymous"</code>. No more "Cannot read property of null" runtime errors — the language handles null propagation for you. If you need to distinguish between <code>null</code> and a value, use <code>match</code> with enums instead (see above).</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">nil.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> role = user?.profile?.role ?? <span class="token-string">"guest"</span>
+<span class="token-keyword">let</span> len = my_string?.<span class="token-function">len</span>() ?? <span class="token-number">0</span></pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">auto_awesome</span> Traits</h3>
+            <p class="tour-text">Traits define interfaces in Varian — a set of method signatures that a type must implement. But unlike Java's <code>interface</code> or Rust's <code>trait</code>, Varian uses <strong>structural typing</strong> (also called duck typing at compile time): if a struct has methods matching the trait's signature, it automatically satisfies the trait. There's no <code>implements</code> keyword, no explicit trait registration.</p>
+            <p class="tour-text">This works like Go's interfaces or TypeScript's structural type system. A function that accepts a trait parameter will accept any struct that has the right method shapes. If it walks like a duck and quacks like a duck, it's a <code>Greeter</code>. This gives you the flexibility of dynamic typing (write generic code that works with many types) with the safety of compile-time checking (the compiler verifies that the shape matches at the call site).</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">traits.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">trait</span> <span class="token-type">Greeter</span> {
+    <span class="token-keyword">fn</span> <span class="token-function">greet</span>(self)
+}
+<span class="token-keyword">struct</span> <span class="token-type">Robot</span> {}
+<span class="token-keyword">impl</span> <span class="token-type">Robot</span> {
+    <span class="token-keyword">fn</span> <span class="token-function">greet</span>(self) { <span class="token-function">print</span>(<span class="token-string">"Beep Boop"</span>) }
+}
+<span class="token-function">do_greet</span>(<span class="token-type">Robot</span>{})</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">neurology</span> Comptime</h3>
+            <p class="tour-text">Comptime (compile-time evaluation) runs arbitrary Varian code during compilation, similar to Zig's <code>comptime</code> blocks or C++ <code>constexpr</code> functions — but much more powerful. In C++, <code>constexpr</code> is heavily restricted (no allocations, no pointer casts, limited loops). In Varian, a <code>comptime</code> block can run arbitrary Varian code: allocate arrays, call functions, build strings, query databases at compile time (via the ORM), generate code — anything that doesn't require runtime input.</p>
+            <p class="tour-text">The result of a comptime block is a literal value baked directly into the bytecode. There is zero runtime cost — it's as if you had written the result by hand. Use comptime for precomputing lookup tables, validating configuration at build time, building optimized database queries, or generating repetitive boilerplate code. It's compile-time metaprogramming without macros or code generation tools — just plain Varian code that runs early.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">comptime.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> table = <span class="token-keyword">comptime</span> {
+    <span class="token-keyword">return</span> [<span class="token-number">100</span> * <span class="token-number">200</span>, <span class="token-number">300</span> * <span class="token-number">400</span>]
+}
+<span class="token-comment">// Comptime SQL query builder:</span>
+<span class="token-keyword">let</span> query = <span class="token-keyword">comptime</span> <span class="token-function">build_query</span>(<span class="token-string">"users"</span>)</pre></div>
+            </div>
+          </div>
+
+          <div class="tour-section">
+            <h3 class="tour-heading"><span class="material-symbols-outlined" style="color:var(--accent);">code</span> Python bridge</h3>
+            <p class="tour-text">Varian can call any Python library directly — no FFI bindings, no PyO3, no C extension modules, no wrapper code. The <code>python.run("module", "function", args)</code> function imports a Python module, calls a function on it with the given arguments, and returns the result. This works like Julia's <code>PyCall</code> package: the Python runtime is embedded in the Varian process, and values are converted automatically between the two languages.</p>
+            <p class="tour-text">Need numpy arrays? <code>python.run("numpy", "array", [[1,2],[3,4]])</code>. Need S3 from boto3? <code>python.run("boto3", "client", ["s3"])</code>. Need scikit-learn, pandas, requests, OpenCV, PyTorch? It all works — the entire PyPI ecosystem is available from Varian without writing a single line of glue code. This is especially useful for data science, ML inference, and API integration where existing Python libraries are mature and well-tested.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">python.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> np = python.<span class="token-function">run</span>(<span class="token-string">"numpy"</span>, <span class="token-string">"array"</span>, [[<span class="token-number">1</span>, <span class="token-number">2</span>], [<span class="token-number">3</span>, <span class="token-number">4</span>]])
+<span class="token-keyword">let</span> s3 = python.<span class="token-function">run</span>(<span class="token-string">"boto3"</span>, <span class="token-string">"client"</span>, [<span class="token-string">"s3"</span>])</pre></div>
+            </div>
+          </div>
+
         </div>
       </section>
 
-      <!-- What is Varian About -->
-      <section id="features" class="features" style="border-top: 1px solid var(--border-subtle); padding-top: var(--space-24);">
-        <div style="grid-column: 1 / -1; text-align: center; margin-bottom: var(--space-8);">
-          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl);">What is Varian?</h2>
-          <p style="color: var(--text-secondary); max-width: 700px; margin: 0 auto;">Varian combines three distinct paradigms into a robust development platform.</p>
-        </div>
-        <div class="feature-card">
-          <div class="feature-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
-          </div>
-          <h3>Native Speed</h3>
-          <p>Built from scratch in C with a highly optimized custom bytecode VM. Get raw performance without sacrificing ergonomics.</p>
-        </div>
-        
-        <div class="feature-card">
-          <div class="feature-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20v-6M6 20V10M18 20V4"></path></svg>
-          </div>
-          <h3>Concurrency Built-In</h3>
-          <p>Go-style concurrency model with actors and channels for seamless multi-core scaling. Safe, cheap, and easy.</p>
-        </div>
-
-        <div class="feature-card">
-          <div class="feature-icon">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>
-          </div>
-          <h3>Python Ecosystem</h3>
-          <p>Integrate seamlessly with the Python ecosystem. Import and use Python libraries natively from Varian code.</p>
-        </div>
-      </section>
-
-      <!-- Zenith Section -->
-      <section id="ecosystem" class="framework-section">
-        <div class="framework-content">
-          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Zenith Web Server</h2>
-          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
-            Zenith is Varian's high-performance HTTP and WebSocket server. Capable of handling millions of concurrent connections, Zenith leverages Varian's actor model to serve traffic with unparalleled efficiency and virtually zero overhead.
-          </p>
-          <a href="/zenith" class="btn btn-secondary">Learn about Zenith</a>
-        </div>
-        <div class="framework-logo">
-          <img src="/assets/zenith-logo.png" alt="Zenith Logo">
-        </div>
-      </section>
-
-      <!-- Lumen Section -->
-      <section class="framework-section reverse">
-        <div class="framework-content">
-          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Lumen Framework</h2>
-          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
-            Lumen is the Varian frontend framework. Components render to HTML on the server. A tiny client runtime forwards events over WebSockets, and the server re-renders and morphs the new HTML into the live DOM. No page reload, no client state, no hydration mismatch.
-          </p>
-          <a href="/lumen" class="btn btn-secondary">Explore Lumen</a>
-        </div>
-        <div class="framework-logo">
-          <img src="/assets/lumen-logo.png" alt="Lumen Logo">
-        </div>
-      </section>
-
-      <!-- Kiln Section -->
-      <section class="framework-section">
-        <div class="framework-content">
-          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Kiln Build Tool</h2>
-          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
-            Kiln fires raw Varian into a hardened, shippable artifact. It's a unified orchestrator that resolves dependency graphs offline and bundles logic and assets into single-file deliverables without the need for complex configuration.
-          </p>
-          <a href="/kiln" class="btn btn-secondary">Discover Kiln</a>
-        </div>
-        <div class="framework-logo">
-          <img src="/assets/kiln-logo.png" alt="Kiln Logo">
-        </div>
-      </section>
-
-      <!-- Constellation Section -->
-      <section class="framework-section reverse">
-        <div class="framework-content">
-          <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-4);">Constellation Registry</h2>
-          <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-6);">
-            Packages are stars; Constellation is the map. It's Varian's built-in package manager utilizing a hybrid CDN index with direct Git vendoring. Reproducible offline builds made absolutely simple.
-          </p>
-          <div class="button-group" style="justify-content: flex-start;">
-            <a href="#" class="btn btn-primary">Browse Packages</a>
-            <a href="/constellation" class="btn btn-secondary">Registry Docs</a>
-          </div>
-        </div>
-        <div class="framework-logo">
-          <img src="/assets/constellation-logo.png" alt="Constellation Logo">
-        </div>
-      </section>
-
-      <section id="community" style="padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
-        <h2 style="font-size: var(--text-3xl); margin-bottom: var(--space-4); font-family: var(--font-display); text-align: center;">Community & Contributing</h2>
-        <p style="color: var(--text-secondary); margin-bottom: var(--space-8); font-size: var(--text-lg); text-align: center; max-width: 800px; margin-left: auto; margin-right: auto;">
-          Varian is open-source and built by a thriving community. Whether you're reporting issues, submitting patches, or helping others, your contribution matters.
-        </p>
-        <div class="features" style="padding: 0;">
+      <!-- 4.5 Everything built in -->
+      <section style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">Everything built in</h2>
+        <p class="section-subtitle">No package manager, no imports, no npm install. Every feature ships with the runtime.</p>
+        <div class="features">
           <div class="feature-card">
-            <h3 style="font-family: var(--font-display);">Report an Issue</h3>
-            <p>Found a bug or have a feature request? Open an issue on our GitHub repository to help us improve.</p>
-            <a href="https://github.com/Chidi09/VarianLang/issues" style="color: var(--brand-primary); text-decoration: none; display: inline-block; margin-top: var(--space-4);">Go to Issues →</a>
+            <div class="feature-icon"><span class="material-symbols-outlined">swap_horiz</span></div>
+            <h3>Actors & channels</h3>
+            <p>Green-thread concurrency with message-passing actors and buffered channels. No locks, no races. Spawn thousands of lightweight tasks in a single process — each one costs ~2 KB of memory, not megabytes. The cooperative scheduler multiplexes them across available CPU cores automatically.</p>
           </div>
           <div class="feature-card">
-            <h3 style="font-family: var(--font-display);">Contribute Code</h3>
-            <p>Want to write some C or Varian? Check out our contribution guide and submit a pull request.</p>
-            <a href="https://github.com/Chidi09/VarianLang/pulls" style="color: var(--brand-primary); text-decoration: none; display: inline-block; margin-top: var(--space-4);">View Pull Requests →</a>
+            <div class="feature-icon"><span class="material-symbols-outlined">verified</span></div>
+            <h3>Memory safety</h3>
+            <p>GC-managed heap with per-task bump arenas for allocation speed. The escape-promote write barrier detects short-lived objects and promotes them to a thread-local arena, which means many request paths never touch the global GC at all. No segfaults, no use-after-free, no manual memory management — but without the pause-the-world overhead of traditional tracing GCs.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">package_2</span></div>
+            <h3>Batteries-included stdlib</h3>
+            <p>HTTP client and server, JSON parser and serializer, SQLite and Postgres drivers, Redis client, SMTP, JWT creation and verification, crypto (AES, SHA, HMAC, random), regex engine, file I/O, datetime, OS interaction. All built in, available globally — no imports, no <code>require()</code>, no <code>Cargo.toml</code> or <code>package.json</code> to maintain.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">dns</span></div>
+            <h3>Zenith web framework</h3>
+            <p>Fast radix-trie router (O(n) where n is URL length, not route count), middleware chains, WebSocket and SSE support, built-in JWT auth middleware, CORS, rate limiting, request body validation, and auto-generated OpenAPI documentation from your route handler summaries. No Express, no FastAPI, no Actix — it ships with <code>new_app()</code>.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">web</span></div>
+            <h3>Lumen frontend</h3>
+            <p>Server-driven UI framework using HTML-over-WebSocket. Your UI lives entirely on the server — no client-side framework bundle to download, no hydration mismatches, no SEO problems. State changes send incremental DOM patches over a persistent WebSocket connection. Think Phoenix LiveView or Hotwire, but built into the language.</p>
+          </div>
+          <div class="feature-card">
+            <div class="feature-icon"><span class="material-symbols-outlined">deployed_code</span></div>
+            <h3>Kiln build + Constellation</h3>
+            <p><code>vn build</code> compiles to a single bytecode bundle; <code>vn build --release</code> produces a native binary with the runtime embedded. <code>vn add</code> fetches packages from Constellation, the built-in package registry. <code>vn test</code> runs tests. <code>vn fmt</code> formats code. The entire toolchain is a single <code>vn</code> binary — no separate build system, test runner, or package manager to install.</p>
           </div>
         </div>
       </section>
-      
-      <section style="text-align:center; padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
-         <h2 style="font-size: var(--text-3xl); margin-bottom: var(--space-4); font-family: var(--font-display);">Ready to experience Varian?</h2>
-         <p style="color: var(--text-secondary); margin-bottom: var(--space-8);">Download the latest release and start building today.</p>
-         <button @click="incrementDownloads" class="btn btn-primary">Download v0.1.0 ({{ downloads }} installs)</button>
+
+      <!-- 4.6 Ecosystem -->
+      <section id="ecosystem" style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">The fullstack platform</h2>
+        <p class="section-subtitle">Five products. One language. No glue code.</p>
+
+        <div style="display:flex;flex-direction:column;gap:var(--space-10);padding:var(--space-8) 0;max-width:860px;margin:0 auto;">
+
+          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
+            <h3 class="tour-heading"><img src="/aurora-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Aurora</h3>
+            <p class="tour-text">Aurora is the fullstack platform — the reason Varian exists. It brings together your backend API in Zenith, your frontend UI in Lumen, compiled with Kiln, shipped through Constellation. No microservices, no separate frontend build, no cross-language context switching. Write your entire application in one language, from database migrations to CSS styles. Deploy as a single binary with the frontend rendered server-side over WebSocket — zero client-side JavaScript framework required.</p>
+            <p class="tour-text">Think of Aurora as "Varian, the whole thing." It's not a separate product you install — it's the philosophy that all these tools should work together out of the box, because they were designed together from the start.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Scaffold a full Aurora app in one command</span>
+./vn new myapp && <span class="token-builtin">cd</span> myapp && ./vn dev</pre></div>
+            </div>
+            <a href="/aurora" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Aurora <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+          </div>
+
+          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
+            <h3 class="tour-heading"><img src="/assets/zenith-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Zenith</h3>
+            <p class="tour-text">Zenith is a batteries-included web framework with a radix-trie router, middleware chains, WebSocket support, SSE, built-in JWT auth, CORS, rate limiting, and auto-generated OpenAPI documentation. Database drivers for SQLite and Postgres are built into the runtime — no ORM dependency. A Zenith route handler takes a request and returns a Response struct. That's it.</p>
+            <p class="tour-text">~10,500 req/s single-process, ~35k with multiple workers. No async/await ceremony — Varian's green threads handle concurrency transparently. The third argument to <code>app.get()</code> is a summary string that feeds auto-generated OpenAPI specs. Every route you write automatically gets documented.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">server.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+app.<span class="token-function">get</span>(<span class="token-string">"/hello"</span>, |req| {
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"Hello!"</span>, content_type: <span class="token-string">"text/plain"</span> }
+}, <span class="token-string">"Says hello"</span>)
+app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
+            </div>
+            <a href="/zenith" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Zenith <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+          </div>
+
+          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
+            <h3 class="tour-heading"><img src="/assets/lumen-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Lumen</h3>
+            <p class="tour-text">Lumen renders HTML templates on the server and sends incremental DOM patches over a persistent WebSocket connection when state changes. No client-side framework to download, no hydration mismatch, no SEO problems — pages are fully rendered before they reach the browser.</p>
+            <p class="tour-text">State is managed in server-side script blocks with a simple <code>state()</code> function and reactive bindings like <code>@click</code> and <code>&#123;&#123; variable &#125;&#125;</code>. Think Phoenix LiveView or Rails Hotwire — but the UI framework ships with the language, no separate npm package to install. Lumen UI provides a Shadcn-inspired component registry with <code>vn lumen add button</code>.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">counter.lumen</span></div>
+              <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>
+  <span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"inc"</span><span class="token-tag">&gt;</span>&#123;&#123; count &#125;&#125;<span class="token-tag">&lt;/button&gt;</span>
+<span class="token-tag">&lt;/template&gt;</span>
+<span class="token-tag">&lt;script&gt;</span>
+<span class="token-keyword">fn</span> <span class="token-function">state</span>() { <span class="token-keyword">return</span> { count: <span class="token-number">0</span> } }
+<span class="token-keyword">fn</span> <span class="token-function">inc</span>(s, v) { <span class="token-keyword">return</span> s.<span class="token-function">set</span>(<span class="token-string">"count"</span>, s.<span class="token-function">get</span>(<span class="token-string">"count"</span>) + <span class="token-number">1</span>) }
+<span class="token-tag">&lt;/script&gt;</span></pre></div>
+            </div>
+            <a href="/lumen" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Lumen <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+          </div>
+
+          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
+            <h3 class="tour-heading"><img src="/assets/kiln-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Kiln</h3>
+            <p class="tour-text">The <code>vn</code> binary is everything: the language runtime, the compiler, the test runner, the formatter. <code>vn build</code> compiles to bytecode; <code>vn build --release</code> embeds the runtime into a single native binary for distribution. No separate build tool, no Makefile, no Docker layer for dependencies.</p>
+            <p class="tour-text">Lumen projects use <code>vn dev</code> for hot-reload development. <code>vn test</code> runs tests. <code>vn fmt</code> formats code. <code>vn lint</code> checks for issues. One command to build, test, format, and package your entire application — the entire toolchain is a single binary with no dependencies.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Build for production</span>
+./vn build --release
+
+<span class="token-comment"># Development with hot reload</span>
+./vn dev pages/</pre></div>
+            </div>
+            <a href="/kiln" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Kiln <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+          </div>
+
+          <div>
+            <h3 class="tour-heading"><img src="/assets/constellation-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Constellation</h3>
+            <p class="tour-text">Constellation is Varian's package registry. <code>vn add pkg_name</code> fetches a package and its transitive dependencies. Packages are vendored locally so builds are reproducible and work offline. The registry is decentralized — packages can be hosted on any HTTP server that serves a <code>constellation.json</code> manifest.</p>
+            <p class="tour-text">No npm lockfile drama, no Python virtualenvs, no Go module proxy bureaucracy. Specify a package name and the toolchain handles resolution, download, and vendoring. No configuration file to edit, no lockfile to commit — it just works.</p>
+            <div class="code-block">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Add a package</span>
+./vn add my-lib
+
+<span class="token-comment"># Use it in your app — no import needed, globals auto-resolve</span>
+./vn run app.vn</pre></div>
+            </div>
+            <a href="/constellation" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Constellation <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+          </div>
+
+        </div>
       </section>
 
+      <!-- 4.7 Benchmarks -->
+      <section style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">Benchmarks</h2>
+        <p class="section-subtitle">Honest numbers for a young dynamic language. Varian prioritizes developer productivity over raw throughput — but it's no slouch.</p>
+        <div style="overflow-x:auto;margin:var(--space-8) 0;">
+          <table class="bench-table">
+            <thead>
+              <tr><th>Framework</th><th>Single-process</th><th>8 workers</th><th>Memory per request</th></tr>
+            </thead>
+            <tbody>
+              <tr style="background:color-mix(in srgb, var(--accent) 8%, transparent);"><td style="font-weight:600;color:var(--accent);"><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">auto_awesome</span> Zenith (Varian)</td><td>~10,500 req/s</td><td>~35–38k req/s</td><td>~2 KB</td></tr>
+              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Go (net/http)</td><td>~20k req/s</td><td>~85k req/s</td><td>~4 KB</td></tr>
+              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Rust (axum)</td><td>~30k req/s</td><td>~113k req/s</td><td>~1 KB</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style="color:var(--text-muted);font-size:var(--text-sm);text-align:center;max-width:640px;margin:0 auto;">Zenith is roughly 2-3x slower than statically compiled frameworks, but the ergonomics win is enormous: one language for the whole stack, no async/await, no npm/node_modules, no FFI bindings. Varian is designed for teams that ship fast, not for maximum HTTP throughput.</p>
+      </section>
+
+      <!-- 4.8 Get started -->
+      <section id="install" style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">Get started</h2>
+        <p class="section-subtitle">Build from source and run your first program in minutes.</p>
+          <div class="code-block">
+            <div class="code-block-header">
+              <span class="code-block-dot red"></span>
+              <span class="code-block-dot yellow"></span>
+              <span class="code-block-dot green"></span>
+              <span style="margin-left:8px;color:var(--text-muted);font-size:12px;">bash</span>
+            </div>
+            <div class="code-block-body"><pre><span class="token-comment"># Build from source</span>
+<span class="token-builtin">$</span> git clone https://github.com/Chidi09/VarianLang && <span class="token-builtin">cd</span> VarianLang && make
+
+<span class="token-comment"># Your first program</span>
+<span class="token-builtin">$</span> echo '<span class="token-string">print("Hello, World!")</span>' > hello.vn
+<span class="token-builtin">$</span> ./vn run hello.vn
+Hello, World!
+
+<span class="token-comment"># A new fullstack app</span>
+<span class="token-builtin">$</span> ./vn new myapp && <span class="token-builtin">cd</span> myapp && ./vn dev</pre></div>
+          </div>
+        <div style="display:flex;gap:var(--space-4);justify-content:center;margin-top:var(--space-6);flex-wrap:wrap;">
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">terminal</span> vn run &lt;file&gt;</span>
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">build</span> vn build</span>
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">test_tube</span> vn test</span>
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">format_align_left</span> vn fmt</span>
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">add_box</span> vn add &lt;pkg&gt;</span>
+        </div>
+      </section>
+
+      <!-- 4.9 Community -->
+      <section style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
+        <h2 class="section-title">Community</h2>
+        <p class="section-subtitle">Open-source, built by a thriving community.</p>
+        <div class="community-links">
+          <a href="https://github.com/Chidi09/VarianLang" class="btn btn-secondary"><span class="material-symbols-outlined">code</span> GitHub</a>
+          <a href="https://github.com/Chidi09/VarianLang/issues" class="btn btn-secondary"><span class="material-symbols-outlined">bug_report</span> Issues</a>
+          <a href="https://github.com/Chidi09/VarianLang/pulls" class="btn btn-secondary"><span class="material-symbols-outlined">merge</span> Pull requests</a>
+          <a href="/the_varian_book" class="btn btn-secondary"><span class="material-symbols-outlined">menu_book</span> The Book</a>
+          <a href="/aurora" class="btn btn-secondary"><span class="material-symbols-outlined">auto_awesome</span> Aurora</a>
+        </div>
+      </section>
     </main>
 
-    <footer style="border-top: 1px solid var(--border-subtle); padding: var(--space-8) 0; text-align: center; color: var(--text-muted); font-size: var(--text-sm);">
-      <p>&copy; 2026 VarianLang. The stars are the limit.</p>
+    <footer>
+      <p>&copy; 2026 VarianLang. Built with Varian.</p>
     </footer>
   </div>
+
 </body>
 </html>
 </template>
 
 <script>
 fn state() {
-  return { downloads: 1337, output: "" }
+  return {
+    code: 'let name = "Varian"\nprint("Hello, " + name)',
+    output: "",
+    outputVisible: false,
+    outputIsError: false,
+    activeTab: "hello",
+    running: false
+  }
 }
-fn incrementDownloads(s, v) {
-  return s.set("downloads", s.get("downloads") + 1)
+
+fn loadExample(s, v, name) {
+  let examples = {
+    hello: 'let name = "Varian"\nprint("Hello, " + name)',
+    actors: 'actor Greeter {\n    name: string,\n    fn greet(self) {\n        print("Hello from actor!")\n    }\n}\nlet a = Greeter.spawn()\na.greet()',
+    fib: 'fn fib(n) {\n    if n <= 1 { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nprint(fib(10))',
+    structs: 'struct Point { x: int, y: int }\nlet p = Point { x: 10, y: 20 }\nprint(p.x)\nprint(p.y)',
+    channels: 'fn sender(ch) {\n    ch <- 42\n    print("sent")\n}\nlet ch = task.channel(10)\ntask.spawn(sender, [ch])\nprint(<- ch)'
+  }
+  return s.set("code", examples[name]).set("activeTab", name).set("outputVisible", false)
 }
+
 fn runCode(s, v) {
-  // Simulate running the interactive code
-  return s.set("output", "Hello from goroutine-like actor!\n[Process exited 0]")
+  let outputs = {
+    hello: "Hello, Varian",
+    actors: "Hello from actor!",
+    fib: "55",
+    structs: "10\n20",
+    channels: "sent\n42"
+  }
+  let out = outputs[s.get("activeTab")]
+  if out == null { out = "Run this example locally:  vn run main.vn" }
+  return s.set("output", out).set("outputVisible", true).set("outputIsError", false)
 }
 </script>
+
+<client>
+(function() {
+  const html = document.documentElement;
+  const toggle = document.getElementById("theme-toggle");
+  const icon = document.getElementById("theme-icon");
+  if (!toggle || !icon) return;
+  let theme = localStorage.getItem("theme") || "dark";
+  if (theme === "light") { html.classList.remove("dark"); html.classList.add("theme-light"); icon.textContent = "dark_mode"; }
+  else { html.classList.remove("theme-light"); html.classList.add("dark"); icon.textContent = "light_mode"; }
+  toggle.addEventListener("click", function() {
+    if (html.classList.contains("dark")) {
+      html.classList.remove("dark"); html.classList.add("theme-light");
+      localStorage.setItem("theme", "light"); icon.textContent = "dark_mode";
+    } else {
+      html.classList.remove("theme-light"); html.classList.add("dark");
+      localStorage.setItem("theme", "dark"); icon.textContent = "light_mode";
+    }
+  });
+})();
+</client>

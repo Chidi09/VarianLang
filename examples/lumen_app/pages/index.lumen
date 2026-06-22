@@ -7,10 +7,12 @@
   <p style="margin-top:24px"><a href="/about">About →</a></p>
 </main>
 </template>
+
 <script>
 fn state() {
-  return { name: "Lumen", count: 0 }
+    return { name:  "Lumen", count: 0 }
 }
 fn inc(s, v) { return s.set("count", s.get("count") + 1) }
-fn dec(s, v) { return s.set("count", s.get("count") - 1) }
+fn dec(s, v) { return s.set("count", s.get("count") -1) }
+
 </script>

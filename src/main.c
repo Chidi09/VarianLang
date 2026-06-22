@@ -501,7 +501,7 @@ static void lumen_print_banner(const char *pages, const char *port, double ms) {
     char *names[256];
     int n = lumen_collect_pages(pages, names, 256);
 
-    printf("\n  %s LUMEN %s  %sv%s%s   %sthe Varian frontend framework%s\n\n",
+    printf("\n  %s AURORA %s  %sv%s%s   %sfullstack Varian platform%s\n\n",
            CHIP, R, G, VARIAN_VERSION, R, D, R);
     printf("  %s➜%s  %sLocal%s     %shttp://localhost:%s/%s\n", A, R, W, R, A, port, R);
     printf("  %s➜%s  %sPages%s     %s%d%s %sin %s/%s\n\n", A, R, W, R, W, n, R, D, pages, R);
@@ -623,52 +623,115 @@ static int lumen_dev(const char *pages, const char *port) {
     return 0;
 }
 
-/* Scaffold a starter Lumen project: <name>/pages/index.lumen + a public/
- * dir pre-loaded with the favicon set (exactly like create-next-app /
- * nuxi init / create-vite ship a default favicon). */
+/* Scaffold a starter Aurora project: <name>/pages/index.lumen + main.vn +
+ * constellation.toml + lib/ + public/ with favicon assets. */
 static int lumen_new(const char *name) {
-    char dir[1024], pub[1024];
+    /* `name` is the path the user passed (e.g. "./shop" or "/tmp/app"); the
+     * project's identity is its basename, not the whole path. Paths below keep
+     * using `name`; identity strings (toml name, README title) use `base`. */
+    const char *base = strrchr(name, '/');
+    base = (base && base[1]) ? base + 1 : name;
+    char dir[1024], pub[1024], lib_dir[1024];
     snprintf(dir, sizeof(dir), "%s/pages", name);
     snprintf(pub, sizeof(pub), "%s/public", name);
+    snprintf(lib_dir, sizeof(lib_dir), "%s/lib", name);
     char cmd[2400];
-    snprintf(cmd, sizeof(cmd), "mkdir -p '%s' '%s'", dir, pub);
+    snprintf(cmd, sizeof(cmd), "mkdir -p '%s' '%s' '%s'", dir, pub, lib_dir);
     if (system(cmd) != 0) { fprintf(stderr, "lumen: cannot create %s\n", dir); return 1; }
 
-    char page[1100];
+    /* ── constellation.toml ── */
+    char toml[1024];
+    snprintf(toml, sizeof(toml), "%s/constellation.toml", name);
+    FILE *tf = fopen(toml, "wb");
+    if (tf) {
+        fprintf(tf, "[package]\n");
+        fprintf(tf, "name = \"%s\"\n", base);
+        fprintf(tf, "version = \"0.1.0\"\n");
+        fprintf(tf, "kind = \"aurora\"\n\n");
+        fprintf(tf, "[capabilities]\n");
+        fprintf(tf, "ffi = false\n");
+        fprintf(tf, "python = false\n");
+        fprintf(tf, "net = false\n");
+        fprintf(tf, "fs = false\n");
+        fclose(tf);
+    }
+
+    /* ── main.vn (Zenith app with Lumen pages mounted) ── */
+    char main_vn[1024];
+    snprintf(main_vn, sizeof(main_vn), "%s/main.vn", name);
+    FILE *mf = fopen(main_vn, "wb");
+    if (mf) {
+        fputs("// Aurora — fullstack Varian app.\n", mf);
+        fputs("//\n", mf);
+        fputs("// Your Lumen UI lives in pages/ and is served by `vn dev` (development)\n", mf);
+        fputs("// and `vn build` (production). main.vn is the Zenith backend half:\n", mf);
+        fputs("// the custom JSON / API endpoints your frontend calls. Run it with:\n", mf);
+        fputs("//   vn run main.vn\n\n", mf);
+        fputs("let app = new_app()\n\n", mf);
+        fputs("// Example API route. Add your own below; the frontend fetches these.\n", mf);
+        fputs("app.get(\"/api/health\", |_req| {\n", mf);
+        fputs("  return Response { status: 200, body: \"{\\\"ok\\\":true}\", content_type: \"application/json\" }\n", mf);
+        fputs("}, \"Health check\", null)\n\n", mf);
+        fputs("app.listen(8091)\n", mf);
+        fclose(mf);
+    }
+
+    /* ── lib/config.vn (so the scaffolded lib/ isn't an empty promise) ── */
+    char libcfg[1100];
+    snprintf(libcfg, sizeof(libcfg), "%s/config.vn", lib_dir);
+    FILE *lf = fopen(libcfg, "wb");
+    if (lf) {
+        fputs("// Project configuration. Keep secrets OUT of source — read them from the\n", lf);
+        fputs("// environment and provide safe local fallbacks here. `use \"lib/config.vn\"`\n", lf);
+        fputs("// from main.vn to share these across the backend.\n\n", lf);
+        fprintf(lf, "let APP_NAME = \"%s\"\n", base);
+        fputs("let API_PORT = 8091\n", lf);
+        fclose(lf);
+    }
+
+    /* ── pages/index.lumen (Aurora vocabulary) ── */
+    char page[4096];
     snprintf(page, sizeof(page), "%s/index.lumen", dir);
     FILE *f = fopen(page, "wb");
     if (!f) { fprintf(stderr, "lumen: cannot write %s\n", page); return 1; }
     fputs(
         "<template>\n"
-        "<main style=\"min-height:100vh;display:grid;place-items:center;text-align:center\">\n"
-        "  <section style=\"padding:48px\">\n"
-        "    <svg @click=\"pulse\" viewBox=\"0 0 48 48\" width=\"150\" height=\"150\" role=\"button\" aria-label=\"Lumen\" style=\"cursor:pointer;filter:drop-shadow(0 16px 38px rgba(0,0,0,.15))\">\n"
-        "      <rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"12\" fill=\"var(--lumen-card)\" stroke=\"var(--lumen-border)\" stroke-width=\"1\"/>\n"
-        "      <path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"{{ color }}\" style=\"transition:fill .35s ease\"/>\n"
-        "    </svg>\n"
-        "    <h1 style=\"font-size:40px;font-weight:800;margin:30px 0 6px;letter-spacing:-.5px\">Welcome to <span style=\"color:var(--lumen-primary)\">Lumen</span></h1>\n"
-        "    <p style=\"color:var(--lumen-muted-fg);margin:0 0 6px\">Click the logo — it re-renders on the server and morphs the DOM live.</p>\n"
-        "    <p style=\"color:var(--lumen-muted-fg);font-size:14px;margin:0\">pulse <b style=\"color:var(--lumen-fg)\">{{ count }}</b> · edit <code style=\"color:var(--lumen-muted-fg)\">pages/index.lumen</code> to hot-reload</p>\n"
-        "  </section>\n"
-        "</main>\n"
+        "<Page>\n"
+        "  <Section>\n"
+        "    <Container size=\"sm\">\n"
+        "      <Stack gap=\"6\" align=\"center\">\n"
+        "        <Hero eyebrow=\"Welcome\" title=\"Aurora\"\n"
+        "              subtitle=\"The fullstack Varian platform — Zenith on the server, Lumen in the browser.\">\n"
+        "          <Button variant=\"primary\" on=\"pulse\">Clicked {{ count }} times</Button>\n"
+        "        </Hero>\n"
+        "        <Text muted>Edit pages/index.lumen and save — it hot-reloads.</Text>\n"
+        "      </Stack>\n"
+        "    </Container>\n"
+        "  </Section>\n"
+        "</Page>\n"
         "</template>\n"
         "<script>\n"
-        "// The logo colour is plain server state. Each click recomputes it and\n"
-        "// Lumen morphs only the changed attribute into the live DOM — no client\n"
-        "// JS, no hydration. That is the whole reactivity model.\n"
-        "fn _hue(n) {\n"
-        "  let palette = [\"#f5b829\", \"#ff6b6b\", \"#4dd4ac\", \"#5b9cff\", \"#c77dff\", \"#ff9f43\"]\n"
-        "  return palette[n % 6]\n"
-        "}\n"
         "fn state() {\n"
-        "  return { count: 0, color: \"#f5b829\" }\n"
+        "  return { count: 0 }\n"
         "}\n"
-        "fn pulse(s, v) {\n"
-        "  let n = s.get(\"count\") + 1\n"
-        "  return s.set(\"count\", n).set(\"color\", _hue(n))\n"
+        "// Server-driven: the click goes to Zenith over the LumenJS socket, this\n"
+        "// runs, and the new HTML is sent back. _v is the (unused) event value.\n"
+        "fn pulse(s, _v) {\n"
+        "  return s.set(\"count\", s.get(\"count\") + 1)\n"
         "}\n"
         "</script>\n", f);
     fclose(f);
+
+    /* ── README.md ── */
+    char readme[1024];
+    snprintf(readme, sizeof(readme), "%s/README.md", name);
+    FILE *rf = fopen(readme, "wb");
+    if (rf) {
+        fprintf(rf, "# %s\n\n", base);
+        fprintf(rf, "Built with [Aurora](https://aurora.dev) — the fullstack Varian platform.\n\n");
+        fprintf(rf, "## Run\n\n```\ncd %s\nvn dev\n```\n\nThen open http://localhost:8090/ — edit `pages/index.lumen` to hot-reload.\n", base);
+        fclose(rf);
+    }
 
     int assets = lumen_copy_assets(pub);
 
@@ -680,8 +743,11 @@ static int lumen_new(const char *name) {
     const char *R    = color ? LUM_RESET  : "";
     const char *CHIP = color ? LUM_CHIP   : "";
 
-    printf("\n  %s LUMEN %s  %screated %s%s%s\n\n", CHIP, R, D, W, name, R);
+    printf("\n  %s AURORA %s  %screated %s%s%s\n\n", CHIP, R, D, W, name, R);
     printf("  %s✔%s pages/index.lumen\n", GR, R);
+    printf("  %s✔%s main.vn\n", GR, R);
+    printf("  %s✔%s constellation.toml\n", GR, R);
+    printf("  %s✔%s lib/\n", GR, R);
     if (assets > 0)
         printf("  %s✔%s public/ %s(%d assets — favicons + manifest)%s\n", GR, R, D, assets, R);
     printf("\n  %sNext steps:%s\n\n", D, R);
@@ -1481,10 +1547,12 @@ static void print_help(const char *prog) {
     printf("  %s build <file>  Build app.vnb (or --release for native binary)\n", prog);
     printf("  %s lsp           Start LSP server\n", prog);
     printf("\n");
-    printf("Lumen (frontend):\n");
-    printf("  %s lumen new <name>          Scaffold a new Lumen app\n", prog);
-    printf("  %s lumen add <comp>          Copy a Lumen UI component to pages/components/\n", prog);
+    printf("Aurora (fullstack):\n");
+    printf("  %s new <name>                Scaffold a new Aurora project\n", prog);
     printf("  %s dev [dir] [port]          Serve a pages/ dir with live reload (default ./pages :8090)\n", prog);
+    printf("  %s build <file>              Build for production\n", prog);
+    printf("  %s lumen new <name>          Scaffold a Lumen-only frontend (alias)\n", prog);
+    printf("  %s lumen add <comp>          Copy a Lumen UI component to pages/components/\n", prog);
     printf("  %s lumen build <dir> <out>   Compile pages/ into one runnable app\n", prog);
     printf("\n");
     printf("  %s --help        Show this help\n", prog);
@@ -1523,6 +1591,8 @@ static void collect_fmt_files(const char *dir, char ***files, int *count, int *c
                 matches = true;
             } else if (nlen > 6 && strcmp(entry->d_name + nlen - 6, ".vhtml") == 0) {
                 matches = true;
+            } else if (nlen > 7 && strcmp(entry->d_name + nlen - 7, ".lumen") == 0) {
+                matches = true;
             }
             if (matches) {
                 if (*count >= *cap) {
@@ -1556,8 +1626,16 @@ static int process_fmt_file(const char *path, bool check_only, bool show_diff) {
     source[nread] = '\0';
     fclose(file);
 
+    size_t plen = strlen(path);
+    bool is_lumen = (plen > 6 && strcmp(path + plen - 6, ".lumen") == 0);
+
     int out_pos = 0;
-    char *out = fmt_format_source(source, size, &out_pos);
+    char *out;
+    if (is_lumen) {
+        out = fmt_format_lumen_source(source, size, &out_pos);
+    } else {
+        out = fmt_format_source(source, size, &out_pos);
+    }
     if (!out) {
         free(source);
         return 1;
@@ -1905,7 +1983,19 @@ int main(int argc, char *argv[]) {
         bool temp_lumen_entry = false;
         struct stat st_pages;
         if (stat("pages", &st_pages) == 0 && S_ISDIR(st_pages.st_mode)) {
-            printf("[Kiln] Detected Lumen project (pages/ directory present). Pre-compiling routes...\n");
+            bool is_aurora = false;
+            struct stat st_toml2;
+            if (stat("constellation.toml", &st_toml2) == 0) {
+                ConstellationManifest m2;
+                if (pkg_manifest_load(&m2, "constellation.toml")) {
+                    if (m2.kind == MANIFEST_KIND_AURORA) is_aurora = true;
+                }
+            }
+            if (is_aurora) {
+                printf("[Kiln] Detected Aurora project. Pre-compiling routes...\n");
+            } else {
+                printf("[Kiln] Detected Lumen project (pages/ directory present). Pre-compiling routes...\n");
+            }
             if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
                 fprintf(stderr, "[Kiln] Pre-compilation of Lumen pages failed.\n");
                 return 1;
@@ -2138,6 +2228,12 @@ int main(int argc, char *argv[]) {
         const char *pages = (argc >= 3) ? argv[2] : "pages";
         const char *port  = (argc >= 4) ? argv[3] : "8090";
         return lumen_dev(pages, port);
+    }
+
+    /* `vn new <name>` — scaffold a new Aurora project (alias: `vn lumen new`). */
+    if (strcmp(argv[1], "new") == 0) {
+        if (argc < 3) { fprintf(stderr, "Usage: %s new <name>\n", argv[0]); return 1; }
+        return lumen_new(argv[2]);
     }
 
     /* `vn lumen <new|add|dev|build> ...` — Lumen project tooling. */

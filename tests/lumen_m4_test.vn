@@ -81,7 +81,7 @@ test "live loop sends full html on first event, patch on second" {
           },
           |m| { log.msgs = log.msgs.push(m) } ]
     )
-    _lumen_live_loop(ws, counter)
+    _lumen_live_loop(ws, counter, null, null)
     assert_eq(log.msgs.len(), 2)
     assert_eq(_validate.get_field(json_decode(log.msgs[0]), "t"), "html")
     assert_eq(_validate.get_field(json_decode(log.msgs[1]), "t"), "p")

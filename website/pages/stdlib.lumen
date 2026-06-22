@@ -39,7 +39,7 @@
       transition: color var(--transition-fast);
     }
     .docs-sidebar a:hover, .docs-sidebar a.active {
-      color: var(--brand-primary);
+      color: var(--accent);
     }
     .docs-content {
       flex: 1;
@@ -62,7 +62,7 @@
     .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
     .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
     .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
-    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a { color: var(--accent); text-decoration: none; }
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body code {
       font-family: var(--font-mono);
@@ -85,7 +85,7 @@
       color: var(--text-primary);
     }
     .markdown-body blockquote {
-      border-left: 4px solid var(--brand-primary);
+      border-left: 4px solid var(--accent);
       color: var(--text-muted);
       margin-bottom: var(--space-4);
       background: rgba(255, 158, 187, 0.05); /* owo pink */
@@ -101,14 +101,18 @@
 <body>
   <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
     <a href="/" class="nav-brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      <img src="/assets/varian-logo.png" alt="Varian" width="28" height="28">
       Varian
     </a>
     <div class="nav-links">
-      <a href="/#features">Features</a>
-      <a href="/the_varian_book">Docs</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-    </div>
+        <a href="/#language">Language</a>
+        <a href="/#ecosystem">Ecosystem</a>
+        <a href="/aurora">Aurora</a>
+        <a href="/zenith">Zenith</a>
+        <a href="/lumen">Lumen</a>
+        <a href="/the_varian_book">The Book</a>
+        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+      </div>
   </nav>
 
   <div class="docs-container">

@@ -45,13 +45,19 @@ static Value lib_string_lower(VM *vm, int arg_count, Value *args) {
 }
 
 static Value lib_string_substring(VM *vm, int arg_count, Value *args) {
-    if (arg_count < 3 || args[0].type != VAL_STRING ||
-        args[1].type != VAL_INT || args[2].type != VAL_INT)
+    /* Two forms: substring(start) -> from start to end of string;
+     *            substring(start, end). args[0] is the receiver string. */
+    if (arg_count < 2 || args[0].type != VAL_STRING || args[1].type != VAL_INT)
         return val_nil();
 
     ObjString *s = args[0].as.string;
     int start = (int)args[1].as.integer;
-    int end = (int)args[2].as.integer;
+    int end;
+    if (arg_count >= 3 && args[2].type == VAL_INT) {
+        end = (int)args[2].as.integer;
+    } else {
+        end = s->length;
+    }
 
     if (start < 0) start = 0;
     if (end > s->length) end = s->length;
@@ -106,6 +112,74 @@ static Value lib_array_push(VM *vm, int arg_count, Value *args) {
         dst->elements[i] = src->elements[i];
     dst->elements[src->count] = args[1];
     return val_array(dst);
+}
+
+/* array.append(x): mutate IN PLACE with geometric growth -> amortized O(1),
+ * unlike push() which copies the whole array (O(n), so O(n^2) in a build loop).
+ * Arrays are already mutable here (index assignment mutates), so this is
+ * consistent. Returns the same array, so `parts.append(a).append(b)` chains.
+ * This is the building block for the O(n) string builder pattern
+ * (`let p=[]; p.append(chunk); ...; p.join("")`) that replaced the quadratic
+ * `out = out + chunk` accumulation in the Lumen renderer/compiler. */
+static Value lib_array_append(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 2 || args[0].type != VAL_ARRAY)
+        return val_nil();
+    ObjArray *a = args[0].as.array;
+    if (a->count + 1 > a->capacity) {
+        int newcap = a->capacity < 8 ? 8 : a->capacity * 2;
+        Value *ne = (Value *)realloc(a->elements, (size_t)newcap * sizeof(Value));
+        if (!ne) return val_nil();
+        a->elements = ne;
+        a->capacity = newcap;
+    }
+    a->elements[a->count++] = args[1];
+    return args[0];
+}
+
+/* array.join(sep): concatenate elements into one string in a single O(total)
+ * pass over a geometrically-grown buffer. String elements are copied directly;
+ * ints/floats/bools are stringified like the `+` operator; other objects become
+ * "<object>". The companion to append() for fast string building. */
+static Value lib_array_join(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || args[0].type != VAL_ARRAY)
+        return val_nil();
+    ObjArray *a = args[0].as.array;
+    const char *sep = "";
+    int seplen = 0;
+    if (arg_count >= 2 && args[1].type == VAL_STRING) {
+        sep = args[1].as.string->chars;
+        seplen = args[1].as.string->length;
+    }
+    size_t cap = 256, len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return val_nil();
+    char numbuf[64];
+    for (int i = 0; i < a->count; i++) {
+        const char *s; int sl;
+        Value e = a->elements[i];
+        switch (e.type) {
+            case VAL_STRING: s = e.as.string->chars; sl = e.as.string->length; break;
+            case VAL_INT:    sl = snprintf(numbuf, sizeof(numbuf), "%ld", (long)e.as.integer); s = numbuf; break;
+            case VAL_FLOAT:  sl = snprintf(numbuf, sizeof(numbuf), "%g", e.as.floating); s = numbuf; break;
+            case VAL_BOOL:   s = e.as.boolean ? "true" : "false"; sl = (int)strlen(s); break;
+            case VAL_NIL:    s = ""; sl = 0; break;
+            default:         s = "<object>"; sl = 8; break;
+        }
+        size_t need = len + (i > 0 ? (size_t)seplen : 0) + (size_t)sl + 1;
+        if (need > cap) {
+            while (cap < need) cap *= 2;
+            char *nb = (char *)realloc(buf, cap);
+            if (!nb) { free(buf); return val_nil(); }
+            buf = nb;
+        }
+        if (i > 0 && seplen > 0) { memcpy(buf + len, sep, seplen); len += seplen; }
+        memcpy(buf + len, s, sl); len += sl;
+    }
+    buf[len] = '\0';
+    ObjString *result = allocate_string(vm, buf, (int)len);
+    free(buf);
+    return val_string(result);
 }
 
 /* ─── string.split(delimiter) returns array of strings ─── */
@@ -302,4 +376,6 @@ void lib_string_init(VM *vm) {
 
     vm_register_dispatch(vm, "array", "len",  val_native_fn((void *)lib_array_len));
     vm_register_dispatch(vm, "array", "push", val_native_fn((void *)lib_array_push));
+    vm_register_dispatch(vm, "array", "append", val_native_fn((void *)lib_array_append));
+    vm_register_dispatch(vm, "array", "join", val_native_fn((void *)lib_array_join));
 }

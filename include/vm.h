@@ -382,6 +382,10 @@ typedef struct {
     int loop_start;      /* instruction offset of loop start */
     int break_jumps[64]; /* offsets of break jump slots to patch */
     int break_count;
+    int continue_jumps[64]; /* offsets of continue jump slots to patch to the
+                             * loop's continue target (the increment step in a
+                             * range-for, or the back-edge in a while/array-for) */
+    int continue_count;
     int scope_depth;     /* scope depth when loop started (for break/continue) */
 } LoopInfo;
 

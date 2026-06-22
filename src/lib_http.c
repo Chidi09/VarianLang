@@ -54,11 +54,18 @@ static int http_arg_base(int arg_count, Value *args) {
     return (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
 }
 
-/* ─── http.get(url) ─── */
+/* ─── http.get(url [, timeout_ms]) ───
+ * CAVEAT: blocking (synchronous curl_easy_perform). A slow downstream blocks
+ * the entire worker. For production, wrap in a queue worker-pool or switch to
+ * curl_multi_* driven by the event loop (the correct root fix). */
 static Value lib_http_get(VM *vm, int arg_count, Value *args) {
     int base = http_arg_base(arg_count, args);
     if (arg_count < base + 1 || args[base].type != VAL_STRING) return val_nil();
     const char *url = args[base].as.string->chars;
+    long timeout = 30L;
+    if (arg_count > base + 1 && args[base + 1].type == VAL_INT) {
+        timeout = (long)args[base + 1].as.integer;
+    }
     CURL *curl = curl_easy_init();
     if (!curl) return val_nil();
     DynBuf buf = {NULL, 0};
@@ -66,7 +73,7 @@ static Value lib_http_get(VM *vm, int arg_count, Value *args) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "Varian/0.1.0");
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
@@ -77,7 +84,9 @@ static Value lib_http_get(VM *vm, int arg_count, Value *args) {
     return val_string(result);
 }
 
-/* ─── http.post(url, headers, body) ─── */
+/* ─── http.post(url, headers, body [, timeout_ms]) ───
+ * CAVEAT: blocking (synchronous curl_easy_perform). Same constraint as http.get
+ * — offload to a queue worker-pool for non-blocking production use. */
 static Value lib_http_post(VM *vm, int arg_count, Value *args) {
     int base = http_arg_base(arg_count, args);
     if (arg_count < base + 1 || args[base].type != VAL_STRING) {
@@ -88,6 +97,10 @@ static Value lib_http_post(VM *vm, int arg_count, Value *args) {
     Value headers_val = (arg_count > base + 1) ? args[base + 1] : val_nil();
     Value body_val = (arg_count > base + 2) ? args[base + 2] : val_nil();
     const char *body = (body_val.type == VAL_STRING) ? body_val.as.string->chars : "";
+    long timeout = 30L;
+    if (arg_count > base + 3 && args[base + 3].type == VAL_INT) {
+        timeout = (long)args[base + 3].as.integer;
+    }
 
     CURL *curl = curl_easy_init();
     if (!curl) return val_nil();
@@ -110,7 +123,7 @@ static Value lib_http_post(VM *vm, int arg_count, Value *args) {
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "Varian/0.1.0");
     CURLcode res = curl_easy_perform(curl);
     curl_easy_cleanup(curl);

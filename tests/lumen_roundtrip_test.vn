@@ -31,7 +31,7 @@ test "lumen live round trip mock" {
         ]
     )
 
-    _lumen_live_loop(mock_ws, c)
+    _lumen_live_loop(mock_ws, c, null, null)
 
     // The component state should have updated and rendered
     // The server should have written back a {"t":"html","html":"..."}

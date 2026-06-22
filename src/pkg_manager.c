@@ -275,6 +275,12 @@ bool pkg_manifest_load(ConstellationManifest *manifest, const char *path) {
             if (sec == SEC_PACKAGE) {
                 if (strcmp(key, "name") == 0) strncpy(manifest->name, val, sizeof(manifest->name) - 1);
                 else if (strcmp(key, "version") == 0) strncpy(manifest->version, val, sizeof(manifest->version) - 1);
+                else if (strcmp(key, "kind") == 0) {
+                    if (strcmp(val, "aurora") == 0) manifest->kind = MANIFEST_KIND_AURORA;
+                    else if (strcmp(val, "lumen") == 0) manifest->kind = MANIFEST_KIND_LUMEN;
+                    else if (strcmp(val, "zenith") == 0) manifest->kind = MANIFEST_KIND_ZENITH;
+                    else manifest->kind = MANIFEST_KIND_UNSET;
+                }
             } else if (sec == SEC_DEPS) {
                 if (manifest->dep_count < 64) {
                     int i = manifest->dep_count++;
@@ -337,7 +343,11 @@ bool pkg_manifest_save(const ConstellationManifest *manifest, const char *path) 
     
     fprintf(f, "[package]\n");
     fprintf(f, "name = \"%s\"\n", manifest->name);
-    fprintf(f, "version = \"%s\"\n\n", manifest->version);
+    fprintf(f, "version = \"%s\"\n", manifest->version);
+    if (manifest->kind == MANIFEST_KIND_AURORA) fprintf(f, "kind = \"aurora\"\n");
+    else if (manifest->kind == MANIFEST_KIND_LUMEN) fprintf(f, "kind = \"lumen\"\n");
+    else if (manifest->kind == MANIFEST_KIND_ZENITH) fprintf(f, "kind = \"zenith\"\n");
+    fprintf(f, "\n");
     
     fprintf(f, "[deps]\n");
     for (int i = 0; i < manifest->dep_count; i++) {

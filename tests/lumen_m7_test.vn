@@ -26,7 +26,7 @@ fn _drive_once(comp, hname) {
           },
           |m| { cap.msg = m } ]
     )
-    _lumen_live_loop(ws, comp)
+    _lumen_live_loop(ws, comp, null, null)
     return cap.msg
 }
 
@@ -42,7 +42,7 @@ test "a throwing handler is caught and sent as a friendly error message" {
 }
 
 test "the live shell embeds the branded overlay + logo, no tagline" {
-    let shell = _lumen_shell("<div>x</div>", "/live")
+    let shell = _lumen_shell("<div>x</div>", "/live", null)
     assert_ne(shell.index_of("function showErr"), -1)
     assert_ne(shell.index_of("LUMEN"), -1)
     assert_ne(shell.index_of("M26 7 L15 27"), -1)   // logo bolt path

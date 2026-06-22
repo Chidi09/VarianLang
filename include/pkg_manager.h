@@ -6,6 +6,7 @@
 typedef struct {
     char name[64];
     char version[32];
+    int kind; // 0 = unset, 1 = zenith, 2 = lumen, 3 = aurora
     
     // Dependencies
     struct {
@@ -26,6 +27,11 @@ typedef struct {
     // Build
     char build_script[128];
 } ConstellationManifest;
+
+#define MANIFEST_KIND_UNSET 0
+#define MANIFEST_KIND_ZENITH 1
+#define MANIFEST_KIND_LUMEN 2
+#define MANIFEST_KIND_AURORA 3
 
 /* Add a package dependency to constellation.toml */
 int pkg_add(const char *pkg_name);

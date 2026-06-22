@@ -175,6 +175,10 @@ impl SseSender {
     }
 }
 
+// CAVEAT: Not TLS-aware — writes handshake directly to the raw socket FD via
+// http.write_socket(), bypassing any TLS layer. wss:// is unsupported; deploy
+// behind a reverse proxy (nginx/Caddy) that terminates TLS and speaks plain
+// ws:// to Zenith. See listen_tls for the same caveat.
 fn upgrade_websocket(req) {
     let headers = req.headers
     if headers == null {
@@ -200,6 +204,7 @@ fn upgrade_websocket(req) {
     }
 }
 
+// CAVEAT: Same TLS limitation as upgrade_websocket — writes to raw socket FD.
 fn sse_handshake(req) {
     let response = "HTTP/1.1 200 OK\r\n" +
                    "Content-Type: text/event-stream\r\n" +
@@ -546,10 +551,12 @@ impl ZenithApp {
     // certbot, or a self-signed cert for local dev -- see
     // examples/tls_test.vn for how to generate one with openssl).
     //
-    // Known gap: WebSocket/SSE upgrades (upgrade_websocket/sse_handshake)
+    // CAVEAT: WebSocket/SSE upgrades (upgrade_websocket/sse_handshake)
     // write directly to the raw socket via http.write_socket(), which is
-    // not TLS-aware -- wss:// is not supported yet, only plain https://
-    // request/response (including app.serve_static()).
+    // not TLS-aware — wss:// is unsupported. Lumen reactivity (lumen_mount)
+    // silently breaks behind listen_tls because the browser tries wss://
+    // and the server can't upgrade it. Production workaround: terminate TLS
+    // at a reverse proxy (nginx/Caddy) that proxies plain ws:// to Zenith.
     fn listen_tls(self, port, cert_path, key_path) {
         self.port = port
         print("Zenith running on https://localhost:", port)

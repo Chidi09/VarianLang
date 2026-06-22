@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <limits.h>
 #include <stdarg.h>
 #include <sys/time.h>
 #include <unistd.h>
@@ -127,10 +128,23 @@ void chunk_free(Chunk *chunk) {
     chunk_init(chunk);
 }
 
+/* realloc that never silently loses the old pointer: on allocation failure
+ * it aborts with a message instead of returning NULL (which the callers below
+ * cannot recover from without leaking/corrupting). Used only at growth sites
+ * in void-returning functions where there is no Value to RAISE through. */
+static void *vm_xrealloc(void *ptr, size_t size) {
+    void *p = realloc(ptr, size);
+    if (!p && size != 0) {
+        fprintf(stderr, "fatal: out of memory (realloc of %zu bytes failed)\n", size);
+        abort();
+    }
+    return p;
+}
+
 static void chunk_grow(Chunk *chunk) {
     int old = chunk->capacity;
     chunk->capacity = old < 8 ? 8 : old * 2;
-    chunk->code = (uint8_t *)realloc(chunk->code, chunk->capacity);
+    chunk->code = (uint8_t *)vm_xrealloc(chunk->code, chunk->capacity);
 }
 
 void chunk_write(Chunk *chunk, uint8_t byte, int line) {
@@ -144,8 +158,8 @@ void chunk_write(Chunk *chunk, uint8_t byte, int line) {
         if (chunk->rle_capacity < chunk->rle_count + 1) {
             int old = chunk->rle_capacity;
             chunk->rle_capacity = old < 8 ? 8 : old * 2;
-            chunk->rle_lines = (int *)realloc(chunk->rle_lines, sizeof(int) * chunk->rle_capacity);
-            chunk->rle_counts = (int *)realloc(chunk->rle_counts, sizeof(int) * chunk->rle_capacity);
+            chunk->rle_lines = (int *)vm_xrealloc(chunk->rle_lines, sizeof(int) * chunk->rle_capacity);
+            chunk->rle_counts = (int *)vm_xrealloc(chunk->rle_counts, sizeof(int) * chunk->rle_capacity);
         }
         chunk->rle_lines[chunk->rle_count] = line;
         chunk->rle_counts[chunk->rle_count] = 1;
@@ -167,7 +181,7 @@ int chunk_add_constant(Chunk *chunk, Value value) {
     if (chunk->constant_capacity < chunk->constant_count + 1) {
         int old = chunk->constant_capacity;
         chunk->constant_capacity = old < 8 ? 8 : old * 2;
-        chunk->constants = (Value *)realloc(chunk->constants,
+        chunk->constants = (Value *)vm_xrealloc(chunk->constants,
                                             sizeof(Value) * chunk->constant_capacity);
     }
     chunk->constants[chunk->constant_count] = value;
@@ -472,6 +486,10 @@ ObjStruct *new_struct(VM *vm, int field_count, bool force_heap) {
         s->fields = (Value *)calloc(fc, sizeof(Value));
         s->field_validations = (ValidationRule **)calloc(fc, sizeof(ValidationRule *));
         s->field_validation_counts = (int *)calloc(fc, sizeof(int));
+        if (!s || !s->field_names || !s->fields || !s->field_validations || !s->field_validation_counts) {
+            fprintf(stderr, "fatal: out of memory in new_struct (%zu fields)\n", fc);
+            exit(1);
+        }
         s->obj.next = vm->objects;
         vm->objects = (Obj *)s;
     }
@@ -508,11 +526,20 @@ static Value escape_promote(VM *vm, Value v) {
             ObjStruct *s = v.as.structure;
             if (!struct_is_arena_backed(t, s)) return v;
             ObjStruct *copy = new_struct(vm, s->field_count, true /* force_heap */);
-            copy->type_name = s->type_name;             /* never arena-backed, safe to share */
+            /* type_name and field_names[i] are heap-owned (strdup'd) and are
+             * free()'d per-struct by free_object(). The promoted copy is linked
+             * into vm->objects and WILL be swept, so it must own its OWN copies
+             * of them -- aliasing the arena original's pointers double-frees
+             * them (the same arena struct can be promoted more than once, e.g.
+             * a child state reached repeatedly through _lumen_active_child_states
+             * during a {{#each}} live render) and dangles the arena original.
+             * Only the validation-rule pointers are genuinely shared, because
+             * free_object() never frees those individually. */
+            copy->type_name = s->type_name ? strdup(s->type_name) : NULL;
             copy->struct_validations = s->struct_validations;
             copy->struct_validation_count = s->struct_validation_count;
             for (int i = 0; i < s->field_count; i++) {
-                copy->field_names[i] = s->field_names[i]; /* never arena-backed, safe to share */
+                copy->field_names[i] = s->field_names[i] ? strdup(s->field_names[i]) : NULL;
                 copy->field_validations[i] = s->field_validations[i];
                 copy->field_validation_counts[i] = s->field_validation_counts[i];
                 copy->fields[i] = escape_promote(vm, s->fields[i]); /* recurse: a field can itself be an arena struct */
@@ -593,7 +620,7 @@ static void gc_push_gray(VM *vm, Obj *obj) {
     if (vm->gray_count >= vm->gray_capacity) {
         int old = vm->gray_capacity;
         vm->gray_capacity = old < 64 ? 64 : old * 2;
-        vm->gray_stack = (Obj **)realloc(vm->gray_stack, sizeof(Obj *) * vm->gray_capacity);
+        vm->gray_stack = (Obj **)vm_xrealloc(vm->gray_stack, sizeof(Obj *) * vm->gray_capacity);
     }
     vm->gray_stack[vm->gray_count++] = obj;
 }
@@ -1019,7 +1046,25 @@ static void compiler_push_loop(Compiler *compiler, int loop_start) {
     LoopInfo *loop = &compiler->loops[compiler->loop_count++];
     loop->loop_start = loop_start;
     loop->break_count = 0;
+    loop->continue_count = 0;
     loop->scope_depth = compiler->scope_depth;
+}
+
+/* Patch every recorded `continue` jump in the innermost loop to land at
+ * `target` — the loop's continue point. For a range-`for` that is the
+ * loop-variable increment (so `continue` advances the counter instead of
+ * spinning forever on the same value); for `while`/array-`for`/`loop` it is the
+ * back-edge that re-tests the condition. Called once per loop, after the body. */
+static void compiler_patch_continues(Compiler *compiler, int target) {
+    if (compiler->loop_count <= 0) return;
+    LoopInfo *loop = &compiler->loops[compiler->loop_count - 1];
+    for (int i = 0; i < loop->continue_count; i++) {
+        int offset = loop->continue_jumps[i];
+        int jump = target - offset - 2;
+        compiler->chunk->code[offset] = (jump >> 8) & 0xFF;
+        compiler->chunk->code[offset + 1] = jump & 0xFF;
+    }
+    loop->continue_count = 0;
 }
 
 static int compiler_pop_loop(Compiler *compiler, int exit_patch) {
@@ -1616,6 +1661,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             int exit_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
             emit_byte(compiler, BC_POP);
             compile_node(compiler, node->while_stmt.body);
+            compiler_patch_continues(compiler, compiler->chunk->count);
             emit_loop(compiler, loop_start);
             patch_jump(compiler, exit_jump);
             emit_byte(compiler, BC_POP);
@@ -1656,6 +1702,8 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
                 compile_node(compiler, node->for_stmt.body);
 
+                /* continue -> run the increment, don't skip it */
+                compiler_patch_continues(compiler, compiler->chunk->count);
                 emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)var_idx);
                 int one_idx = chunk_add_constant(compiler->chunk, val_int(1));
                 emit_constant_idx(compiler, one_idx);
@@ -1710,6 +1758,8 @@ static void compile_node(Compiler *compiler, AstNode *node) {
 
                 compile_node(compiler, node->for_stmt.body);
 
+                /* continue -> run the increment, don't skip it */
+                compiler_patch_continues(compiler, compiler->chunk->count);
                 {
                     ObjString *s = copy_string(var_name, (int)strlen(var_name));
                     int idx = chunk_add_constant(compiler->chunk, val_string(s));
@@ -1740,6 +1790,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 int loop_start = compiler->chunk->count;
                 compiler_push_loop(compiler, loop_start);
                 compile_node(compiler, node->for_stmt.body);
+                compiler_patch_continues(compiler, compiler->chunk->count);
                 emit_loop(compiler, loop_start);
                 int break_target = compiler->chunk->count;
                 compiler_pop_loop(compiler, break_target);
@@ -1752,6 +1803,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             int loop_start = compiler->chunk->count;
             compiler_push_loop(compiler, loop_start);
             compile_node(compiler, node->loop_stmt.body);
+            compiler_patch_continues(compiler, compiler->chunk->count);
             emit_loop(compiler, loop_start);
             int break_target = compiler->chunk->count;
             compiler_pop_loop(compiler, break_target);
@@ -1826,7 +1878,14 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                     if (compiler->local_depths[i] > loop->scope_depth)
                         emit_byte(compiler, BC_POP);
                 }
-                emit_loop(compiler, compiler->loops[compiler->loop_count - 1].loop_start);
+                /* Forward jump to the loop's continue target, patched after the
+                 * body (see compiler_patch_continues). Jumping straight to
+                 * loop_start used to skip a range-for's increment -> infinite
+                 * loop on `continue`. */
+                int jump_offset = emit_jump(compiler, BC_JUMP);
+                if (loop->continue_count < 64) {
+                    loop->continue_jumps[loop->continue_count++] = jump_offset;
+                }
             }
             break;
         }
@@ -2518,6 +2577,57 @@ static char *stringify_value(VM *vm, Value v) {
     return s;
 }
 
+/* Lumen template escaping in one O(n) C pass. The pure-Varian version built the
+ * result with `out = out + c` char-by-char, which is O(n^2) in both time and
+ * garbage — a ~100KB template (a docs/book page) blew up to multiple GB and got
+ * OOM-killed at compile time. Escapes for embedding template text inside a
+ * Varian double-quoted string literal: backslash, quote, braces (so Lumen's
+ * own {expr} interpolation in the generated code isn't eaten) and the usual
+ * control chars. Must stay byte-for-byte identical to _lumen_escape_string. */
+static Value native_lumen_escape_str(VM *vm, int arg_count, Value *args) {
+    if (arg_count < 1 || args[0].type != VAL_STRING) return val_nil();
+    ObjString *in = args[0].as.string;
+    const char *s = in->chars;
+    int n = in->length;
+    /* Worst case every byte doubles. */
+    char *out = (char *)malloc((size_t)n * 2 + 1);
+    if (!out) return val_nil();
+    int j = 0;
+    for (int i = 0; i < n; i++) {
+        char c = s[i];
+        switch (c) {
+            case '\\': out[j++] = '\\'; out[j++] = '\\'; break;
+            case '"':  out[j++] = '\\'; out[j++] = '"';  break;
+            case '{':  out[j++] = '\\'; out[j++] = '{';  break;
+            case '}':  out[j++] = '\\'; out[j++] = '}';  break;
+            case '\n': out[j++] = '\\'; out[j++] = 'n';  break;
+            case '\r': out[j++] = '\\'; out[j++] = 'r';  break;
+            case '\t': out[j++] = '\\'; out[j++] = 't';  break;
+            default:   out[j++] = c;                     break;
+        }
+    }
+    out[j] = '\0';
+    ObjString *result = allocate_string(vm, out, j);
+    free(out);
+    return val_string(result);
+}
+
+/* Report an uncaught throw, INCLUDING the thrown value, so `throw("msg")` and
+ * `throw(SomeStruct{...})` surface their payload to the developer instead of a
+ * bare "Unhandled exception". A thrown string is shown raw (no JSON quotes);
+ * anything else is JSON-encoded. */
+static void unhandled_exception(VM *vm, Value v) {
+    if (v.type == VAL_STRING && v.as.string) {
+        runtime_error(vm, "Unhandled exception: %s", v.as.string->chars);
+    } else if (v.type == VAL_NIL) {
+        runtime_error(vm, "Unhandled exception");
+    } else {
+        char *s = stringify_value(vm, v);
+        runtime_error(vm, "Unhandled exception: %s", s);
+        free(s);
+    }
+}
+
 static Value native_assert_eq(VM *vm, int arg_count, Value *args) {
     if (arg_count < 2) {
         runtime_error(vm, "assert_eq requires 2 arguments");
@@ -2860,6 +2970,7 @@ bool vm_run(VM *vm, bool run_tests) {
     extern Value native_json_decode(VM *vm, int arg_count, Value *args);
     define_global(vm, copy_string("json_encode", 11), val_native_fn((void *)native_json_encode));
     define_global(vm, copy_string("json_decode", 11), val_native_fn((void *)native_json_decode));
+    define_global(vm, copy_string("_lumen_escape_str", 17), val_native_fn((void *)native_lumen_escape_str));
 
     /* Initialize built-in modules */
     {
@@ -3160,7 +3271,7 @@ static int cache_map_find(VM *vm, uint64_t key_hash) {
 void cache_map_put(VM *vm, uint64_t key_hash, Value result) {
     if (vm->cache_map_count + 2 > vm->cache_map_capacity) {
         int new_cap = vm->cache_map_capacity ? vm->cache_map_capacity * 2 : 16;
-        vm->cache_map = (Value *)realloc(vm->cache_map, new_cap * sizeof(Value));
+        vm->cache_map = (Value *)vm_xrealloc(vm->cache_map, (size_t)new_cap * sizeof(Value));
         vm->cache_map_capacity = new_cap;
     }
     vm->cache_map[vm->cache_map_count++] = val_int((int64_t)key_hash);
@@ -3529,8 +3640,12 @@ L_BC_LOOP_TOP:
                         }
                         sb = buf_b;
                     }
+                    if ((long)la + (long)lb > INT_MAX - 1) {
+                        RAISE("String concatenation result too large");
+                    }
                     int len = la + lb;
-                    char *chars = (char *)malloc(len + 1);
+                    char *chars = (char *)malloc((size_t)len + 1);
+                    if (!chars) { RAISE("Out of memory in string concatenation"); }
                     memcpy(chars, sa, la);
                     memcpy(chars + la, sb, lb);
                     chars[len] = '\0';
@@ -3848,7 +3963,7 @@ L_BC_LOOP_TOP:
                                 t->frames[target_frame].function->code +
                                 t->try_stack[t->try_count].catch_offset;
                         } else {
-                            runtime_error(vm, "Unhandled exception");
+                            unhandled_exception(vm, t->throw_value);
                             return false;
                         }
                     }
@@ -4050,7 +4165,9 @@ L_BC_LOOP_TOP:
                             arr->capacity = i + 1;
                             if (arr->capacity < old_cap * 2) arr->capacity = old_cap * 2;
                             if (arr->capacity < 8) arr->capacity = 8;
-                            arr->elements = realloc(arr->elements, sizeof(Value) * arr->capacity);
+                            Value *ne = (Value *)realloc(arr->elements, sizeof(Value) * arr->capacity);
+                            if (!ne) { arr->capacity = old_cap; RAISE("Out of memory growing array"); }
+                            arr->elements = ne;
                         }
                         for (int j = arr->count; j <= i; j++) {
                             arr->elements[j] = val_nil();
@@ -4535,7 +4652,7 @@ L_BC_LOOP_TOP:
                         t->frames[target_frame].function->code +
                         t->try_stack[t->try_count].catch_offset;
                 } else {
-                    runtime_error(vm, "Unhandled exception");
+                    unhandled_exception(vm, err);
                     return false;
                 }
                 DISPATCH();
@@ -4868,13 +4985,19 @@ L_BC_LOOP_TOP:
             L_BC_BUILD_STRING:
             {
                 uint8_t count = READ_BYTE();
-                int total_len = 0;
+                long total_len64 = 0;
                 for (int i = 0; i < count; i++) {
                     Value v = t->stack[t->stack_top - count + i];
                     if (v.type == VAL_STRING)
-                        total_len += v.as.string->length;
+                        total_len64 += v.as.string->length;
                 }
-                char *chars = (char *)malloc(total_len + 1);
+                if (total_len64 > INT_MAX - 1) {
+                    t->stack_top -= count;
+                    RAISE("Built string result too large");
+                }
+                int total_len = (int)total_len64;
+                char *chars = (char *)malloc((size_t)total_len + 1);
+                if (!chars) { t->stack_top -= count; RAISE("Out of memory building string"); }
                 int pos = 0;
                 for (int i = 0; i < count; i++) {
                     Value v = t->stack[t->stack_top - count + i];
@@ -4896,8 +5019,12 @@ L_BC_LOOP_TOP:
                 Value b = POP();
                 Value a = POP();
                 if (a.type == VAL_STRING && b.type == VAL_STRING) {
+                    if ((long)a.as.string->length + (long)b.as.string->length > INT_MAX - 1) {
+                        RAISE("String concatenation result too large");
+                    }
                     int len = a.as.string->length + b.as.string->length;
-                    char *chars = (char *)malloc(len + 1);
+                    char *chars = (char *)malloc((size_t)len + 1);
+                    if (!chars) { RAISE("Out of memory in string concatenation"); }
                     memcpy(chars, a.as.string->chars, a.as.string->length);
                     memcpy(chars + a.as.string->length, b.as.string->chars, b.as.string->length);
                     chars[len] = '\0';

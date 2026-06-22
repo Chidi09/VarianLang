@@ -350,6 +350,7 @@ static Token string_literal(Lexer *lexer, char quote, bool is_byte) {
         /* For now, just treat as interpolated string */
         size_t buf_size = 4096;
         char *buf = (char *)malloc(buf_size);
+        if (!buf) return make_error_token(lexer, "Out of memory in string literal");
         int buf_pos = 0;
         bool in_expr = false;
         int brace_depth = 0;
@@ -397,7 +398,9 @@ static Token string_literal(Lexer *lexer, char quote, bool is_byte) {
 
             if (buf_pos >= (int)buf_size - 4) {
                 buf_size *= 2;
-                buf = (char *)realloc(buf, buf_size);
+                char *nb = (char *)realloc(buf, buf_size);
+                if (!nb) { free(buf); return make_error_token(lexer, "Out of memory in string literal"); }
+                buf = nb;
             }
         }
         buf[buf_pos] = '\0';
@@ -410,6 +413,7 @@ static Token string_literal(Lexer *lexer, char quote, bool is_byte) {
     /* Plain string */
     size_t buf_size = 1024;
     char *buf = (char *)malloc(buf_size);
+    if (!buf) return make_error_token(lexer, "Out of memory in string literal");
     int buf_pos = 0;
 
     while (!is_at_end(lexer)) {
@@ -446,13 +450,16 @@ static Token string_literal(Lexer *lexer, char quote, bool is_byte) {
 
         if (buf_pos >= (int)buf_size - 4) {
             buf_size *= 2;
-            buf = (char *)realloc(buf, buf_size);
+            char *nb = (char *)realloc(buf, buf_size);
+            if (!nb) { free(buf); return make_error_token(lexer, "Out of memory in string literal"); }
+            buf = nb;
         }
     }
     /* For byte slices, store (length << 1) | 1 prefix so parser knows the exact length */
     if (is_byte) {
         /* Reallocate buf with room for length prefix */
         char *packed = (char *)malloc(buf_pos + 5);
+        if (!packed) { free(buf); return make_error_token(lexer, "Out of memory in byte literal"); }
         packed[0] = (char)(buf_pos & 0xFF);
         packed[1] = (char)((buf_pos >> 8) & 0xFF);
         packed[2] = (char)((buf_pos >> 16) & 0xFF);
@@ -474,6 +481,7 @@ static Token regex_literal(Lexer *lexer) {
     /* Capture /pattern/flags */
     size_t buf_size = 1024;
     char *buf = (char *)malloc(buf_size);
+    if (!buf) return make_error_token(lexer, "Out of memory in regex literal");
     int buf_pos = 0;
 
     while (!is_at_end(lexer)) {
@@ -492,12 +500,20 @@ static Token regex_literal(Lexer *lexer) {
         }
         if (buf_pos >= (int)buf_size - 4) {
             buf_size *= 2;
-            buf = (char *)realloc(buf, buf_size);
+            char *nb = (char *)realloc(buf, buf_size);
+            if (!nb) { free(buf); return make_error_token(lexer, "Out of memory in regex literal"); }
+            buf = nb;
         }
     }
 
     /* Capture flags */
     while (isalpha(peek(lexer))) {
+        if (buf_pos >= (int)buf_size - 1) {
+            buf_size *= 2;
+            char *nb = (char *)realloc(buf, buf_size);
+            if (!nb) { free(buf); return make_error_token(lexer, "Out of memory in regex literal"); }
+            buf = nb;
+        }
         buf[buf_pos++] = advance(lexer);
     }
     buf[buf_pos] = '\0';

@@ -287,6 +287,17 @@ static void parser_register_method(Parser *parser, const char *name) {
 
 /* ─── Token Helpers ─── */
 static void advance(Parser *parser) {
+    /* Release the just-consumed token's heap value. Only string / interpolated
+     * / byte-slice / regex / error tokens malloc their .value in the lexer;
+     * identifiers and numbers read from token->start, never .value. Every
+     * parser consumer copies what it needs into the arena
+     * (ast_string_literal / token_strdup) before the next advance, so the
+     * original lexer buffer is dead by the time we get here. This frees it
+     * instead of leaking it (was: one malloc per string token, never freed). */
+    if (parser->previous.value) {
+        free(parser->previous.value);
+        parser->previous.value = NULL;
+    }
     parser->previous = parser->current;
     parser->current = lexer_next(parser->lexer);
 }
@@ -2090,6 +2101,15 @@ static AstNode *parse_call(Parser *parser) {
     }
 
     while (true) {
+        /* If '(' is on a line AFTER the previous token, it starts a new
+         * expression statement — do NOT consume it as a function call.
+         * This prevents:
+         *   let s = foo
+         *   (s.bar)(x)
+         * from being parsed as  let s = foo(s.bar)(x)  */
+        if (check(parser, TOKEN_LPAREN) && parser->current.line > parser->previous.line) {
+            break;
+        }
         if (match(parser, TOKEN_LPAREN)) {
             expr = finish_call(parser, expr);
         } else if (match(parser, TOKEN_LBRACKET)) {
@@ -2478,7 +2498,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
     {
         const char *builtin_methods[] = {
             "len", "upper", "lower", "substring", "trim", "spawn",
-            "serve", "serve_with_routes", "push", "split", "starts_with", "replace",
+            "serve", "serve_with_routes", "push", "append", "join", "split", "starts_with", "replace",
             "write_socket", "close_socket", "read_socket", "code_at", "from_codes",
             "sha1_base64", "hash_password", "verify_password",
             "bit_and", "bit_or", "bit_xor", "index_of", "last_index_of",
@@ -2493,7 +2513,10 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
         }
     }
 
-    /* Prime the first token */
+    /* Prime the first token. previous/current live on an uninitialised stack
+     * Parser; null their .value so the first advance() frees NULL, not garbage. */
+    parser->previous.value = NULL;
+    parser->current.value = NULL;
     advance(parser);
 }
 

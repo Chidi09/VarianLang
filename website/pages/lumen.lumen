@@ -39,7 +39,7 @@
       transition: color var(--transition-fast);
     }
     .docs-sidebar a:hover, .docs-sidebar a.active {
-      color: var(--brand-primary);
+      color: var(--accent);
     }
     .docs-content {
       flex: 1;
@@ -62,7 +62,7 @@
     .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
     .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
     .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
-    .markdown-body a { color: var(--brand-primary); text-decoration: none; }
+    .markdown-body a { color: var(--accent); text-decoration: none; }
     .markdown-body a:hover { text-decoration: underline; }
     .markdown-body code {
       font-family: var(--font-mono);
@@ -85,7 +85,7 @@
       color: var(--text-primary);
     }
     .markdown-body blockquote {
-      border-left: 4px solid var(--brand-primary);
+      border-left: 4px solid var(--accent);
       color: var(--text-muted);
       margin-bottom: var(--space-4);
       background: rgba(255, 158, 187, 0.05); /* owo pink */
@@ -98,15 +98,19 @@
     .markdown-body th { background-color: var(--bg-surface); }
   </style>
 </head>
-<body>
+<body class="theme-lumen-light">
   <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
     <a href="/" class="nav-brand">
-      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="token-keyword"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>
+      <img src="/assets/varian-logo.png" alt="Varian" width="28" height="28">
       Varian
     </a>
     <div class="nav-links">
-      <a href="/#features">Features</a>
-      <a href="/the_varian_book">Docs</a>
+      <a href="/#language">Language</a>
+      <a href="/#ecosystem">Ecosystem</a>
+      <a href="/aurora">Aurora</a>
+      <a href="/zenith">Zenith</a>
+      <a href="/lumen">Lumen</a>
+      <a href="/the_varian_book">The Book</a>
       <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
     </div>
   </nav>
@@ -150,6 +154,8 @@ because the server is the only place state lives and renders — <strong>no hydr
 </ol>
 <hr />
 <h2>The developer guide (Lumen + <code>vn dev</code>)</h2>
+<h2>From zero to live</h2>
+
 <h3>Quick start</h3>
 <pre><code class="language-sh">vn lumen new myapp     # scaffold pages/ + public/ (favicons, manifest) + a starter component
 cd myapp
@@ -181,6 +187,48 @@ fn pulse(s, v) { return s.set(&quot;count&quot;, s.get(&quot;count&quot;) + 1) }
   <code>lumen_component(...)</code> and registers it. The language has no <code>eval</code>, so <code>vn dev</code> does
   this in a build pass that emits one runnable <code>.vn</code>, then serves it.</li>
 </ul>
+<h3>Import system</h3>
+<p><code>.lumen</code> files can import other components, utilities, and Lumen UI components
+using a standard ES-module-like syntax:</p>
+<pre><code class="language-varian">import UserCard from "./components/UserCard"
+import { Button, Card } from "lumen-ui"
+import { format } from "./helpers"
+</code></pre>
+<p>Three kinds of imports are supported:</p>
+<ul>
+<li><strong>Relative paths</strong> (<code>"./components/X"</code>) — resolved relative to the importing
+  file. The imported <code>.lumen</code> file is compiled as a child component and
+  registered under its PascalCased name.</li>
+<li><strong>Bare package names</strong> (<code>"lumen-ui"</code>) — resolved from <code>vn_modules/</code> or
+  <code>$VARIAN_HOME/vn_modules/</code>. The package manifest declares which components
+  it exports, and they are registered automatically.</li>
+<li><strong>Direct imports</strong> (<code>import { fn } from "./lib"</code>) — import plain Varian
+  functions from <code>.vn</code> files (not <code>.lumen</code>). This lets you share helper
+  logic across components without duplicating code.</li>
+</ul>
+<p>Imports are resolved at compile time by <code>_lumen_extract_imports</code> and
+<code>_lumen_collect_pages</code>, which perform full transitive dependency resolution.
+Circular imports are detected and produce a build error.</p>
+<h3>Scoped CSS</h3>
+<p>Lumen supports both global and scoped styles in <code>.lumen</code> files. A
+<code>&lt;style scoped&gt;</code> block is rewritten so that every selector is prefixed with
+<code>[data-lumen-css="ComponentName"]</code>, isolating the component's styles from
+the rest of the page:</p>
+<pre><code class="language-html">&lt;style scoped&gt;
+.card { background: var(--lumen-surface); border-radius: 8px; }
+.card h3 { color: var(--lumen-primary); }
+&lt;/style&gt;
+
+&lt;!-- Plain &lt;style&gt; (no scoped) emits global CSS as-is --&gt;
+&lt;style&gt;
+body { font-family: var(--lumen-font); }
+&lt;/style&gt;
+</code></pre>
+<p>The scoping is implemented by <code>_lumen_scope_css</code> which rewrites the CSS
+selectors, and <code>_lumen_scope_html</code> which injects <code>data-lumen-css</code> attributes
+onto the component's root elements. This means zero class-name collisions
+between components — each component's styles are sealed behind its own
+attribute selector.</p>
 <h3>Reactivity model</h3>
 <p>State is <strong>plain Varian data on the server</strong>. There is no <code>useState</code>, no signals, no
 effect dependency arrays, no virtual DOM in the browser. The whole loop is:</p>
@@ -276,6 +324,22 @@ reconstructs <code>prev[0:s] + d + prev[len-e:]</code> and morphs. Invisible to 
 <li><strong>Slots.</strong> <code>&lt;Card&gt; inner markup &lt;/Card&gt;</code> projects into the card's <code>&#123;&#123;! children &#125;&#125;</code>;
   interactive components nested inside a slot keep their own scope.</li>
 </ul>
+<h3>Triple-brace &amp; JSX-style props</h3>
+<p>Beyond standard <code>&#123;&#123; var &#125;&#125;</code> interpolation, Lumen supports two additional template
+syntaxes for special cases:</p>
+<ul>
+<li><strong>Triple-brace <code>&#123;&#123;&#123; raw &#125;&#125;&#125;</code></strong> — unescaped HTML interpolation. Use this when
+  you need to inject raw HTML from a variable (e.g. a rendered markdown string
+  or an SVG). <strong>You are responsible for escaping</strong> — Lumen does not escape the
+  contents of triple braces. The <code>&#123;&#123;! children &#125;&#125;</code> syntax is a slot for child
+  content, distinct from raw interpolation.</li>
+<li><strong>JSX-style prop binding <code>&lt;Card title=&#123; expr &#125;&gt;</code></strong> — when passing dynamic
+  values to child component props, you can use single-brace syntax instead
+  of <code>title="&#123;&#123; expr &#125;&#125;"</code>. The compiler rewrites <code>title=&#123; expr &#125;</code> to
+  <code>title="&#123;&#123; expr &#125;&#125;"</code> via <code>_lumen_rewrite_prop_braces</code>, so both forms work
+  identically. This is purely syntactic sugar for authors who prefer the
+  JSX aesthetic.</li>
+</ul>
 <h3>Client islands (M8)</h3>
 <p>For a genuinely client-only widget (chart, canvas, map), add a <code>&lt;client&gt;</code> block of real
 browser JS. It's embedded as a <code>&lt;script&gt;</code> that runs once on first paint and is left
@@ -283,6 +347,48 @@ untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-r
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.</p>
+<h3>LumenJS &amp; event modifiers</h3>
+<p>Lumen ships a tiny (~2.5 KB gzipped) client-side JavaScript runtime called
+<strong>LumenJS</strong>. It is not a framework you write against — it is a transport layer
+that Lumen emits on your behalf. The user never writes JS; they write Varian.
+LumenJS handles WebSocket reconnect with exponential backoff, event delegation,
+DOM morphing, and a small set of opt-in browser API shims.</p>
+<p><strong>Event modifiers</strong> can be attached to any <code>@event</code> handler using the
+<code>data-lumen-mod</code> attribute:</p>
+<pre><code class="language-html">&lt;!-- Prevent default + stop propagation --&gt;
+&lt;form @submit=&quot;save&quot; data-lumen-mod=&quot;prevent stop&quot;&gt;...&lt;/form&gt;
+
+&lt;!-- Debounce input by 300ms --&gt;
+&lt;input @input=&quot;search&quot; data-lumen-mod=&quot;debounce:300&quot; /&gt;
+
+&lt;!-- Confirmation dialog before delete --&gt;
+&lt;button @click=&quot;deleteItem&quot; data-lumen-mod=&quot;confirm:Delete this item?&quot;&gt;
+  Delete
+&lt;/button&gt;
+
+&lt;!-- Only fire on Enter key --&gt;
+&lt;input @keydown=&quot;submitSearch&quot; data-lumen-mod=&quot;key:Enter&quot; /&gt;
+</code></pre>
+<p>Available modifiers: <code>prevent</code>, <code>stop</code>, <code>once</code>, <code>debounce(ms)</code>,
+<code>throttle(ms)</code>, <code>confirm("msg")</code>, <code>key(KeyName)</code>. All are handled
+client-side without a server round-trip.</p>
+<p><strong>Opt-in client modules</strong> are scanned from the template at compile time
+and only shipped if the page uses them:</p>
+<table>
+<thead>
+<tr><th>Module</th><th>Attribute</th><th>What it does</th></tr>
+</thead>
+<tbody>
+<tr><td><code>clipboard</code></td><td><code>data-lumen-copy</code></td><td>Copy element content to clipboard on click</td></tr>
+<tr><td><code>focus</code></td><td><code>data-lumen-focus</code></td><td>Autofocus an element on mount</td></tr>
+<tr><td><code>scroll</code></td><td><code>data-lumen-scroll</code></td><td>Scroll into view, lock body scroll, restore position</td></tr>
+<tr><td><code>toast</code></td><td><code>data-lumen-toast</code></td><td>Display a toast notification</td></tr>
+<tr><td><code>key</code></td><td><code>data-lumen-key</code></td><td>Global keyboard shortcut map</td></tr>
+</tbody>
+</table>
+<p>A page that only uses <code>@click</code> handlers ships core LumenJS and nothing else.
+A page that uses <code>data-lumen-copy</code> ships <code>core + clipboard</code>. The bundling
+is automatic — no configuration, no manual tree-shaking.</p>
 <h3>Lumen UI (Component Registry)</h3>
 <p>Lumen ships with an official, Shadcn-inspired component registry called <strong>Lumen UI</strong>. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in <code>pages/components/</code>) so you fully own and customize the code.</p>
 <p>Add components via the CLI:</p>
@@ -294,6 +400,99 @@ vn lumen add card
 - <strong>Theme-Aware:</strong> Lumen is "Light Mode First" but ships with native Dark Mode. Global CSS variables (<code>var(--lumen-bg)</code>, <code>var(--lumen-primary)</code>, etc.) adapt automatically when the <code>dark</code> class is toggled on the <code>&lt;html&gt;</code> element. Use <code>vn lumen add theme-toggle</code> for a pre-built switcher.
 - <strong>Inline SVG Icons:</strong> Icons are pure, inline Lucide SVG vectors baked directly into the <code>.lumen</code> files. They inherit <code>currentColor</code>, cause zero layout shift, and require no external CDN scripts.
 - <strong>Batteries Included:</strong> Available components: <code>button</code>, <code>card</code>, <code>input</code>, <code>dialog</code>, <code>badge</code>, <code>accordion</code>, <code>alert</code>, <code>progress</code>, <code>select</code>, <code>checkbox</code>, <code>switch</code>, <code>separator</code>, and <code>theme-toggle</code>.</p>
+<h3>Built-in layout components</h3>
+<p>Beyond the copyable Lumen UI registry, Lumen ships a set of built-in layout
+and content components that are available globally — no <code>vn lumen add</code> needed.
+They form a complete page-building vocabulary:</p>
+<table>
+<thead>
+<tr><th>Component</th><th>Purpose</th></tr>
+</thead>
+<tbody>
+<tr><td><code>&lt;Page&gt;</code></td><td>Root page wrapper — emits DOCTYPE, &lt;html&gt;, &lt;head&gt; with SEO meta, &lt;body&gt;</td></tr>
+<tr><td><code>&lt;Container&gt;</code></td><td>Width-limited centered container (max-width via <code>w</code> prop)</td></tr>
+<tr><td><code>&lt;Section&gt;</code></td><td>Page section with optional top border + padding</td></tr>
+<tr><td><code>&lt;Stack&gt;</code></td><td>Vertical flex stack with configurable <code>gap</code> and <code>align</code></td></tr>
+<tr><td><code>&lt;Row&gt;</code></td><td>Horizontal flex row with <code>gap</code>, <code>align</code>, <code>justify</code>, and <code>wrap</code></td></tr>
+<tr><td><code>&lt;Grid&gt;</code></td><td>CSS grid with <code>cols</code> and <code>gap</code> props</td></tr>
+<tr><td><code>&lt;Card&gt;</code></td><td>Card surface container with <code>tone</code>, <code>shadow</code>, <code>border</code></td></tr>
+<tr><td><code>&lt;Heading&gt;</code></td><td>Heading with <code>size</code> (1-6) and <code>as</code> (semantic tag override)</td></tr>
+<tr><td><code>&lt;Text&gt;</code></td><td>Paragraph with <code>size</code>, <code>muted</code>, <code>align</code></td></tr>
+<tr><td><code>&lt;Eyebrow&gt;</code></td><td>Small uppercase label (section eyebrow)</td></tr>
+<tr><td><code>&lt;Button&gt;</code></td><td>Button or link with <code>variant</code>, <code>href</code>, <code>on</code> (event handler)</td></tr>
+<tr><td><code>&lt;Badge&gt;</code></td><td>Inline badge with <code>tone</code> (primary, success, danger, info)</td></tr>
+<tr><td><code>&lt;Feature&gt;</code></td><td>Marketing feature card with icon slot, title, description</td></tr>
+<tr><td><code>&lt;Divider&gt;</code></td><td>Horizontal rule with optional <code>label</code></td></tr>
+<tr><td><code>&lt;Spacer&gt;</code></td><td>Vertical spacer using the spacing scale</td></tr>
+<tr><td><code>&lt;Hero&gt;</code></td><td>Full-width marketing hero with eyebrow, title, description, actions</td></tr>
+<tr><td><code>&lt;Nav&gt;</code></td><td>Sticky navigation bar with logo slot + link array</td></tr>
+<tr><td><code>&lt;Footer&gt;</code></td><td>Page footer with link columns</td></tr>
+<tr><td><code>&lt;Split&gt;</code></td><td>Two-column responsive split with <code>ratio</code> and <code>reverse</code></td></tr>
+<tr><td><code>&lt;Field&gt;</code></td><td>Form field wrapping label, hint, error, slot</td></tr>
+<tr><td><code>&lt;Stat&gt;</code></td><td>KPI stat display (value, label, trend)</td></tr>
+<tr><td><code>&lt;Tag&gt;</code></td><td>Slim tag/badge with <code>tone</code></td></tr>
+<tr><td><code>&lt;Avatar&gt;</code></td><td>Avatar with image or initials, configurable <code>size</code></td></tr>
+<tr><td><code>&lt;Alert&gt;</code></td><td>Alert callout with <code>tone</code>, icon, title, and dismiss</td></tr>
+<tr><td><code>&lt;Empty&gt;</code></td><td>Empty state placeholder with icon, title, description</td></tr>
+<tr><td><code>&lt;Skeleton&gt;</code></td><td>Shimmer loading placeholder with <code>variant</code> (text, card, avatar)</td></tr>
+</tbody>
+</table>
+<p>All built-in components accept the <strong>B-style layout props</strong> (see below),
+making them composable without writing custom CSS.</p>
+<h4>B-style layout props (shared vocabulary)</h4>
+<p>Every Lumen built-in component accepts the same set of layout and spacing
+props, inspired by Tailwind's utility model but expressed as component
+attributes rather than class names:</p>
+<table>
+<thead>
+<tr><th>Prop</th><th>CSS</th><th>Values</th></tr>
+</thead>
+<tbody>
+<tr><td><code>pad</code> / <code>padx</code> / <code>pady</code></td><td>padding / padding-inline / padding-block</td><td>Space scale: <code>0</code>–<code>16</code> (0.25rem units)</td></tr>
+<tr><td><code>m</code> / <code>mx</code> / <code>my</code> / <code>mt</code> / <code>mb</code></td><td>margin variants</td><td>Space scale</td></tr>
+<tr><td><code>gap</code></td><td>gap</td><td>Space scale (flex/grid only)</td></tr>
+<tr><td><code>align</code></td><td>align-items</td><td><code>start</code> / <code>center</code> / <code>end</code> / <code>stretch</code></td></tr>
+<tr><td><code>justify</code></td><td>justify-content</td><td><code>start</code> / <code>center</code> / <code>end</code> / <code>between</code> / <code>around</code></td></tr>
+<tr><td><code>w</code> / <code>maxw</code></td><td>width / max-width</td><td><code>sm</code> / <code>md</code> / <code>lg</code> / <code>xl</code> / <code>full</code></td></tr>
+<tr><td><code>bg</code></td><td>background</td><td><code>surface</code> / <code>surface-2</code> / <code>muted</code> / <code>primary</code></td></tr>
+<tr><td><code>tone</code></td><td>color + background pair</td><td><code>default</code> / <code>muted</code> / <code>primary</code> / <code>success</code> / <code>danger</code> / <code>info</code></td></tr>
+<tr><td><code>radius</code></td><td>border-radius</td><td><code>none</code> / <code>sm</code> / <code>md</code> / <code>lg</code> / <code>full</code></td></tr>
+<tr><td><code>shadow</code></td><td>box-shadow</td><td>Flag (present = shadow)</td></tr>
+<tr><td><code>border</code></td><td>1px border</td><td>Flag (present = border)</td></tr>
+</tbody>
+</table>
+<p>Example usage:</p>
+<pre><code class="language-html">&lt;!-- Card with padding, border, and primary tone --&gt;
+&lt;Card pad=&quot;6&quot; border tone=&quot;primary&quot;&gt;
+  &lt;Heading size=&quot;3&quot;&gt;Welcome&lt;/Heading&gt;
+  &lt;Text muted&gt;Your dashboard is ready.&lt;/Text&gt;
+&lt;/Card&gt;
+
+&lt;!-- Two-column hero split --&gt;
+&lt;Split ratio=&quot;1:1&quot; align=&quot;center&quot; gap=&quot;8&quot;&gt;
+  &lt;Stack gap=&quot;4&quot;&gt;
+    &lt;Eyebrow&gt;Features&lt;/Eyebrow&gt;
+    &lt;Heading size=&quot;2&quot;&gt;Build faster&lt;/Heading&gt;
+    &lt;Text&gt;With Lumen's built-in vocabulary.&lt;/Text&gt;
+  &lt;/Stack&gt;
+  &lt;!-- image slot --&gt;
+&lt;/Split&gt;
+</code></pre>
+<p>These props are resolved through <code>_ui_style_props</code>, which converts them to
+inline CSS declarations. Every built-in component threads this function into
+its <code>style</code> attribute, so author-set props always apply.</p>
+<h3>Icons</h3>
+<p>Lumen ships with an inline SVG icon system. Use <code>lumen_icon(name)</code> in your
+handler or template to render an SVG string:</p>
+<pre><code class="language-html">&lt;button @click=&quot;submit&quot;&gt;
+  &lt;!-- literal {{ }} call in the template --&gt;
+  &#123;&#123; lumen_icon(&quot;check&quot;) &#125;&#125; Save
+&lt;/button&gt;
+</code></pre>
+<p>Available icons: <code>zap</code>/<code>bolt</code>, <code>bars</code>, <code>code</code>, <code>lock</code>, <code>clock</code>, <code>box</code>,
+<code>layers</code>, <code>rocket</code>, <code>check</code>, <code>shield</code>. Icons are Lucide-style SVG vectors
+baked directly into the runtime — zero CDN dependencies, zero layout shift
+(they use <code>currentColor</code> and fixed viewBox).</p>
 <h3>CLI reference</h3>
 <table>
 <thead>
@@ -313,10 +512,158 @@ vn lumen add card
 </tr>
 <tr>
 <td><code>vn lumen build &lt;dir&gt; &lt;out.vn&gt; [port]</code></td>
-<td>Compile a pages dir into one runnable Varian app</td>
+      <td>Compile a pages dir into one runnable Varian app</td>
 </tr>
 </tbody>
 </table>
+<h3>Static Site Generation (SSG)</h3>
+<p>Lumen can also generate a fully static HTML site — no server, no WebSocket,
+no runtime required:</p>
+<pre><code class="language-sh">vn lumen build --static ./pages ./out_dir --base-url https://example.com
+</code></pre>
+<p>This produces:</p>
+<ul>
+<li><strong>Standalone <code>.html</code> files</strong> for every <code>.lumen</code> page, rendered against the
+  component's initial state (no interactivity — just HTML).</li>
+<li><strong><code>sitemap.xml</code></strong> with all page routes and last-modified timestamps.</li>
+<li><strong><code>robots.txt</code></strong> allowing all crawlers.</li>
+<li><strong>Static assets</strong> (<code>public/</code>) copied verbatim to the output directory.</li>
+</ul>
+<p>Use SSG for documentation sites, blogs, marketing pages, or any content
+that doesn't require per-connection server state. The generated output
+can be served by any HTTP server or CDN.</p>
+<hr />
+<h2>Advanced client-server APIs</h2>
+<p>Beyond the core <code>lumen_component</code> / <code>lumen_mount</code> API, Lumen provides a set
+of higher-level primitives for data loading, shared state, cross-connection
+communication, form validation, and SEO.</p>
+<h3><code>lumen_mount_dynamic(app, path, component, param)</code></h3>
+<p>Mount a component at a dynamic route, e.g. <code>/product/:id</code>. The <code>param</code>
+argument is the URL parameter name (e.g. <code>"id"</code>). The parameter value is
+extracted from <code>req.params</code> and merged into the component's initial state:</p>
+<pre><code class="language-varian">let detail = lumen_component(
+    | | { return { id: null, product: null } },
+    |s| { return lumen_render("&lt;h1&gt;Product &#123;&#123; id &#125;&#125;&lt;/h1&gt;", s) },
+    [], []
+)
+lumen_mount_dynamic(app, "/product/:id", detail, "id")
+</code></pre>
+<p>File-based routing also supports this: a file named <code>[id].lumen</code> in the
+<code>pages/</code> directory automatically maps to a <code>:id</code> route segment.</p>
+<h3><code>lumen_mount_data(app, path, component, provider)</code></h3>
+<p>Mount a component with a data provider callback that runs before each
+render. The provider receives the request and can access databases, APIs,
+or authentication before the component renders:</p>
+<pre><code class="language-varian">let profile = lumen_component(
+    | | { return { user: null, loading: true } },
+    |s| { return lumen_render("&lt;h1&gt;&#123;&#123; user.name &#125;&#125;&lt;/h1&gt;", s) },
+    [], []
+)
+lumen_mount_data(app, "/profile", profile, |req| {
+    let user = db.query("SELECT * FROM users WHERE id = ?", [req.params.id])
+    return { user: user, loading: false }
+})
+</code></pre>
+<p>The provider's return value is shallow-merged into the component's state
+before the initial render.</p>
+<h3><code>lumen_store(initial)</code></h3>
+<p>A Zustand-style shared mutable store. Created inside <code>state()</code> it is
+per-connection; created at the module level it is app-global:</p>
+<pre><code class="language-varian">// Module-level (shared across all connections)
+let cart = lumen_store({ items: [], total: 0 })
+
+fn state() {
+    return { store: cart, localFlag: false }
+}
+
+fn addItem(s, v) {
+    cart.set("items", cart.get("items").push(v))
+    return s
+}
+</code></pre>
+<p>Returns <code>{ get(key), set(key, value), all() }</code>. <code>set</code> mutates in place
+(suitable for shared state where immutability would be expensive).</p>
+<h3><code>lumen_resource(fetcher)</code></h3>
+<p>A React-Query-style async data container. The fetcher function is called
+once on construction and returns <code>{ data, error }</code>. The resource provides
+<code>state()</code> for reactive access in templates:</p>
+<pre><code class="language-varian">let users = lumen_resource(| | {
+    return db.query("SELECT * FROM users")
+})
+
+// In a template: &#123;&#123; users.state().loading &#125;&#125;, &#123;&#123; users.state().data &#125;&#125;
+</code></pre>
+<p>Returns <code>{ state (fn), refetch (fn) }</code>. <code>state()</code> returns
+<code>{ loading, error, data }</code> — bind it in your template for live updates.</p>
+<h3><code>lumen_async_resource(fetcher)</code></h3>
+<p>An off-thread version of <code>lumen_resource</code> that uses <code>task.spawn()</code> and
+<code>task.channel()</code> to fetch data in a background task. When the fetch
+completes, it pushes a signal onto a global channel
+(<code>_lumen_async_updates</code>), which triggers all active live loop connections
+to re-render. Use this for expensive queries or external API calls that
+should not block the event loop:</p>
+<pre><code class="language-varian">let stats = lumen_async_resource(| | {
+    return external_api.fetch("/analytics/dashboard")
+})
+</code></pre>
+<h3><code>lumen_publish(topic, key, value)</code> / <code>lumen_subscribe(topic)</code></h3>
+<p>Cross-connection pub-sub. <code>lumen_publish</code> broadcasts a key-value update
+to all WebSocket connections subscribed to a topic. <code>lumen_subscribe</code>
+returns the current data for a topic as a struct:</p>
+<pre><code class="language-varian">// In one connection:
+lumen_publish("chat", "message", "Hello everyone!")
+
+// In another connection (polled on each render):
+let chat = lumen_subscribe("chat")  // { message: "Hello everyone!" }
+</code></pre>
+<p>Data is stored in <code>_lumen_pubsub_data</code>, a global struct shared across
+all connections. This enables real-time features like chat, notifications,
+and live dashboards without a separate message broker.</p>
+<h3><code>lumen_broadcast_store(topic, initial)</code></h3>
+<p>Combines <code>lumen_store</code> with <code>lumen_publish</code>. Creates a store that
+automatically publishes every <code>set()</code> call to all subscribers on the
+topic:</p>
+<pre><code class="language-varian">let notif = lumen_broadcast_store("notifications", { count: 0 })
+
+// Any connection can call notif.set("count", n) and all
+// subscribed connections see the update on next render.
+</code></pre>
+<h3><code>lumen_form(field_schemas)</code></h3>
+<p>Zod-inspired form validation. Define a schema for each field and call
+<code>validate(values)</code> to get a result:</p>
+<pre><code class="language-varian">let loginForm = lumen_form({
+    email: { required: true, type: "email" },
+    password: { required: true, min_len: 8 }
+})
+
+fn submit(s, v) {
+    let result = loginForm.validate({ email: s.get("email"), password: s.get("password") })
+    if result.ok {
+        // result.values — validated and sanitized
+    } else {
+        // result.errors — { email: "invalid email", password: "too short" }
+    }
+    return s
+}
+</code></pre>
+<p>Returns <code>{ validate(values) -> { ok, values, errors }, schema }</code>.
+Integrates with <code>vn_modules/validate.vn</code> for rule parsing and error
+message generation.</p>
+<h3><code>lumen_meta(title, description, og)</code></h3>
+<p>Declare SEO metadata for a page. Call this in a component's handler or
+<code>state()</code> to set the document title, meta description, Open Graph tags,
+and Twitter Card tags:</p>
+<pre><code class="language-varian">fn state() {
+    lumen_meta("About Us", "Learn about the Varian team", {
+        image: "https://varian-lang.org/og-image.png"
+    })
+    return { page: "about" }
+}
+</code></pre>
+<p>Generates <code>&lt;title&gt;</code>, <code>&lt;meta name="description"&gt;</code>, <code>og:title</code>,
+<code>og:description</code>, <code>og:image</code>, <code>twitter:card</code>, and <code>twitter:title</code> tags.
+The <code>&lt;Page&gt;</code> built-in component calls <code>_lumen_meta_tags()</code> to inject
+these into the document <code>&lt;head&gt;</code>.</p>
 <hr />
 <h2>Public API</h2>
 <h3><code>lumen_component(state_fn, render_fn, handler_names, handler_fns)</code></h3>
@@ -360,6 +707,34 @@ on zenith.vn's struct declarations).</p>
 <li><strong><code>GET &lt;path&gt;/live</code></strong> — WebSocket upgrade endpoint. Upgrades to RFC 6455, then enters
   the per-connection event loop until the socket closes.</li>
 </ul>
+<h3><code>lumen_snapshot(component)</code></h3>
+<p>Render a component against its initial state and return the HTML string.
+Useful for snapshot testing and SSG:</p>
+<pre><code class="language-varian">let html = lumen_snapshot(counter)
+// html = "&lt;div&gt;&lt;p&gt;Count: 0&lt;/p&gt;..."
+</code></pre>
+<h3>Test helpers</h3>
+<p>Lumen provides a set of test helpers for component testing without a
+browser or WebSocket connection:</p>
+<table>
+<thead>
+<tr><th>Function</th><th>Description</th></tr>
+</thead>
+<tbody>
+<tr><td><code>lumen_test_render(comp, state)</code></td><td>Render a component with a given state, return HTML string</td></tr>
+<tr><td><code>lumen_test_event(comp, state, hname, value)</code></td><td>Fire a handler event against the state, return new state</td></tr>
+<tr><td><code>lumen_test_contains(html, substr)</code></td><td>Check if HTML string contains a substring</td></tr>
+<tr><td><code>lumen_test_attr(html, attr_name)</code></td><td>Extract an attribute value from an HTML element</td></tr>
+<tr><td><code>lumen_test_count(html, substr)</code></td><td>Count occurrences of a substring in HTML</td></tr>
+<tr><td><code>lumen_test_render_response(comp, state)</code></td><td>Render as a zenith Response struct (for HTTP test assertions)</td></tr>
+</tbody>
+</table>
+<p>Example test:</p>
+<pre><code class="language-varian">let html = lumen_test_render(counter, { count: 5 })
+assert(lumen_test_contains(html, "Count: 5"))
+let newState = lumen_test_event(counter, { count: 0 }, "inc", null)
+assert(newState.count == 1)
+</code></pre>
 <h2>Wire Protocol</h2>
 <p>Both directions are JSON text frames over a single WebSocket.</p>
 <p><strong>Client → Server</strong> (an event happened):</p>

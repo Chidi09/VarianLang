@@ -919,3 +919,378 @@ int fmt_format_file(const char *path) {
     printf("formatted %s\n", path);
     return 0;
 }
+
+/* ─── HTML Template Formatter (2-space indent) ─── */
+
+#define FMT_EMIT(s, l) do { \
+    while (pos + (int)(l) >= (int)cap) { \
+        cap = cap ? cap * 2 : 4096; \
+        out = (char *)realloc(out, cap); \
+    } \
+    memcpy(out + pos, (s), (l)); \
+    pos += (int)(l); \
+} while(0)
+
+#define FMT_EMIT_CH(c) do { \
+    while (pos + 1 >= (int)cap) { \
+        cap = cap ? cap * 2 : 4096; \
+        out = (char *)realloc(out, cap); \
+    } \
+    out[pos++] = (c); \
+} while(0)
+
+static bool fmt_is_void_element(const char *name, int len) {
+    const char *voids[] = {
+        "area", "base", "br", "col", "embed", "hr", "img",
+        "input", "link", "meta", "param", "source", "track", "wbr",
+        NULL
+    };
+    for (int i = 0; voids[i]; i++) {
+        if (len == (int)strlen(voids[i]) && memcmp(name, voids[i], len) == 0)
+            return true;
+    }
+    return false;
+}
+
+static char *fmt_format_html_template(const char *src, int len, int *out_len) {
+    size_t cap = len * 2 + 4096;
+    char *out = (char *)calloc(cap, 1);
+    if (!out) { *out_len = 0; return NULL; }
+    int pos = 0;
+    int indent = 0;
+
+    int i = 0;
+    while (i < len) {
+        int line_start = i;
+        while (i < len && src[i] != '\n') i++;
+        int line_end = i;
+        if (i < len) i++;
+
+        int ls = line_start;
+        while (ls < line_end && (src[ls] == ' ' || src[ls] == '\t')) ls++;
+        int le = line_end;
+        while (le > ls && (src[le-1] == ' ' || src[le-1] == '\t')) le--;
+
+        if (ls >= le) {
+            FMT_EMIT_CH('\n');
+            continue;
+        }
+
+        /* Determine indent for this line */
+        int line_indent = indent;
+
+        if (ls + 1 < le && src[ls] == '<' && src[ls+1] == '/') {
+            line_indent = indent - 1;
+            if (line_indent < 0) line_indent = 0;
+        } else if (ls + 2 < le && src[ls] == '{' && src[ls+1] == '{' && src[ls+2] == '/') {
+            line_indent = indent - 1;
+            if (line_indent < 0) line_indent = 0;
+        } else if (ls + 7 < le && src[ls] == '{' && src[ls+1] == '{' &&
+                   memcmp(src+ls+2, "else", 4) == 0 && src[ls+6] == '}' && src[ls+7] == '}') {
+            line_indent = indent - 1;
+            if (line_indent < 0) line_indent = 0;
+        }
+
+        /* Emit indent */
+        for (int j = 0; j < line_indent * 2; j++) FMT_EMIT_CH(' ');
+
+        /* Emit line content (stripped of leading/trailing ws) */
+        FMT_EMIT(src + ls, le - ls);
+        FMT_EMIT_CH('\n');
+
+        /* Update indent based on tags/directives on this line */
+        int q = ls;
+        while (q < le) {
+            if (q + 1 < le && src[q] == '<' && src[q+1] == '/') {
+                indent--;
+                if (indent < 0) indent = 0;
+                while (q < le && src[q] != '>') q++;
+                if (q < le) q++;
+            } else if (q + 1 < le && src[q] == '<' && src[q+1] == '!') {
+                /* Doctype or comment */
+                while (q < le && src[q] != '>') q++;
+                if (q < le) q++;
+            } else if (q < le && src[q] == '<') {
+                int r = q + 1;
+                while (r < le && src[r] != '>' && src[r] != '/' && !isspace(src[r])) r++;
+                int tag_nam_start = q + 1;
+                int tag_nam_len = r - (q + 1);
+                while (r < le && src[r] != '>') {
+                    if (src[r] == '"' || src[r] == '\'') {
+                        char quot = src[r];
+                        r++;
+                        while (r < le && src[r] != quot) {
+                            if (src[r] == '\\') r++;
+                            r++;
+                        }
+                        if (r < le) r++;
+                    } else {
+                        r++;
+                    }
+                }
+                bool self_closing = (r > q + 1 && src[r-1] == '/');
+                if (!self_closing && tag_nam_len > 0)
+                    self_closing = fmt_is_void_element(src + tag_nam_start, tag_nam_len);
+                if (!self_closing) indent++;
+                q = r;
+                if (q < le) q++;
+            } else if (q + 1 < le && src[q] == '{' && src[q+1] == '{') {
+                q += 2;
+                if (q < le && src[q] == '#') {
+                    indent++;
+                    while (q + 1 < le && !(src[q] == '}' && src[q+1] == '}')) q++;
+                    if (q < le) q += 2;
+                } else if (q < le && src[q] == '/') {
+                    indent--;
+                    if (indent < 0) indent = 0;
+                    while (q + 1 < le && !(src[q] == '}' && src[q+1] == '}')) q++;
+                    if (q < le) q += 2;
+                } else if (q + 4 < le && memcmp(src+q, "else", 4) == 0 && src[q+4] == '}' && q+5 < le && src[q+5] == '}') {
+                    q += 6;
+                } else {
+                    /* {{ }} or {{! }} interpolation */
+                    while (q + 1 < le && !(src[q] == '}' && src[q+1] == '}')) q++;
+                    if (q < le) q += 2;
+                }
+            } else {
+                q++;
+            }
+        }
+    }
+
+    /* Trim trailing whitespace */
+    while (pos > 0 && (out[pos-1] == '\n' || out[pos-1] == ' ' || out[pos-1] == '\t')) pos--;
+
+    *out_len = pos;
+    return out;
+}
+
+/* ─── Style Block Formatter (2-space indent, minimal) ─── */
+
+static char *fmt_format_style_block(const char *src, int len, int *out_len) {
+    size_t cap = len * 2 + 4096;
+    char *out = (char *)calloc(cap, 1);
+    if (!out) { *out_len = 0; return NULL; }
+    int pos = 0;
+    int indent = 0;
+
+    int i = 0;
+    while (i < len) {
+        char c = src[i];
+        if (c == '\n' || c == '\r') {
+            i++;
+            continue;
+        }
+        if (pos == 0 || (pos > 0 && out[pos-1] == '\n')) {
+            while (i < len && (src[i] == ' ' || src[i] == '\t')) i++;
+            if (i >= len) break;
+            c = src[i];
+        }
+        if (c == '{') {
+            while (pos > 0 && (out[pos-1] == ' ' || out[pos-1] == '\t')) pos--;
+            FMT_EMIT(" {\n", 3);
+            indent++;
+            i++;
+        } else if (c == '}') {
+            indent--;
+            if (indent < 0) indent = 0;
+            while (pos > 0 && (out[pos-1] == ' ' || out[pos-1] == '\t')) pos--;
+            if (pos > 0 && out[pos-1] != '\n') FMT_EMIT_CH('\n');
+            for (int j = 0; j < indent * 2; j++) FMT_EMIT_CH(' ');
+            FMT_EMIT_CH('}');
+            FMT_EMIT_CH('\n');
+            i++;
+        } else if (c == ';') {
+            FMT_EMIT_CH(';');
+            FMT_EMIT_CH('\n');
+            i++;
+        } else if (c == ' ' || c == '\t') {
+            if (pos > 0 && out[pos-1] != ' ' && out[pos-1] != '\n')
+                FMT_EMIT_CH(' ');
+            i++;
+        } else {
+            if (pos == 0 || out[pos-1] == '\n') {
+                for (int j = 0; j < indent * 2; j++) FMT_EMIT_CH(' ');
+            }
+            FMT_EMIT_CH(c);
+            i++;
+        }
+    }
+
+    while (pos > 0 && (out[pos-1] == '\n' || out[pos-1] == ' ' || out[pos-1] == '\t')) pos--;
+
+    *out_len = pos;
+    return out;
+}
+
+/* ─── Lumen SFC Formatter ─── */
+
+char *fmt_format_lumen_source(const char *source, size_t size, int *out_len) {
+    /* Find top-level blocks — must appear in template→style→script order,
+     * but we search after each previous closing tag to avoid matching nested
+     * <style>/<script> that live inside the template body. */
+    const char *t_open = strstr(source, "<template>");
+    const char *t_close = t_open ? strstr(t_open, "</template>") : NULL;
+    if (!t_open || !t_close) {
+        return fmt_format_source(source, size, out_len);
+    }
+
+    const char *st_open = NULL, *st_tag_end = NULL, *st_close = NULL;
+    {
+        const char *p = strstr(t_close + 11, "<style");
+        if (p) {
+            const char *tag_e = p;
+            while (*tag_e && *tag_e != '>') tag_e++;
+            if (*tag_e == '>') {
+                tag_e++;
+                const char *cl = strstr(tag_e, "</style>");
+                if (cl) {
+                    st_open = p;
+                    st_tag_end = tag_e;
+                    st_close = cl;
+                }
+            }
+        }
+    }
+
+    const char *c_open = NULL, *c_close = NULL;
+    {
+        const char *search_after = st_close ? st_close + 8 : t_close + 11;
+        const char *p = strstr(search_after, "<script>");
+        if (p) {
+            const char *cl = strstr(p + 8, "</script>");
+            if (cl) {
+                c_open = p;
+                c_close = cl;
+            }
+        }
+    }
+
+    if (!c_open || !c_close) {
+        return fmt_format_source(source, size, out_len);
+    }
+
+    /* ── Extract & format template body ── */
+    const char *tb = t_open + 10;
+    while (tb < t_close && (*tb == '\n' || *tb == '\r')) tb++;
+    const char *tbe = t_close;
+    while (tbe > tb && (tbe[-1] == '\n' || tbe[-1] == '\r' || tbe[-1] == ' ' || tbe[-1] == '\t')) tbe--;
+
+    int t_len = 0;
+    char *t_out = fmt_format_html_template(tb, (int)(tbe - tb), &t_len);
+    if (!t_out) {
+        t_len = (int)(tbe - tb);
+        t_out = (char *)malloc((size_t)t_len + 1);
+        if (t_out) { memcpy(t_out, tb, (size_t)t_len); t_out[t_len] = '\0'; }
+    }
+
+    /* ── Extract & format style body (optional) ── */
+    int st_len = 0;
+    char *st_out = NULL;
+    if (st_open) {
+        const char *sb = st_tag_end;
+        while (sb < st_close && (*sb == '\n' || *sb == '\r')) sb++;
+        const char *sbe = st_close;
+        while (sbe > sb && (sbe[-1] == '\n' || sbe[-1] == '\r' || sbe[-1] == ' ' || sbe[-1] == '\t')) sbe--;
+
+        st_out = fmt_format_style_block(sb, (int)(sbe - sb), &st_len);
+        if (!st_out) {
+            st_len = (int)(sbe - sb);
+            st_out = (char *)malloc((size_t)st_len + 1);
+            if (st_out) { memcpy(st_out, sb, (size_t)st_len); st_out[st_len] = '\0'; }
+        }
+    }
+
+    /* ── Extract & format script body ── */
+    const char *cb = c_open + 8;
+    while (cb < c_close && (*cb == '\n' || *cb == '\r')) cb++;
+    const char *cbe = c_close;
+    while (cbe > cb && (cbe[-1] == '\n' || cbe[-1] == '\r' || cbe[-1] == ' ' || cbe[-1] == '\t')) cbe--;
+
+    int c_len = 0;
+    size_t c_sz = (size_t)(cbe - cb);
+    char *cc = (char *)malloc(c_sz + 1);
+    if (!cc) { free(t_out); free(st_out); *out_len = 0; return NULL; }
+    memcpy(cc, cb, c_sz);
+    cc[c_sz] = '\0';
+
+    char *c_out = fmt_format_source(cc, c_sz, &c_len);
+    free(cc);
+    if (!c_out) {
+        c_len = (int)c_sz;
+        c_out = (char *)malloc(c_sz + 1);
+        if (c_out) { memcpy(c_out, cb, c_sz); c_out[c_sz] = '\0'; }
+    }
+
+    /* ── Preserve non-block content ── */
+    size_t before_len = (size_t)(t_open - source);
+    const char *after_all = c_close + 9;
+    size_t after_len = size - (size_t)(after_all - source);
+
+    /* Trim trailing whitespace from after-content (for idempotency) */
+    while (after_len > 0 && (after_all[after_len-1] == '\n' || after_all[after_len-1] == '\r' ||
+                             after_all[after_len-1] == ' ' || after_all[after_len-1] == '\t'))
+        after_len--;
+
+    /* ── Assemble output ── */
+    size_t cap = size * 2 + 4096;
+    char *out = (char *)calloc(cap, 1);
+    if (!out) { free(t_out); free(st_out); free(c_out); *out_len = 0; return NULL; }
+    int pos = 0;
+
+#undef FMT_EMIT
+#undef FMT_EMIT_CH
+#define FMT_EMIT(s, l) do { \
+    while (pos + (int)(l) >= (int)cap) { \
+        cap = cap ? cap * 2 : 4096; \
+        out = (char *)realloc(out, cap); \
+    } \
+    memcpy(out + pos, (s), (l)); \
+    pos += (int)(l); \
+} while(0)
+#define FMT_EMIT_CH(c) do { \
+    while (pos + 1 >= (int)cap) { \
+        cap = cap ? cap * 2 : 4096; \
+        out = (char *)realloc(out, cap); \
+    } \
+    out[pos++] = (c); \
+} while(0)
+
+    /* Content before template */
+    if (before_len > 0) { FMT_EMIT(source, (int)before_len); }
+
+    /* Template block */
+    FMT_EMIT("<template>\n", 11);
+    if (t_len > 0) { FMT_EMIT(t_out, t_len); FMT_EMIT_CH('\n'); }
+    FMT_EMIT("</template>\n\n", 13);
+
+    /* Style block (optional) */
+    if (st_open) {
+        size_t stag_len = (size_t)(st_tag_end - st_open);
+        FMT_EMIT(st_open, (int)stag_len);
+        FMT_EMIT_CH('\n');
+        if (st_len > 0) { FMT_EMIT(st_out, st_len); FMT_EMIT_CH('\n'); }
+        FMT_EMIT("</style>\n\n", 10);
+    }
+
+    /* Script block */
+    FMT_EMIT("<script>\n", 9);
+    if (c_len > 0) { FMT_EMIT(c_out, c_len); FMT_EMIT_CH('\n'); }
+    FMT_EMIT("</script>", 9);
+
+    /* Content after script (preserve verbatim, no extra newline) */
+    if (after_len > 0) {
+        FMT_EMIT(after_all, (int)after_len);
+    }
+
+    /* Ensure exactly one final newline */
+    while (pos > 0 && (out[pos-1] == '\n' || out[pos-1] == '\r')) pos--;
+    FMT_EMIT_CH('\n');
+
+    free(t_out);
+    free(st_out);
+    free(c_out);
+
+    *out_len = pos;
+    return out;
+}
