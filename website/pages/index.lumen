@@ -517,28 +517,78 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
 
       <!-- 4.6 Ecosystem -->
       <section id="ecosystem" style="padding: var(--space-12) 0; border-top: 1px solid var(--border-subtle);">
-        <h2 class="section-title">The fullstack platform</h2>
-        <p class="section-subtitle">Five products. One language. No glue code.</p>
+        <h2 class="section-title" style="font-size:var(--text-5xl);">The fullstack platform</h2>
+        <p class="section-subtitle" style="font-size:var(--text-xl);max-width:720px;">Five products. One language. No glue code. Every tool designed together, from the same team, for the same runtime.</p>
 
-        <div style="display:flex;flex-direction:column;gap:var(--space-10);padding:var(--space-8) 0;max-width:860px;margin:0 auto;">
+        <div style="display:flex;flex-direction:column;gap:var(--space-16);padding:var(--space-12) 0;max-width:920px;margin:0 auto;">
 
-          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
-            <h3 class="tour-heading"><img src="/aurora-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Aurora</h3>
-            <p class="tour-text">Aurora is the fullstack platform — the reason Varian exists. It brings together your backend API in Zenith, your frontend UI in Lumen, compiled with Kiln, shipped through Constellation. No microservices, no separate frontend build, no cross-language context switching. Write your entire application in one language, from database migrations to CSS styles. Deploy as a single binary with the frontend rendered server-side over WebSocket — zero client-side JavaScript framework required.</p>
-            <p class="tour-text">Think of Aurora as "Varian, the whole thing." It's not a separate product you install — it's the philosophy that all these tools should work together out of the box, because they were designed together from the start.</p>
-            <div class="code-block">
-              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
-              <div class="code-block-body"><pre><span class="token-comment"># Scaffold a full Aurora app in one command</span>
-./vn new myapp && <span class="token-builtin">cd</span> myapp && ./vn dev</pre></div>
+          <!-- Aurora -->
+          <div>
+            <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
+              <img src="/aurora-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Aurora</h3>
             </div>
-            <a href="/aurora" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Aurora <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+
+            <p style="font-size:var(--text-xl);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-4);">
+              Aurora is the reason Varian exists. It's <strong style="color:var(--text-primary);">everything together</strong> — your backend API in Zenith, your frontend UI in Lumen, compiled with Kiln, shipped through Constellation.
+            </p>
+
+            <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
+              No microservices. No separate frontend build. No cross-language context switching. Write your entire application — from database migrations to CSS styles — in <strong style="color:var(--text-primary);">one language</strong>. Deploy as a <strong style="color:var(--text-primary);">single binary</strong> with the frontend rendered server-side over WebSocket. Zero client-side JavaScript framework required.
+            </p>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># One command to scaffold the full stack</span>
+./vn new myapp && <span class="token-builtin">cd</span> myapp && ./vn dev
+
+<span class="token-comment"># One command to build for production</span>
+./vn build --release</pre></div>
+            </div>
+
+            <div class="code-block" style="margin-bottom:var(--space-6);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">server.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+app.<span class="token-function">get</span>(<span class="token-string">"/api/products"</span>, |req| {
+    <span class="token-keyword">let</span> products = db.<span class="token-function">query</span>(<span class="token-string">"SELECT * FROM products"</span>)
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-function">json_encode</span>(products) }
+})
+app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
+            </div>
+
+            <div class="code-block" style="margin-bottom:var(--space-6);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">index.lumen</span></div>
+              <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>
+  <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"product-list"</span><span class="token-tag">&gt;</span>
+    <span class="token-tag">&lt;h1&gt;</span>Products<span class="token-tag">&lt;/h1&gt;</span>
+    <span class="token-tag">&lt;div</span> <span class="token-attr">@click</span>=<span class="token-string">"loadProducts"</span><span class="token-tag">&gt;</span>Load from API<span class="token-tag">&lt;/div&gt;</span>
+  <span class="token-tag">&lt;/div&gt;</span>
+<span class="token-tag">&lt;/template&gt;</span></pre></div>
+            </div>
+
+            <p style="font-size:var(--text-base);color:var(--text-secondary);line-height:1.7;margin-bottom:var(--space-6);">
+              Above: a Zenith API endpoint serving products, and a Lumen UI component calling it — <strong style="color:var(--text-primary);">same language, same project, zero glue code</strong>.
+            </p>
+
+            <a href="/aurora" style="color:var(--accent);font-weight:600;font-size:var(--text-base);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;padding:var(--space-2) var(--space-4);border:1px solid var(--accent);border-radius:var(--radius-full);">Learn more about Aurora <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
           </div>
 
-          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
-            <h3 class="tour-heading"><img src="/assets/zenith-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Zenith</h3>
-            <p class="tour-text">Zenith is a batteries-included web framework with a radix-trie router, middleware chains, WebSocket support, SSE, built-in JWT auth, CORS, rate limiting, and auto-generated OpenAPI documentation. Database drivers for SQLite and Postgres are built into the runtime — no ORM dependency. A Zenith route handler takes a request and returns a Response struct. That's it.</p>
-            <p class="tour-text">~10,500 req/s single-process, ~35k with multiple workers. No async/await ceremony — Varian's green threads handle concurrency transparently. The third argument to <code>app.get()</code> is a summary string that feeds auto-generated OpenAPI specs. Every route you write automatically gets documented.</p>
-            <div class="code-block">
+          <!-- Zenith -->
+          <div style="border-top:1px solid var(--border-subtle);padding-top:var(--space-10);">
+            <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
+              <img src="/assets/zenith-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Zenith</h3>
+            </div>
+
+            <p style="font-size:var(--text-xl);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-4);">
+              A <strong style="color:var(--text-primary);">batteries-included web framework</strong> with a radix-trie router, middleware chains, WebSocket support, SSE, built-in JWT auth, CORS, rate limiting, and auto-generated OpenAPI documentation.
+            </p>
+
+            <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
+              Database drivers for SQLite and Postgres are <strong style="color:var(--text-primary);">built into the runtime</strong> — no ORM dependency, no <code>package.json</code>, no <code>Cargo.toml</code>. Every route handler returns a <code>Response</code> struct. ~10,500 req/s single-process, ~35k with multiple workers. No async/await ceremony — Varian's green threads handle concurrency transparently.
+            </p>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">server.vn</span></div>
               <div class="code-block-body"><pre><span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
 app.<span class="token-function">get</span>(<span class="token-string">"/hello"</span>, |req| {
@@ -546,14 +596,43 @@ app.<span class="token-function">get</span>(<span class="token-string">"/hello"<
 }, <span class="token-string">"Says hello"</span>)
 app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
             </div>
-            <a href="/zenith" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Zenith <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">middleware.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-comment">// Built-in JWT auth on a route group</span>
+<span class="token-keyword">let</span> admin = app.<span class="token-function">group</span>(<span class="token-string">"/admin"</span>, { auth: <span class="token-string">"jwt"</span>, roles: [<span class="token-string">"admin"</span>] })
+admin.<span class="token-function">get</span>(<span class="token-string">"/dashboard"</span>, |req| {
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-string">"Admin dashboard"</span> }
+})</pre></div>
+            </div>
+
+            <div class="code-block" style="margin-bottom:var(--space-6);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">db.vn</span></div>
+              <div class="code-block-body"><pre><span class="token-keyword">let</span> users = db.<span class="token-function">query</span>(<span class="token-string">"SELECT id, name FROM users WHERE active = ?"</span>, [<span class="token-keyword">true</span>])
+app.<span class="token-function">get</span>(<span class="token-string">"/users"</span>, |req| {
+    <span class="token-keyword">return</span> <span class="token-type">Response</span> { status: <span class="token-number">200</span>, body: <span class="token-function">json_encode</span>(users) }
+})</pre></div>
+            </div>
+
+            <a href="/zenith" style="color:var(--accent);font-weight:600;font-size:var(--text-base);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;padding:var(--space-2) var(--space-4);border:1px solid var(--accent);border-radius:var(--radius-full);">Learn more about Zenith <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
           </div>
 
-          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
-            <h3 class="tour-heading"><img src="/assets/lumen-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Lumen</h3>
-            <p class="tour-text">Lumen renders HTML templates on the server and sends incremental DOM patches over a persistent WebSocket connection when state changes. No client-side framework to download, no hydration mismatch, no SEO problems — pages are fully rendered before they reach the browser.</p>
-            <p class="tour-text">State is managed in server-side script blocks with a simple <code>state()</code> function and reactive bindings like <code>@click</code> and <code>&#123;&#123; variable &#125;&#125;</code>. Think Phoenix LiveView or Rails Hotwire — but the UI framework ships with the language, no separate npm package to install. Lumen UI provides a Shadcn-inspired component registry with <code>vn lumen add button</code>.</p>
-            <div class="code-block">
+          <!-- Lumen -->
+          <div style="border-top:1px solid var(--border-subtle);padding-top:var(--space-10);">
+            <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
+              <img src="/assets/lumen-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Lumen</h3>
+            </div>
+
+            <p style="font-size:var(--text-xl);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-4);">
+              A <strong style="color:var(--text-primary);">server-driven UI framework</strong> that renders HTML on the server and sends incremental DOM patches over WebSocket. No client-side framework to download, no hydration mismatch, no SEO problems.
+            </p>
+
+            <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
+              State lives in <strong style="color:var(--text-primary);">plain Varian data on the server</strong>. Write a <code>state()</code> function, bind it in templates with <code>&#123;&#123; variable &#125;&#125;</code> and <code>@click</code> handlers. Think Phoenix LiveView or Rails Hotwire — but the UI framework <strong style="color:var(--text-primary);">ships with the language</strong>. Lumen UI provides a full Shadcn-inspired component registry.
+            </p>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">counter.lumen</span></div>
               <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>
   <span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"inc"</span><span class="token-tag">&gt;</span>&#123;&#123; count &#125;&#125;<span class="token-tag">&lt;/button&gt;</span>
@@ -563,14 +642,50 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
 <span class="token-keyword">fn</span> <span class="token-function">inc</span>(s, v) { <span class="token-keyword">return</span> s.<span class="token-function">set</span>(<span class="token-string">"count"</span>, s.<span class="token-function">get</span>(<span class="token-string">"count"</span>) + <span class="token-number">1</span>) }
 <span class="token-tag">&lt;/script&gt;</span></pre></div>
             </div>
-            <a href="/lumen" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Lumen <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Scaffold a Lumen project with hot-reload dev server</span>
+./vn lumen new my-app && <span class="token-builtin">cd</span> my-app && ./vn dev
+
+<span class="token-comment"># Add a pre-built Lumen UI component</span>
+./vn lumen add card</pre></div>
+            </div>
+
+            <div class="code-block" style="margin-bottom:var(--space-6);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">UserCard.lumen</span></div>
+              <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>
+  <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"card"</span><span class="token-tag">&gt;</span>
+    <span class="token-tag">&lt;h3&gt;</span>&#123;&#123; name &#125;&#125;<span class="token-tag">&lt;/h3&gt;</span>
+    <span class="token-tag">&lt;p&gt;</span>Likes: &#123;&#123; likes &#125;&#125;<span class="token-tag">&lt;/p&gt;</span>
+    <span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"like"</span><span class="token-tag">&gt;</span>Like<span class="token-tag">&lt;/button&gt;</span>
+  <span class="token-tag">&lt;/div&gt;</span>
+<span class="token-tag">&lt;/template&gt;</span>
+<span class="token-tag">&lt;script&gt;</span>
+<span class="token-keyword">fn</span> <span class="token-function">state</span>() { <span class="token-keyword">return</span> { likes: <span class="token-number">0</span> } }
+<span class="token-keyword">fn</span> <span class="token-function">like</span>(s, v) { s.likes = s.likes + <span class="token-number">1</span>; <span class="token-keyword">return</span> s }
+<span class="token-tag">&lt;/script&gt;</span></pre></div>
+            </div>
+
+            <a href="/lumen" style="color:var(--accent);font-weight:600;font-size:var(--text-base);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;padding:var(--space-2) var(--space-4);border:1px solid var(--accent);border-radius:var(--radius-full);">Learn more about Lumen <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
           </div>
 
-          <div style="border-bottom:1px solid var(--border-subtle);padding-bottom:var(--space-8);">
-            <h3 class="tour-heading"><img src="/assets/kiln-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Kiln</h3>
-            <p class="tour-text">The <code>vn</code> binary is everything: the language runtime, the compiler, the test runner, the formatter. <code>vn build</code> compiles to bytecode; <code>vn build --release</code> embeds the runtime into a single native binary for distribution. No separate build tool, no Makefile, no Docker layer for dependencies.</p>
-            <p class="tour-text">Lumen projects use <code>vn dev</code> for hot-reload development. <code>vn test</code> runs tests. <code>vn fmt</code> formats code. <code>vn lint</code> checks for issues. One command to build, test, format, and package your entire application — the entire toolchain is a single binary with no dependencies.</p>
-            <div class="code-block">
+          <!-- Kiln -->
+          <div style="border-top:1px solid var(--border-subtle);padding-top:var(--space-10);">
+            <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
+              <img src="/assets/kiln-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Kiln</h3>
+            </div>
+
+            <p style="font-size:var(--text-xl);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-4);">
+              The <code>vn</code> binary is <strong style="color:var(--text-primary);">everything</strong>: the language runtime, the compiler, the test runner, the formatter, the package manager — all in one binary.
+            </p>
+
+            <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
+              <code>vn build</code> compiles to bytecode. <code>vn build --release</code> embeds the runtime into a <strong style="color:var(--text-primary);">single native binary</strong> for distribution. No separate build tool, no Makefile, no Docker layer for dependencies. <code>vn dev</code> for hot-reload, <code>vn test</code> for tests, <code>vn fmt</code> for formatting — the entire toolchain, one command.
+            </p>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
               <div class="code-block-body"><pre><span class="token-comment"># Build for production</span>
 ./vn build --release
@@ -578,22 +693,53 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
 <span class="token-comment"># Development with hot reload</span>
 ./vn dev pages/</pre></div>
             </div>
-            <a href="/kiln" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Kiln <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+
+            <div class="code-block" style="margin-bottom:var(--space-6);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Run tests</span>
+./vn test
+
+<span class="token-comment"># Format all source files</span>
+./vn fmt
+
+<span class="token-comment"># Lint for issues</span>
+./vn lint</pre></div>
+            </div>
+
+            <a href="/kiln" style="color:var(--accent);font-weight:600;font-size:var(--text-base);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;padding:var(--space-2) var(--space-4);border:1px solid var(--accent);border-radius:var(--radius-full);">Learn more about Kiln <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
           </div>
 
-          <div>
-            <h3 class="tour-heading"><img src="/assets/constellation-logo.png" alt="" style="width:32px;height:32px;border-radius:6px;"> Constellation</h3>
-            <p class="tour-text">Constellation is Varian's package registry. <code>vn add pkg_name</code> fetches a package and its transitive dependencies. Packages are vendored locally so builds are reproducible and work offline. The registry is decentralized — packages can be hosted on any HTTP server that serves a <code>constellation.json</code> manifest.</p>
-            <p class="tour-text">No npm lockfile drama, no Python virtualenvs, no Go module proxy bureaucracy. Specify a package name and the toolchain handles resolution, download, and vendoring. No configuration file to edit, no lockfile to commit — it just works.</p>
-            <div class="code-block">
+          <!-- Constellation -->
+          <div style="border-top:1px solid var(--border-subtle);padding-top:var(--space-10);">
+            <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
+              <img src="/assets/constellation-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Constellation</h3>
+            </div>
+
+            <p style="font-size:var(--text-xl);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-4);">
+              A <strong style="color:var(--text-primary);">decentralized package registry</strong> that just works. <code>vn add pkg_name</code> fetches a package and its transitive dependencies, vendored locally for reproducible offline builds.
+            </p>
+
+            <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
+              <strong style="color:var(--text-primary);">No lockfile drama.</strong> No Python virtualenvs. No Go module proxy bureaucracy. Packages are hosted on any HTTP server that serves a <code>constellation.json</code> manifest. Specify a package name, and the toolchain handles resolution, download, and vendoring. No configuration file to edit.
+            </p>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
               <div class="code-block-body"><pre><span class="token-comment"># Add a package</span>
 ./vn add my-lib
 
-<span class="token-comment"># Use it in your app — no import needed, globals auto-resolve</span>
+<span class="token-comment"># Use it — no import needed, globals auto-resolve</span>
 ./vn run app.vn</pre></div>
             </div>
-            <a href="/constellation" style="color:var(--accent);font-weight:600;font-size:var(--text-sm);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;">Learn more about Constellation <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
+
+            <div class="code-block" style="margin-bottom:var(--space-4);">
+              <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+              <div class="code-block-body"><pre><span class="token-comment"># Publish your own package (any HTTP server works)</span>
+./vn publish ./my-pkg https://my-server.com/packages</pre></div>
+            </div>
+
+            <a href="/constellation" style="color:var(--accent);font-weight:600;font-size:var(--text-base);display:inline-flex;align-items:center;gap:var(--space-1);text-decoration:none;padding:var(--space-2) var(--space-4);border:1px solid var(--accent);border-radius:var(--radius-full);">Learn more about Constellation <span class="material-symbols-outlined" style="font-size:16px;">arrow_forward</span></a>
           </div>
 
         </div>
@@ -643,7 +789,7 @@ Hello, World!
         <div style="display:flex;gap:var(--space-4);justify-content:center;margin-top:var(--space-6);flex-wrap:wrap;">
           <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">terminal</span> vn run &lt;file&gt;</span>
           <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">build</span> vn build</span>
-          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">test_tube</span> vn test</span>
+          <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">science</span> vn test</span>
           <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">format_align_left</span> vn fmt</span>
           <span class="cmd-chip"><span class="material-symbols-outlined" style="font-size:16px;">add_box</span> vn add &lt;pkg&gt;</span>
         </div>
