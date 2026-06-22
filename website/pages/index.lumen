@@ -16,6 +16,17 @@
       margin: var(--space-8) auto;
       max-width: 720px;
       text-align: left;
+      position: relative;
+      box-shadow: 0 0 40px -12px color-mix(in srgb, var(--accent) 25%, transparent), 0 24px 48px -24px rgba(0,0,0,.6);
+    }
+    .editor-container::before {
+      content: "";
+      position: absolute;
+      inset: -1px;
+      border-radius: var(--radius-xl);
+      background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 20%, transparent), transparent 50%, color-mix(in srgb, var(--accent) 10%, transparent));
+      z-index: -1;
+      pointer-events: none;
     }
     .editor-header {
       background: var(--bg-surface);
@@ -896,6 +907,12 @@ fn runCode(s, v) {
 
 <client>
 (function() {
+  var path = window.location.pathname;
+  document.querySelectorAll('.nav-links a').forEach(function(a) {
+    if (a.getAttribute('href') === path || (path === '/' && a.getAttribute('href') === '/')) {
+      a.style.color = 'var(--accent)';
+    }
+  });
   const html = document.documentElement;
   const toggle = document.getElementById("theme-toggle");
   const icon = document.getElementById("theme-icon");
