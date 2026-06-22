@@ -137,7 +137,9 @@ for:
     environment:
       CCACHE_DIR: C:\ccache
     install:
-      - cmd: choco install ccache mingw make curl openssl 2>nul || ver>nul
+      - cmd: choco install mingw make curl openssl 2>nul || ver>nul
+      # ccache speeds rebuilds; transient Chocolatey timeouts are non-fatal
+      - cmd: choco install ccache 2>nul || ver>nul
       - ps: |
           $ErrorActionPreference = "Stop"
           $mingw = "C:\ProgramData\mingw64\mingw64\bin"
@@ -159,7 +161,7 @@ for:
           Write-Host "Building hiredis..."
           curl.exe -sL https://github.com/redis/hiredis/archive/refs/tags/v1.2.0.tar.gz -o "$deps\hiredis.tar.gz"
           md "$deps\hiredis_tmp" -Force | Out-Null
-          & 7z x "$deps\hiredis.tar.gz" -o"$deps\hiredis_tmp" -y 2>$null | Out-Null
+          tar -xzf "$deps\hiredis.tar.gz" -C "$deps\hiredis_tmp"
           $hiredis_dir = (Get-ChildItem "$deps\hiredis_tmp" -Directory | Select-Object -First 1).FullName
           Push-Location $hiredis_dir
           foreach ($cf in @("alloc.c","hiredis.c","net.c","sds.c","read.c","async.c")) {
@@ -192,7 +194,8 @@ for:
           Write-Host "All dependencies installed to $deps"
     build_script:
       # Chocolatey updates PATH but the current cmd shell doesn't see it; add MinGW manually.
-      - cmd: set "PATH=C:\ProgramData\mingw64\mingw64\bin;C:\ProgramData\chocolatey\bin;%PATH%" && mingw32-make CC="ccache gcc" -j%NUMBER_OF_PROCESSORS% release
+      # Use ccache if available, fall back to gcc if Chocolatey was flaky.
+      - cmd: set "PATH=C:\ProgramData\mingw64\mingw64\bin;C:\ProgramData\chocolatey\bin;%PATH%" && where ccache >nul 2>nul && mingw32-make CC="ccache gcc" -j%NUMBER_OF_PROCESSORS% release || mingw32-make -j%NUMBER_OF_PROCESSORS% release
     after_build:
       - ps: |
           $PKG = "varian-windows-x64"
