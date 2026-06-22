@@ -1,0 +1,827 @@
+<template>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Aurora — VarianLang Docs</title>
+  <meta name="description" content="Aurora is Varian's fullstack platform — Zenith backend + Lumen frontend in one language, one toolchain, one binary. Scaffold a fullstack app in seconds with vn new.">
+  <meta name="application-name" content="VarianLang">
+  <meta name="language" content="Varian">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "name": "Aurora — the fullstack Varian platform",
+    "description": "Aurora is the union of Zenith (backend) and Lumen (frontend) into one development model. Build the entire application in Varian from database to DOM — one language, one toolchain, one binary.",
+    "applicationCategory": "Web Framework",
+    "programmingLanguage": "Varian",
+    "author": { "@type": "Organization", "name": "VarianLang" }
+  }
+  </script>
+  <link rel="stylesheet" href="/global.css">
+  <style>
+    .docs-container {
+      display: flex;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 0 var(--space-6);
+      gap: var(--space-8);
+      align-items: flex-start;
+    }
+    .docs-sidebar {
+      width: 250px;
+      flex-shrink: 0;
+      position: sticky;
+      top: 80px;
+      height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-top: var(--space-8);
+      border-right: 1px solid var(--border-subtle);
+    }
+    .docs-sidebar ul {
+      list-style: none;
+    }
+    .docs-sidebar li {
+      margin-bottom: var(--space-2);
+    }
+    .docs-sidebar a {
+      color: var(--text-secondary);
+      text-decoration: none;
+      font-size: var(--text-sm);
+      transition: color var(--transition-fast);
+    }
+    .docs-sidebar a:hover, .docs-sidebar a.active {
+      color: var(--accent);
+    }
+    .docs-content {
+      flex: 1;
+      padding: var(--space-8) 0 var(--space-32);
+      min-width: 0;
+    }
+    .markdown-body {
+      color: var(--text-primary);
+      line-height: 1.6;
+    }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3, .markdown-body h4 {
+      margin-top: var(--space-8);
+      margin-bottom: var(--space-4);
+      font-family: var(--font-display);
+      font-weight: 700;
+    }
+    .markdown-body h1 { font-size: var(--text-4xl); margin-top: 0; }
+    .markdown-body h2 { font-size: var(--text-2xl); border-bottom: 1px solid var(--border-subtle); padding-bottom: var(--space-2); }
+    .markdown-body p, .markdown-body ul, .markdown-body ol { margin-bottom: var(--space-4); }
+    .markdown-body ul { padding-left: var(--space-6); list-style-type: disc; }
+    .markdown-body a { color: var(--accent); text-decoration: none; }
+    .markdown-body a:hover { text-decoration: underline; }
+    .markdown-body code {
+      font-family: var(--font-mono);
+      background-color: var(--bg-surface);
+      padding: 0.2em 0.4em;
+      border-radius: var(--radius-sm);
+      font-size: 0.9em;
+    }
+    .markdown-body pre {
+      background-color: #000;
+      padding: var(--space-4);
+      border-radius: var(--radius-md);
+      overflow-x: auto;
+      border: 1px solid var(--border-subtle);
+      margin-bottom: var(--space-4);
+    }
+    .markdown-body pre code {
+      background-color: transparent;
+      padding: 0;
+      color: var(--text-primary);
+    }
+    .markdown-body blockquote {
+      border-left: 4px solid var(--accent);
+      color: var(--text-muted);
+      margin-bottom: var(--space-4);
+      background: rgba(99,102,241,0.06);
+      padding: var(--space-4);
+      border-radius: 0 var(--radius-md) var(--radius-md) 0;
+    }
+    .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
+    .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
+    .markdown-body th { background-color: var(--bg-surface); }
+    .markdown-body img { max-width: 100%; border-radius: var(--radius-md); }
+  </style>
+</head>
+<body class="theme-aurora">
+  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+    <a href="/" class="nav-brand">
+      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
+      Varian
+    </a>
+    <div class="nav-links">
+      <a href="/#language">Language</a>
+      <a href="/#ecosystem">Ecosystem</a>
+      <a href="/aurora">Aurora</a>
+      <a href="/zenith">Zenith</a>
+      <a href="/lumen">Lumen</a>
+      <a href="/the_varian_book">The Book</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+    </div>
+  </nav>
+
+  <div class="docs-container">
+    <aside class="docs-sidebar">
+      <ul>
+        <li><strong>Getting Started</strong></li>
+        <li><a href="#why-aurora">Why Aurora?</a></li>
+        <li><a href="#scaffold">Scaffolding</a></li>
+        <li><a href="#examples">Examples</a></li>
+        <li><a href="#vs-nextjs">Aurora vs Next.js</a></li>
+        <li style="margin-top: 1rem"><strong>Frameworks & Tools</strong></li>
+        <li><a href="/zenith">Zenith Web Server</a></li>
+        <li><a href="/lumen">Lumen Framework</a></li>
+        <li><a href="/kiln">Kiln Build Tool</a></li>
+        <li><a href="/constellation">Constellation Registry</a></li>
+      </ul>
+    </aside>
+
+    <main class="docs-content markdown-body">
+
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-8);">
+  <div>
+    <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-4);">
+      <img src="/assets/aurora-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+      <h1 style="margin:0;font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Aurora</h1>
+    </div>
+    <p style="font-size:var(--text-lg);color:var(--text-secondary);margin:0;">The fullstack Varian platform — Zenith backend + Lumen frontend, one language, one binary.</p>
+  </div>
+  <a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;">
+    <span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page
+  </a>
+</div>
+
+<p>All <code>vn_modules/</code> files — including <code>zenith.vn</code>, <code>lumen.vn</code>, <code>lumen_ui.vn</code>, <code>db.vn</code>, and <code>http.vn</code> — are automatically concatenated as a prelude when you run an Aurora project. <code>new_app()</code>, <code>lumen_mount()</code>, <code>sqlite.connect()</code>, and the entire Lumen UI registry are always in scope. <strong>No <code>import</code>, no <code>require</code>, no <code>npm install</code>.</strong> The toolchain auto-detects Aurora, Lumen, or Zenith project type and compiles accordingly.</p>
+
+<!-- ============ WHY AURORA ============ -->
+<h2 id="why-aurora"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Aurora?</h2>
+<p>Aurora's pitch is not "yet another fullstack framework." It's <strong>one language, one toolchain, one binary — from database schema to DOM morph.</strong> No separate frontend build, no JavaScript framework, no <code>node_modules</code>, no dependency tree.</p>
+
+<div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);padding:var(--space-6);margin:var(--space-6) 0;">
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);font-size:var(--text-sm);">
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">language</span>
+        <h4 style="margin:0;font-size:var(--text-base);">One language, the entire stack</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Backend API routes, database queries, session management, HTML templates, and UI components — all Varian. Share types, validation, and business logic between server and client with no serialization boundary.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">flash_on</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Zero-config scaffolding</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn new myapp</code> creates a complete fullstack project: <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, <code>constellation.toml</code>. <code>vn dev</code> starts a live-reload dev server. No config files to write.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">autorenew</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Server-driven UI</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Lumen components render on the server. A 5 KB client forwards events over WebSocket; the server re-renders and morphs only the changed DOM nodes. Zero hydration bugs, zero client framework, zero Varian in the browser.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">neurology</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Comptime ORM + DB drivers</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">SQLite and Postgres drivers built in. The comptime ORM checks SQL strings at compile time and generates bound queries. <code>bind()</code> throws on parameter count mismatch — not at runtime.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">inventory_2</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Batteries included</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">package_2</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Deploys as one binary</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn build --release</code> produces a single native executable with Zenith, Lumen, the ORM, and the database schema all compiled in. No runtime to install, no <code>node_modules</code> on the server, no "works on my machine."</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">description</span>
+        <h4 style="margin:0;font-size:var(--text-base);">OpenAPI for free</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.</p>
+    </div>
+
+    <div>
+      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
+        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">track_changes</span>
+        <h4 style="margin:0;font-size:var(--text-base);">Multi-core by default</h4>
+      </div>
+      <p style="color:var(--text-secondary);line-height:1.6;">Zenith clusters across threads with independent VMs, SIMD request parsing, writev single-syscall responses, and per-request arena allocation. Lumen's WebSocket event loop handles concurrent connections without threads.</p>
+    </div>
+
+  </div>
+</div>
+
+<!-- ============ SCAFFOLDING ============ -->
+<h2 id="scaffold"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">rocket_launch</span> Scaffolding an Aurora project</h2>
+<p>A single command creates a complete fullstack project:</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">sh</span></div>
+  <div class="code-block-body"><pre>$ vn new myapp
+<span class="token-builtin">cd</span> myapp
+vn dev                <span class="token-comment"># live-reload dev server on :8090</span>
+</pre></div>
+</div>
+
+<p>This creates a project tree with every file you need:</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">project tree</span></div>
+  <div class="code-block-body"><pre>myapp/
+  main.vn               <span class="token-comment"># Zenith entry point — app config, routes, middleware</span>
+  pages/
+    index.lumen          <span class="token-comment"># Lumen landing page (live reactive component)</span>
+    components/          <span class="token-comment"># shared UI components (ProductCard, Nav, etc.)</span>
+  lib/
+    config.vn            <span class="token-comment"># env-based configuration</span>
+    db.vn                <span class="token-comment"># SQLite schema, migration, seed</span>
+    middleware.vn         <span class="token-comment"># logging, CORS, rate limiter</span>
+    api_products.vn       <span class="token-comment"># product listing REST endpoints</span>
+    api_cart.vn           <span class="token-comment"># session-backed shopping cart</span>
+    api_orders.vn         <span class="token-comment"># checkout + order creation</span>
+    auth.vn               <span class="token-comment"># registration, login, logout</span>
+    jobs.vn               <span class="token-comment"># email worker pool + cron</span>
+    pages.vn              <span class="token-comment"># Lumen page mounting with SSR data</span>
+  public/                <span class="token-comment"># static assets (images, favicons)</span>
+  constellation.toml     <span class="token-comment"># package manifest (kind = "aurora")</span>
+</pre></div>
+</div>
+
+<p><code>vn dev</code> detects the Aurora project type automatically, starts the Zenith server, mounts all Lumen pages, and watches for changes with live reload. <code>vn build --release</code> compiles everything into a single native binary.</p>
+
+<!-- ============ EXAMPLES ============ -->
+<h2 id="examples"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> Full-stack examples</h2>
+<p>Every Aurora project follows the same architecture. Here is the complete walkthrough of a production fullstack app — the <strong>Aurora storefront</strong> reference implementation.</p>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">input</span> Entry point — <code>main.vn</code></h3>
+<p>The <code>main.vn</code> wires together every module: config, database, middleware, API routes, auth, background jobs, and Lumen page mounting. It is the single entry point for the entire application.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">main.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">use</span> <span class="token-string">"lib/config.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/db.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/middleware.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/api_products.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/api_cart.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/api_orders.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/auth.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/jobs.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">"lib/pages.vn"</span>
+<span class="token-keyword">use</span> <span class="token-string">".gen/pages.vn"</span>
+
+<span class="token-keyword">let</span> c = <span class="token-function">cfg</span>()
+<span class="token-keyword">let</span> conn = <span class="token-function">db_init</span>(c.db_path)
+<span class="token-keyword">let</span> app = <span class="token-function">new_app</span>()
+app.title = <span class="token-string">"Aurora"</span>
+
+<span class="token-function">install_middleware</span>(app, c)
+<span class="token-function">register_product_api</span>(app, conn, c)
+<span class="token-function">register_cart_api</span>(app, conn, c)
+<span class="token-keyword">let</span> email_pool = <span class="token-function">start_jobs</span>(conn, c)
+<span class="token-function">register_order_api</span>(app, conn, c, email_pool)
+<span class="token-function">register_auth</span>(app, conn, c)
+<span class="token-function">mount_pages</span>(app, conn, c)
+
+app.enable_docs(<span class="token-string">"/docs"</span>)
+app.serve_static(<span class="token-string">"/public"</span>, <span class="token-string">"public"</span>)
+app.on_error(|err, req| {
+    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"status"</span>, <span class="token-string">"body"</span>, <span class="token-string">"content_type"</span>],
+        [<span class="token-number">500</span>, <span class="token-string">"&lt;!DOCTYPE html&gt;..."</span>, <span class="token-string">"text/html"</span>]
+    )
+})
+app.<span class="token-function">listen</span>(c.port)
+</pre></div>
+</div>
+
+<p>Notice: no <code>import</code> for <code>new_app()</code>, <code>http.create_struct</code>, <code>sqlite</code> — all auto-in-scope through the <code>vn_modules/</code> prelude.</p>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">settings</span> Configuration — <code>lib/config.vn</code></h3>
+<p>Centralized env-based configuration. Every <code>env.get()</code> call lives in one place — no magic numbers or hardcoded secrets scattered across modules.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/config.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">cfg</span>() {
+    <span class="token-keyword">let</span> port = <span class="token-number">8080</span>
+    <span class="token-keyword">let</span> port_str = env.<span class="token-function">get</span>(<span class="token-string">"PORT"</span>, <span class="token-string">"8080"</span>)
+    <span class="token-keyword">try</span> { port = <span class="token-function">json_decode</span>(port_str) } <span class="token-keyword">catch</span> e {}
+
+    <span class="token-keyword">let</span> secret = env.<span class="token-function">get</span>(<span class="token-string">"SESSION_SECRET"</span>, <span class="token-string">""</span>)
+    <span class="token-keyword">if</span> secret == <span class="token-string">""</span> {
+        secret = auth.<span class="token-function">sha1_base64</span>(<span class="token-string">""</span> + time.<span class="token-function">now_ms</span>())
+        <span class="token-function">print</span>(<span class="token-string">"[config] WARNING: SESSION_SECRET not set"</span>)
+    }
+
+    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"port"</span>, <span class="token-string">"session_secret"</span>, <span class="token-string">"db_path"</span>, <span class="token-string">"per_page"</span>],
+        [port, secret, env.<span class="token-function">get</span>(<span class="token-string">"DB_PATH"</span>, <span class="token-string">"aurora.db"</span>), <span class="token-number">12</span>]
+    )
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">storage</span> Database — <code>lib/db.vn</code></h3>
+<p>SQLite schema initialization, migration, and seed data. The comptime ORM (<code>db.vn</code> in <code>vn_modules/</code>) provides a builder API (<code>select()</code>, <code>bind()</code>, <code>run_sqlite()</code>) that validates queries at compile time.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/db.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">db_init</span>(db_path) {
+    <span class="token-keyword">let</span> conn = sqlite.<span class="token-function">connect</span>(db_path)
+
+    sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"CREATE TABLE IF NOT EXISTS products (</span>
+<span class="token-string">        id INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+<span class="token-string">        name TEXT NOT NULL, price_cents INTEGER NOT NULL,</span>
+<span class="token-string">        stock INTEGER NOT NULL DEFAULT 0,</span>
+<span class="token-string">        image TEXT NOT NULL DEFAULT '',</span>
+<span class="token-string">        description TEXT NOT NULL DEFAULT '',</span>
+<span class="token-string">        featured INTEGER NOT NULL DEFAULT 0)"</span>)
+
+    sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"CREATE TABLE IF NOT EXISTS users (</span>
+<span class="token-string">        id INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+<span class="token-string">        email TEXT NOT NULL UNIQUE, pass_hash TEXT NOT NULL,</span>
+<span class="token-string">        name TEXT NOT NULL DEFAULT '',</span>
+<span class="token-string">        created TEXT NOT NULL DEFAULT (datetime('now')))"</span>)
+
+    sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"CREATE TABLE IF NOT EXISTS orders (</span>
+<span class="token-string">        id INTEGER PRIMARY KEY AUTOINCREMENT,</span>
+<span class="token-string">        user_id INTEGER, total_cents INTEGER NOT NULL,</span>
+<span class="token-string">        status TEXT NOT NULL DEFAULT 'pending',</span>
+<span class="token-string">        created TEXT NOT NULL DEFAULT (datetime('now')))"</span>)
+
+    <span class="token-keyword">let</span> existing = sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"SELECT COUNT(*) AS c FROM products"</span>)
+    <span class="token-keyword">if</span> existing[<span class="token-number">0</span>].c == <span class="token-number">0</span> { <span class="token-function">seed_data</span>(conn) }
+    <span class="token-keyword">return</span> conn
+}
+
+<span class="token-keyword">fn</span> <span class="token-function">format_price</span>(cents) {
+    <span class="token-keyword">let</span> dollars = cents / <span class="token-number">100</span>
+    <span class="token-keyword">let</span> c = cents % <span class="token-number">100</span>
+    <span class="token-keyword">if</span> c &lt; <span class="token-number">10</span> { <span class="token-keyword">return</span> <span class="token-string">"$"</span> + dollars + <span class="token-string">".0"</span> + c }
+    <span class="token-keyword">return</span> <span class="token-string">"$"</span> + dollars + <span class="token-string">"."</span> + c
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">link</span> Middleware — <code>lib/middleware.vn</code></h3>
+<p>Middleware is applied as a chain with <code>app.add_middleware()</code>. Each middleware receives the request and a <code>next</code> callback.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/middleware.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">install_middleware</span>(app, c) {
+    app.<span class="token-function">add_middleware</span>(|req, next| {
+        <span class="token-keyword">let</span> start = time.<span class="token-function">now_ms</span>()
+        <span class="token-keyword">let</span> resp = <span class="token-function">next</span>(req)
+        <span class="token-keyword">let</span> ms = time.<span class="token-function">now_ms</span>() - start
+        <span class="token-function">print</span>(<span class="token-string">"[Aurora] "</span> + req.method + <span class="token-string">" "</span> + req.path
+              + <span class="token-string">" -> "</span> + resp.status + <span class="token-string">" ("</span> + ms + <span class="token-string">"ms)"</span>)
+        <span class="token-keyword">return</span> resp
+    })
+    app.<span class="token-function">add_middleware</span>(<span class="token-function">cors</span>([<span class="token-string">"*"</span>], [<span class="token-string">"GET"</span>, <span class="token-string">"POST"</span>, <span class="token-string">"PUT"</span>, <span class="token-string">"DELETE"</span>], [<span class="token-string">"*"</span>]))
+    app.<span class="token-function">add_middleware</span>(<span class="token-function">rate_limit</span>(c.rate_max, c.rate_window))
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">api</span> REST API — <code>lib/api_products.vn</code></h3>
+<p>Product listing and detail endpoints. Routes are registered with a <code>summary</code> string for auto-generated OpenAPI docs. Query parameters parsed with <code>query()</code>, database queries use bound parameters.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/api_products.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">register_product_api</span>(app, conn, c) {
+    app.<span class="token-function">get</span>(<span class="token-string">"/api/products"</span>, |req| {
+        <span class="token-keyword">let</span> q = <span class="token-function">query</span>(req, <span class="token-string">"q"</span>, <span class="token-string">""</span>)
+        <span class="token-keyword">let</span> page = <span class="token-number">0</span>
+        <span class="token-keyword">let</span> pstr = <span class="token-function">query</span>(req, <span class="token-string">"page"</span>, <span class="token-string">"1"</span>)
+        <span class="token-keyword">if</span> pstr != <span class="token-keyword">null</span> <span class="token-keyword">and</span> pstr != <span class="token-string">""</span> {
+            <span class="token-keyword">try</span> { page = <span class="token-function">json_decode</span>(pstr) - <span class="token-number">1</span> } <span class="token-keyword">catch</span> e {}
+        }
+        <span class="token-keyword">let</span> offset = page * c.per_page
+        <span class="token-keyword">let</span> rows
+        <span class="token-keyword">if</span> q != <span class="token-string">""</span> {
+            rows = sqlite.<span class="token-function">query</span>(conn,
+                <span class="token-string">"SELECT * FROM products WHERE name LIKE ? ORDER BY id LIMIT ? OFFSET ?"</span>,
+                [<span class="token-string">"%"</span> + q + <span class="token-string">"%"</span>, c.per_page, offset])
+        } <span class="token-keyword">else</span> {
+            rows = sqlite.<span class="token-function">query</span>(conn,
+                <span class="token-string">"SELECT * FROM products ORDER BY id LIMIT ? OFFSET ?"</span>,
+                [c.per_page, offset])
+        }
+        <span class="token-keyword">return</span> <span class="token-function">json_res</span>(rows, <span class="token-number">200</span>)
+    }, <span class="token-string">"List products"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"query_params"</span>, <span class="token-string">"response_schema"</span>, <span class="token-string">"response_status"</span>],
+        [http.<span class="token-function">create_struct</span>([<span class="token-string">"q"</span>, <span class="token-string">"page"</span>], [<span class="token-string">"string"</span>, <span class="token-string">"integer"</span>]), <span class="token-string">"array"</span>, <span class="token-number">200</span>]
+    ))
+
+    app.<span class="token-function">get</span>(<span class="token-string">"/api/products/:id"</span>, |req| {
+        <span class="token-keyword">let</span> id = _validate.<span class="token-function">get_field</span>(req.params, <span class="token-string">"id"</span>)
+        <span class="token-keyword">if</span> id == <span class="token-keyword">null</span> { <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Missing id"</span>, <span class="token-number">400</span>) }
+        <span class="token-keyword">let</span> rows = sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"SELECT * FROM products WHERE id = ?"</span>, [id])
+        <span class="token-keyword">if</span> rows.<span class="token-function">len</span>() == <span class="token-number">0</span> { <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Not found"</span>, <span class="token-number">404</span>) }
+        <span class="token-keyword">return</span> <span class="token-function">json_res</span>(rows[<span class="token-number">0</span>], <span class="token-number">200</span>)
+    }, <span class="token-string">"Get product by id"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"response_schema"</span>, <span class="token-string">"response_status"</span>, <span class="token-string">"error_status"</span>],
+        [<span class="token-string">"object"</span>, <span class="token-number">200</span>, <span class="token-number">404</span>]
+    ))
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">shopping_cart</span> Session-backed Cart — <code>lib/api_cart.vn</code></h3>
+<p>The cart is stored in the session cookie. <code>session_get</code> and <code>session_set</code> handle JWT-signed cookie encryption automatically.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/api_cart.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">register_cart_api</span>(app, conn, c) {
+    app.<span class="token-function">get</span>(<span class="token-string">"/api/cart"</span>, |req| {
+        <span class="token-keyword">return</span> <span class="token-function">json_res</span>(<span class="token-function">get_cart</span>(req, c.session_secret), <span class="token-number">200</span>)
+    }, <span class="token-string">"Get cart"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"response_schema"</span>, <span class="token-string">"response_status"</span>], [<span class="token-string">"array"</span>, <span class="token-number">200</span>]
+    ))
+
+    app.<span class="token-function">post</span>(<span class="token-string">"/api/cart/:id"</span>, |req| {
+        <span class="token-keyword">let</span> id = _validate.<span class="token-function">get_field</span>(req.params, <span class="token-string">"id"</span>)
+        <span class="token-keyword">if</span> id == <span class="token-keyword">null</span> { <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Missing product id"</span>, <span class="token-number">400</span>) }
+        <span class="token-keyword">let</span> qty = req.json.qty
+        <span class="token-keyword">if</span> qty == <span class="token-keyword">null</span> { qty = <span class="token-number">1</span> }
+        <span class="token-keyword">let</span> cart = <span class="token-function">get_cart</span>(req, c.session_secret)
+        <span class="token-keyword">let</span> found = <span class="token-builtin">false</span>
+        <span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..cart.<span class="token-function">len</span>() {
+            <span class="token-keyword">if</span> cart[i].product_id == id {
+                cart[i].qty = cart[i].qty + qty
+                found = <span class="token-builtin">true</span>; <span class="token-keyword">break</span>
+            }
+        }
+        <span class="token-keyword">if</span> !found {
+            cart = cart.<span class="token-function">push</span>(http.<span class="token-function">create_struct</span>(
+                [<span class="token-string">"product_id"</span>, <span class="token-string">"qty"</span>], [id, qty]))
+        }
+        <span class="token-keyword">return</span> <span class="token-function">save_cart</span>(<span class="token-function">json_res</span>(cart, <span class="token-number">200</span>), cart, req, c.session_secret)
+    }, <span class="token-string">"Add to cart"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"request_schema"</span>, <span class="token-string">"response_schema"</span>, <span class="token-string">"response_status"</span>],
+        [<span class="token-string">"object"</span>, <span class="token-string">"array"</span>, <span class="token-number">200</span>]
+    ))
+
+    app.<span class="token-function">delete</span>(<span class="token-string">"/api/cart/:id"</span>, |req| {
+        <span class="token-keyword">let</span> id = _validate.<span class="token-function">get_field</span>(req.params, <span class="token-string">"id"</span>)
+        <span class="token-keyword">if</span> id == <span class="token-keyword">null</span> { <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Missing product id"</span>, <span class="token-number">400</span>) }
+        <span class="token-keyword">let</span> cart = <span class="token-function">get_cart</span>(req, c.session_secret)
+        <span class="token-keyword">let</span> new_cart = []
+        <span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..cart.<span class="token-function">len</span>() {
+            <span class="token-keyword">if</span> cart[i].product_id != id {
+                new_cart = new_cart.<span class="token-function">push</span>(cart[i])
+            }
+        }
+        <span class="token-keyword">return</span> <span class="token-function">save_cart</span>(<span class="token-function">json_res</span>(new_cart, <span class="token-number">200</span>), new_cart, req, c.session_secret)
+    }, <span class="token-string">"Remove from cart"</span>, <span class="token-keyword">null</span>)
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">lock</span> Authentication — <code>lib/auth.vn</code></h3>
+<p>Registration, login, and logout with password hashing and JWT-signed session cookies. Routes include OpenAPI schema annotations for auto-generated docs.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/auth.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">register_auth</span>(app, conn, c) {
+    app.<span class="token-function">post</span>(<span class="token-string">"/api/register"</span>, |req| {
+        <span class="token-keyword">let</span> json = req.json
+        <span class="token-keyword">let</span> email = _validate.<span class="token-function">get_field</span>(json, <span class="token-string">"email"</span>)
+        <span class="token-keyword">let</span> pass = _validate.<span class="token-function">get_field</span>(json, <span class="token-string">"password"</span>)
+        <span class="token-keyword">if</span> email == <span class="token-keyword">null</span> <span class="token-keyword">or</span> pass == <span class="token-keyword">null</span> {
+            <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Email and password required"</span>, <span class="token-number">400</span>)
+        }
+        <span class="token-keyword">let</span> existing = sqlite.<span class="token-function">query</span>(conn,
+            <span class="token-string">"SELECT id FROM users WHERE email = ?"</span>, [email])
+        <span class="token-keyword">if</span> existing.<span class="token-function">len</span>() &gt; <span class="token-number">0</span> {
+            <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Email already registered"</span>, <span class="token-number">409</span>)
+        }
+        <span class="token-keyword">let</span> hash = auth.<span class="token-function">sha1_base64</span>(pass)
+        sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"INSERT INTO users (email, pass_hash, name) VALUES (?, ?, ?)"</span>,
+            [email, hash, _validate.<span class="token-function">get_field</span>(json, <span class="token-string">"name"</span>)])
+        <span class="token-keyword">let</span> rows = sqlite.<span class="token-function">query</span>(conn, <span class="token-string">"SELECT last_insert_rowid() AS id"</span>)
+        <span class="token-keyword">let</span> session_data = http.<span class="token-function">create_struct</span>(
+            [<span class="token-string">"uid"</span>, <span class="token-string">"email"</span>], [rows[<span class="token-number">0</span>].id, email])
+        <span class="token-keyword">return</span> <span class="token-function">session_set</span>(<span class="token-function">json_res</span>(http.<span class="token-function">create_struct</span>(
+            [<span class="token-string">"uid"</span>, <span class="token-string">"email"</span>], [rows[<span class="token-number">0</span>].id, email]), <span class="token-number">201</span>),
+            session_data, c.session_secret, <span class="token-keyword">null</span>)
+    }, <span class="token-string">"Register user"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"request_schema"</span>, <span class="token-string">"response_schema"</span>, <span class="token-string">"response_status"</span>],
+        [<span class="token-string">"object"</span>, <span class="token-string">"object"</span>, <span class="token-number">201</span>]
+    ))
+
+    app.<span class="token-function">post</span>(<span class="token-string">"/api/login"</span>, |req| {
+        <span class="token-keyword">let</span> json = req.json
+        <span class="token-keyword">let</span> email = _validate.<span class="token-function">get_field</span>(json, <span class="token-string">"email"</span>)
+        <span class="token-keyword">let</span> pass = _validate.<span class="token-function">get_field</span>(json, <span class="token-string">"password"</span>)
+        <span class="token-keyword">let</span> rows = sqlite.<span class="token-function">query</span>(conn,
+            <span class="token-string">"SELECT id, name FROM users WHERE email = ? AND pass_hash = ?"</span>,
+            [email, auth.<span class="token-function">sha1_base64</span>(pass)])
+        <span class="token-keyword">if</span> rows.<span class="token-function">len</span>() == <span class="token-number">0</span> {
+            <span class="token-keyword">return</span> <span class="token-function">err_res</span>(<span class="token-string">"Invalid credentials"</span>, <span class="token-number">401</span>)
+        }
+        <span class="token-keyword">let</span> u = rows[<span class="token-number">0</span>]
+        <span class="token-keyword">return</span> <span class="token-function">session_set</span>(<span class="token-function">json_res</span>(http.<span class="token-function">create_struct</span>(
+            [<span class="token-string">"uid"</span>, <span class="token-string">"email"</span>], [u.id, email]), <span class="token-number">200</span>),
+            http.<span class="token-function">create_struct</span>([<span class="token-string">"uid"</span>, <span class="token-string">"email"</span>, <span class="token-string">"name"</span>], [u.id, email, u.name]),
+            c.session_secret, <span class="token-keyword">null</span>)
+    }, <span class="token-string">"Login user"</span>, http.<span class="token-function">create_struct</span>(
+        [<span class="token-string">"request_schema"</span>, <span class="token-string">"response_schema"</span>, <span class="token-string">"error_status"</span>],
+        [<span class="token-string">"object"</span>, <span class="token-string">"object"</span>, <span class="token-number">401</span>]
+    ))
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> Mounting Lumen Pages with SSR Data — <code>lib/pages.vn</code></h3>
+<p>Lumen pages mount onto Zenith routes with the <code>lumen_mount_data</code> API. The callback runs on every request, fetches data from the database, and passes it to the Lumen component as initial state — full server-side rendering with zero client data fetching.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/pages.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">mount_pages</span>(app, conn, c) {
+    <span class="token-comment">// Shop page — DB-driven products with search</span>
+    <span class="token-keyword">let</span> shop_comp = _lumen.<span class="token-function">get_component</span>(<span class="token-string">"Shop"</span>)
+    <span class="token-keyword">if</span> shop_comp != <span class="token-keyword">null</span> {
+        <span class="token-function">lumen_mount_data</span>(app, <span class="token-string">"/shop"</span>, shop_comp, |req| {
+            <span class="token-keyword">let</span> q = <span class="token-function">query</span>(req, <span class="token-string">"q"</span>, <span class="token-string">""</span>)
+            <span class="token-keyword">let</span> items = []
+            <span class="token-keyword">let</span> rows
+            <span class="token-keyword">if</span> q != <span class="token-string">""</span> {
+                rows = sqlite.<span class="token-function">query</span>(conn,
+                    <span class="token-string">"SELECT * FROM products WHERE name LIKE ? ORDER BY id"</span>,
+                    [<span class="token-string">"%"</span> + q + <span class="token-string">"%"</span>])
+            } <span class="token-keyword">else</span> {
+                rows = sqlite.<span class="token-function">query</span>(conn,
+                    <span class="token-string">"SELECT * FROM products ORDER BY id"</span>, [])
+            }
+            <span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..rows.<span class="token-function">len</span>() {
+                <span class="token-keyword">let</span> p = rows[i]
+                items = items.<span class="token-function">push</span>(http.<span class="token-function">create_struct</span>(
+                    [<span class="token-string">"id"</span>,<span class="token-string">"name"</span>,<span class="token-string">"price"</span>,<span class="token-string">"stock"</span>,<span class="token-string">"image"</span>],
+                    [p.id, p.name, <span class="token-function">format_price</span>(p.price_cents), p.stock, p.image]))
+            }
+            <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+                [<span class="token-string">"hasProducts"</span>, <span class="token-string">"products"</span>, <span class="token-string">"query"</span>],
+                [items.<span class="token-function">len</span>() &gt; <span class="token-number">0</span>, items, q])
+        })
+    }
+
+    <span class="token-comment">// Product detail — DB-backed SSR with :id param</span>
+    <span class="token-keyword">let</span> detail_comp = _lumen.<span class="token-function">get_component</span>(<span class="token-string">"ProductDetail"</span>)
+    <span class="token-keyword">if</span> detail_comp != <span class="token-keyword">null</span> {
+        <span class="token-function">lumen_mount_data</span>(app, <span class="token-string">"/product/:id"</span>, detail_comp, |req| {
+            <span class="token-keyword">let</span> id = _validate.<span class="token-function">get_field</span>(req.params, <span class="token-string">"id"</span>)
+            <span class="token-keyword">if</span> id == <span class="token-keyword">null</span> { <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>([<span class="token-string">"id"</span>], [<span class="token-number">0</span>]) }
+            <span class="token-keyword">let</span> rows = sqlite.<span class="token-function">query</span>(conn,
+                <span class="token-string">"SELECT * FROM products WHERE id = ?"</span>, [id])
+            <span class="token-keyword">if</span> rows.<span class="token-function">len</span>() == <span class="token-number">0</span> { <span class="token-keyword">return</span> ... } <span class="token-comment">// 404 fallback</span>
+            <span class="token-keyword">let</span> p = rows[<span class="token-number">0</span>]
+            <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+                [<span class="token-string">"id"</span>,<span class="token-string">"name"</span>,<span class="token-string">"price"</span>,<span class="token-string">"stock"</span>,
+                 <span class="token-string">"stockText"</span>,<span class="token-string">"stockBadgeTone"</span>,<span class="token-string">"description"</span>,<span class="token-string">"image"</span>],
+                [p.id, p.name, <span class="token-function">format_price</span>(p.price_cents), p.stock,
+                 p.stock &gt; <span class="token-number">0</span> ? <span class="token-string">"In Stock"</span> : <span class="token-string">"Out of Stock"</span>,
+                 p.stock &gt; <span class="token-number">0</span> ? <span class="token-string">"success"</span> : <span class="token-string">"danger"</span>,
+                 p.description, p.image])
+        })
+    }
+
+    <span class="token-comment">// Cart — session-driven SSR</span>
+    <span class="token-keyword">let</span> cart_comp = _lumen.<span class="token-function">get_component</span>(<span class="token-string">"Cart"</span>)
+    <span class="token-keyword">if</span> cart_comp != <span class="token-keyword">null</span> {
+        <span class="token-function">lumen_mount_data</span>(app, <span class="token-string">"/cart"</span>, cart_comp, |req| {
+            <span class="token-keyword">let</span> cart_items = <span class="token-function">get_cart</span>(req, c.session_secret)
+            <span class="token-keyword">let</span> items = []; <span class="token-keyword">let</span> total_cents = <span class="token-number">0</span>
+            <span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..cart_items.<span class="token-function">len</span>() {
+                <span class="token-keyword">let</span> ci = cart_items[i]
+                <span class="token-keyword">let</span> rows = sqlite.<span class="token-function">query</span>(conn,
+                    <span class="token-string">"SELECT * FROM products WHERE id = ?"</span>, [ci.product_id])
+                <span class="token-keyword">if</span> rows.<span class="token-function">len</span>() &gt; <span class="token-number">0</span> {
+                    total_cents = total_cents + rows[<span class="token-number">0</span>].price_cents * ci.qty
+                    items = items.<span class="token-function">push</span>(...)
+                }
+            }
+            <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+                [<span class="token-string">"hasItems"</span>, <span class="token-string">"items"</span>, <span class="token-string">"total"</span>],
+                [items.<span class="token-function">len</span>() &gt; <span class="token-number">0</span>, items, <span class="token-function">format_price</span>(total_cents)])
+        })
+    }
+}
+</pre></div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">widgets</span> Lumen UI Component — <code>ProductCard.lumen</code></h3>
+<p>A Lumen component lives in <code>pages/components/</code> — it is automatically compiled as a component struct that gets imported by other pages. This one renders a product card that fetches cart data from the <code>/api</code> endpoints.</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">pages/components/ProductCard.lumen</span></div>
+  <div class="code-block-body"><pre><span class="token-tag">&lt;template&gt;</span>
+  <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"product-card"</span><span class="token-tag">&gt;</span>
+    <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"card-img-wrap"</span><span class="token-tag">&gt;</span>
+      <span class="token-tag">&lt;img</span> <span class="token-attr">src</span>=<span class="token-string">"{{! image }}"</span>
+           <span class="token-attr">alt</span>=<span class="token-string">"{{! name }}"</span>
+           <span class="token-attr">loading</span>=<span class="token-string">"lazy"</span> <span class="token-tag">/&gt;</span>
+      <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"card-stock"</span>
+           <span class="token-attr">data-tone</span>=<span class="token-string">"{{#if stock}}success{{else}}danger{{/if}}"</span><span class="token-tag">&gt;</span>
+        <span class="token-tag">&lt;span</span> <span class="token-attr">class</span>=<span class="token-string">"stock-dot"</span><span class="token-tag">&gt;&lt;/span&gt;</span>
+        {{#if stock}}In Stock{{else}}Out of Stock{{/if}}
+      <span class="token-tag">&lt;/div&gt;</span>
+    <span class="token-tag">&lt;/div&gt;</span>
+    <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"card-body"</span><span class="token-tag">&gt;</span>
+      <span class="token-tag">&lt;h3</span> <span class="token-attr">class</span>=<span class="token-string">"card-title"</span><span class="token-tag">&gt;</span>{{! name }}<span class="token-tag">&lt;/h3&gt;</span>
+      <span class="token-tag">&lt;p</span> <span class="token-attr">class</span>=<span class="token-string">"card-price"</span><span class="token-tag">&gt;</span>{{! price }}<span class="token-tag">&lt;/p&gt;</span>
+      <span class="token-tag">&lt;div</span> <span class="token-attr">class</span>=<span class="token-string">"card-footer"</span><span class="token-tag">&gt;</span>
+        <span class="token-tag">&lt;button</span> <span class="token-attr">@click</span>=<span class="token-string">"addToCart"</span><span class="token-tag">&gt;</span>+ Add<span class="token-tag">&lt;/button&gt;</span>
+      <span class="token-tag">&lt;/div&gt;</span>
+    <span class="token-tag">&lt;/div&gt;</span>
+  <span class="token-tag">&lt;/div&gt;</span>
+<span class="token-tag">&lt;/template&gt;</span>
+
+<span class="token-tag">&lt;style</span> <span class="token-attr">scoped</span><span class="token-tag">&gt;</span>
+<span class="token-selector">.product-card</span> {
+  <span class="token-attr">background</span>: <span class="token-function">var</span>(--lumen-surface);
+  <span class="token-attr">border</span>: <span class="token-number">1</span><span class="token-builtin">px</span> <span class="token-builtin">solid</span> <span class="token-function">var</span>(--lumen-border);
+  <span class="token-attr">border-radius</span>: <span class="token-number">12</span><span class="token-builtin">px</span>;
+  <span class="token-attr">overflow</span>: <span class="token-builtin">hidden</span>;
+}
+<span class="token-selector">.product-card:hover</span> {
+  <span class="token-attr">transform</span>: <span class="token-function">translateY</span>(-<span class="token-number">4</span><span class="token-builtin">px</span>);
+}
+<span class="token-tag">&lt;/style&gt;</span>
+
+<span class="token-tag">&lt;script&gt;</span>
+<span class="token-keyword">fn</span> <span class="token-function">state</span>() {
+    <span class="token-keyword">return</span> { id: <span class="token-number">0</span>, name: <span class="token-string">"Product"</span>,
+             price: <span class="token-string">"$0.00"</span>, stock: <span class="token-number">0</span>, image: <span class="token-string">""</span> }
+}
+<span class="token-keyword">fn</span> <span class="token-function">addToCart</span>(s, v) {
+    <span class="token-keyword">let</span> resp = post(<span class="token-string">"/api/cart/"</span> + s.id, <span class="token-string">"{\"qty\":1}"</span>)
+    <span class="token-keyword">return</span> s
+}
+<span class="token-tag">&lt;/script&gt;</span>
+</pre></div>
+</div>
+
+<!-- ============ VS NEXTJS ============ -->
+<h2 id="vs-nextjs"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">compare_arrows</span> Aurora vs Next.js</h2>
+<p>Aurora is to Varian what Next.js is to JavaScript — but the setup story is fundamentally different because Aurora ships <strong>everything built in</strong>.</p>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">timer</span> Time to "Hello World"</h3>
+
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);margin-bottom:var(--space-6);">
+  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:var(--space-4);">
+    <h4 style="margin:0 0 var(--space-2);font-size:var(--text-base);display:flex;align-items:center;gap:var(--space-1);">
+      <span class="material-symbols-outlined" style="color:var(--accent);font-size:18px;">check_circle</span> Aurora
+    </h4>
+    <div style="font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;">
+      <div>$ vn new myapp</div>
+      <div>$ cd myapp &amp;&amp; vn dev</div>
+      <div style="color:var(--text-muted);margin-top:var(--space-1);">→ 2 commands, 0 seconds install, 0 dependencies</div>
+    </div>
+  </div>
+  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:var(--space-4);">
+    <h4 style="margin:0 0 var(--space-2);font-size:var(--text-base);display:flex;align-items:center;gap:var(--space-1);">
+      <span class="material-symbols-outlined" style="color:#f87171;font-size:18px;">schedule</span> Next.js
+    </h4>
+    <div style="font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.8;">
+      <div>$ npx create-next-app@latest myapp</div>
+      <div style="color:var(--text-muted);">  (2 min interactive prompts)</div>
+      <div>$ cd myapp &amp;&amp; npm install</div>
+      <div style="color:var(--text-muted);">  (30-60s, 200MB+ node_modules)</div>
+      <div>$ npm run dev</div>
+      <div style="color:var(--text-muted);margin-top:var(--space-1);">→ 3 commands, 2+ min install, 1000+ dependencies</div>
+    </div>
+  </div>
+</div>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">table</span> Feature comparison</h3>
+
+<table>
+  <tr><th>Concern</th><th>Aurora (Varian)</th><th>Next.js (JavaScript)</th></tr>
+  <tr>
+    <td>Scaffolding</td>
+    <td><code>vn new myapp</code> — 1 command</td>
+    <td><code>npx create-next-app</code> — interactive prompts, 200MB+ download</td>
+  </tr>
+  <tr>
+    <td>Language parity</td>
+    <td><strong>One language</strong> — Varian for backend API, database, templates, and UI components</td>
+    <td><strong>Two languages</strong> — JavaScript/TypeScript for frontend, Node/JS for API routes (or Python/Go/Rust for a separate backend)</td>
+  </tr>
+  <tr>
+    <td>Dependencies</td>
+    <td><strong>Zero</strong> — everything built in via <code>vn_modules/</code> prelude</td>
+    <td><code>package.json</code> with 1000+ transitive deps; separate DB driver, ORM, auth library, validation library, testing library</td>
+  </tr>
+  <tr>
+    <td>Database</td>
+    <td><strong>Built-in</strong> — SQLite and Postgres drivers with comptime ORM</td>
+    <td>Choose Prisma, Drizzle, Kysely, or raw drivers — all <code>npm install</code> with their own deps</td>
+  </tr>
+  <tr>
+    <td>Auth</td>
+    <td><strong>Built-in</strong> — JWT signing, session cookies (HttpOnly, SameSite=Lax), password hashing, CSRF protection</td>
+    <td>NextAuth.js, Lucia, Clerk, or self-built — each with its own setup and dependency tree</td>
+  </tr>
+  <tr>
+    <td>UI model</td>
+    <td><strong>Server-driven</strong> — HTML-over-WebSocket, 5 KB client, zero hydration bugs</td>
+    <td>React Server Components + client components — 100KB+ React runtime, hydration mismatch bugs</td>
+  </tr>
+  <tr>
+    <td>Build output</td>
+    <td><strong>Single native binary</strong> — <code>vn build --release</code>, no runtime to install</td>
+    <td>Node.js project + <code>node_modules</code> + build artifacts — deploy requires Node runtime</td>
+  </tr>
+  <tr>
+    <td>API docs</td>
+    <td><strong>Auto-generated</strong> OpenAPI spec from route summaries — <code>app.enable_docs("/docs")</code></td>
+    <td>Swagger/OpenAPI setup requires additional libraries and decorator configuration</td>
+  </tr>
+  <tr>
+    <td>Live reload</td>
+    <td><strong>Built-in</strong> — <code>vn dev</code> hot-pushes updated components over WebSocket</td>
+    <td>Turbopack or webpack HMR — fast but needs configuration</td>
+  </tr>
+  <tr>
+    <td>Form validation</td>
+    <td><strong>Built-in</strong> — <code>_validate.get_field()</code>, <code>_validate.get_keys()</code>, schema annotations on routes</td>
+    <td>Zod, Yup, or custom validation — all <code>npm install</code></td>
+  </tr>
+  <tr>
+    <td>CORS / rate limiting</td>
+    <td><strong>Built-in</strong> — <code>cors()</code> and <code>rate_limit()</code> middleware, one-liner setup</td>
+    <td><code>cors</code> + <code>express-rate-limit</code> or similar — <code>npm install</code> each</td>
+  </tr>
+  <tr>
+    <td>Supply chain risk</td>
+    <td><strong>Near zero</strong> — one C codebase, no transitive dependency tree</td>
+    <td>1000+ packages from npm, each a potential vector (event-stream, colors.js, etc.)</td>
+  </tr>
+</table>
+
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">flash_on</span> What setup looks like in practice</h3>
+
+<p><strong>Next.js setup checklist</strong> (real-world ecommerce app):</p>
+<ol>
+  <li>Install Node.js (<code>nvm install</code>)</li>
+  <li>Create project (<code>npx create-next-app</code>)</li>
+  <li>Install database driver (<code>npm install @prisma/client</code> + <code>npm install prisma --dev</code>)</li>
+  <li>Set up Prisma schema + migrations (<code>npx prisma init</code>, <code>npx prisma migrate</code>)</li>
+  <li>Install auth (<code>npm install next-auth</code> + providers)</li>
+  <li>Configure NextAuth route handler, session provider, callbacks</li>
+  <li>Install form validation (<code>npm install zod</code> + <code>@hookform/resolvers</code>)</li>
+  <li>Set up CORS middleware for API routes</li>
+  <li>Configure <code>next.config.js</code>, <code>tailwind.config.js</code>, <code>tsconfig.json</code></li>
+  <li>Deploy: install Node on server, copy <code>node_modules</code>, run <code>npm run build</code> + <code>npm start</code></li>
+</ol>
+
+<p><strong>Aurora setup checklist</strong> (same ecommerce app):</p>
+<ol>
+  <li><code>vn new myapp</code> — creates <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, schema, config, middleware, auth scaffold</li>
+  <li><code>vn dev</code> — live-reload dev server with everything mounted</li>
+  <li>Deploy: <code>vn build --release</code> → copy <strong>one binary</strong> to server, run it</li>
+</ol>
+
+<!-- ============ WHEN TO USE ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">category</span> When to use Aurora vs Lumen vs Zenith</h2>
+<p>The toolchain auto-detects the project type, but here is how to think about which one fits your project:</p>
+<table>
+  <tr><th>Project shape</th><th>Use</th><th>Scaffold</th></tr>
+  <tr><td>Fullstack web app (backend + UI with reactive components)</td><td><strong>Aurora</strong></td><td><code>vn new</code></td></tr>
+  <tr><td>Frontend-only (static or interactive site, no server API)</td><td><strong>Lumen</strong></td><td><code>vn lumen new</code></td></tr>
+  <tr><td>API server or microservice (no frontend)</td><td><strong>Zenith</strong></td><td>manual</td></tr>
+  <tr><td>CLI tool or script</td><td><strong>Varian</strong></td><td><code>vn init</code></td></tr>
+</table>
+<p><code>vn build</code> prints the detected type: "Aurora" when both <code>pages/</code> and a Zenith entry exist, "Lumen" for frontend-only, "Zenith" for server-only.</p>
+
+    </main>
+  </div>
+</body>
+</html>
+</template>
+
+<script>
+fn state() { return {} }
+</script>
