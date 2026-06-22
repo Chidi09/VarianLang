@@ -1,0 +1,134 @@
+<template>
+<!-- 6. Request & Response API Reference -->
+<section id="request-response" class="docs-section">
+  <h2>6. Request & Response API Reference</h2>
+  <p>Parsing request parameters, handling form values, and configuring cookies are handled by built-in utility functions that automatically decode URLs and scrub inputs:</p>
+
+  <table class="spec-table">
+    <thead>
+      <tr>
+        <th>Function Signature</th>
+        <th>Return Type</th>
+        <th>Description</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>`query(req, key, default)`</td>
+        <td>`string`</td>
+        <td>Retrieves a single parameter from the URL query string (e.g. `?page=2`).</td>
+      </tr>
+      <tr>
+        <td>`query_params(req)`</td>
+        <td>`struct`</td>
+        <td>Parses all query arguments into an active key-value structure.</td>
+      </tr>
+      <tr>
+        <td>`form(req, key, default)`</td>
+        <td>`string`</td>
+        <td>Retrieves a field value from an urlencoded body request.</td>
+      </tr>
+      <tr>
+        <td>`form_params(req)`</td>
+        <td>`struct`</td>
+        <td>Parses form fields into a key-value data structure.</td>
+      </tr>
+      <tr>
+        <td>`cookie(req, name, default)`</td>
+        <td>`string`</td>
+        <td>Retrieves the unparsed cookie payload for the specified key.</td>
+      </tr>
+      <tr>
+        <td>`cookies(req)`</td>
+        <td>`struct`</td>
+        <td>Parses all request headers into a single cookies struct.</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <CodeEditor title="request_example.vn" lines="14">
+    app.<span class="token-function">post</span>(<span class="token-string">"/search"</span>, |req| \{
+    <span class="token-comment">// Fetch query parameters with defaults</span>
+    <span class="token-keyword">let</span> search_term <span class="token-keyword">=</span> <span class="token-function">query</span>(req, <span class="token-string">"q"</span>, <span class="token-string">"everything"</span>)
+    <span class="token-keyword">let</span> page_limit <span class="token-keyword">=</span> <span class="token-function">query</span>(req, <span class="token-string">"limit"</span>, <span class="token-string">"20"</span>)
+
+    <span class="token-comment">// Fetch form-post payload</span>
+    <span class="token-keyword">let</span> form_data <span class="token-keyword">=</span> <span class="token-function">form_params</span>(req)
+
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{
+    term: search_term,
+    limit: page_limit,
+    category: form_data.category
+    \}, <span class="token-number">200</span>)
+    \}, <span class="token-string">"Query and form parser"</span>)
+  </CodeEditor>
+
+  <h3>Response Building & Mutation</h3>
+  <p>Zenith responses are structured objects. You build and modify them using helper functions:</p>
+  <ul>
+    <li><strong>`redirect(url)`:</strong> Builds a 302 redirection response.</li>
+    <li><strong>`redirect_with(url, status)`:</strong> Generates a redirection response using a custom status code (e.g. 301).</li>
+    <li><strong>`json_response(value, status)`:</strong> Serializes Varian values, structures, or array arrays into an `application/json` payload.</li>
+    <li><strong>`with_header(resp, name, value)`:</strong> Returns a copy of the response modified with an additional header.</li>
+    <li><strong>`set_cookie(resp, name, value, max_age)`:</strong> Generates and assigns an `HttpOnly; SameSite=Lax` header cookie to the response.</li>
+    <li><strong>`clear_cookie(resp, name)`:</strong> Expires the specified client-side cookie immediately.</li>
+  </ul>
+
+  <CodeEditor title="responses.vn" lines="7">
+    app.<span class="token-function">get</span>(<span class="token-string">"/export"</span>, |req| \{
+    <span class="token-keyword">let</span> items <span class="token-keyword">=</span> [\{ id: <span class="token-number">1</span>, label: <span class="token-string">"Box"</span> \}]
+    <span class="token-keyword">let</span> resp <span class="token-keyword">=</span> <span class="token-function">json_response</span>(items, <span class="token-number">200</span>)
+
+    <span class="token-keyword">let</span> configured_resp <span class="token-keyword">=</span> <span class="token-function">with_header</span>(resp, <span class="token-string">"Content-Disposition"</span>, <span class="token-string">"attachment; filename=export.json"</span>)
+    <span class="token-keyword">return</span> <span class="token-function">set_cookie</span>(configured_resp, <span class="token-string">"downloaded"</span>, <span class="token-string">"true"</span>, <span class="token-number">3600</span>)
+    \}, <span class="token-string">"Download exported JSON file"</span>)
+  </CodeEditor>
+</section>
+
+<!-- 7. JWT Signed Sessions -->
+<section id="sessions" class="docs-section">
+  <h2>7. JWT Signed Sessions</h2>
+  <p>Zenith handles stateful sessions using client-side, signed JSON Web Tokens (JWT). Unlike session stores that read from memory or external databases on every request, signed cookie sessions verify authenticity client-side using cryptography.</p>
+  <p>A tamper-evident session prevents client modification. If a token is modified on the client, signature verification fails and `session_get` returns `null`.</p>
+
+  <CodeEditor title="session.vn" lines="27">
+    <span class="token-keyword">let</span> APP_SECRET <span class="token-keyword">=</span> env.<span class="token-function">get</span>(<span class="token-string">"APP_SECRET"</span>)
+
+    app.<span class="token-function">post</span>(<span class="token-string">"/login"</span>, |req| \{
+    <span class="token-keyword">let</span> credentials <span class="token-keyword">=</span> <span class="token-function">form_params</span>(req)
+
+    // Check credentials
+    <span class="token-keyword">if</span> credentials.username <span class="token-keyword">==</span> <span class="token-string">"admin"</span> &amp;&amp; credentials.password <span class="token-keyword">==</span> <span class="token-string">"secret"</span> \{
+    <span class="token-keyword">let</span> resp <span class="token-keyword">=</span> <span class="token-function">json_response</span>(\{ authenticated: <span class="token-keyword">true</span> \}, <span class="token-number">200</span>)
+
+    // Store user metadata inside a signed session cookie
+    <span class="token-keyword">let</span> session_data <span class="token-keyword">=</span> \{ user: <span class="token-string">"admin"</span>, role: <span class="token-string">"superuser"</span>, active: <span class="token-keyword">true</span> \}
+    <span class="token-keyword">return</span> <span class="token-function">session_set</span>(resp, session_data, APP_SECRET, <span class="token-number">86400</span>)
+    \}
+
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ error: <span class="token-string">"Invalid credentials"</span> \}, <span class="token-number">401</span>)
+    \}, <span class="token-string">"Login handler setting session"</span>)
+
+    app.<span class="token-function">get</span>(<span class="token-string">"/admin/dashboard"</span>, |req| \{
+    // Verify token integrity
+    <span class="token-keyword">let</span> data <span class="token-keyword">=</span> <span class="token-function">session_get</span>(req, APP_SECRET)
+
+    <span class="token-keyword">if</span> data <span class="token-keyword">==</span> <span class="token-keyword">null</span> || !data.active \{
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ error: <span class="token-string">"Unauthorized"</span> \}, <span class="token-number">401</span>)
+    \}
+
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ msg: <span class="token-string">"Welcome "</span> + data.user \}, <span class="token-number">200</span>)
+    \}, <span class="token-string">"Admin page protected by signed session"</span>)
+  </CodeEditor>
+
+  <div class="hint-box hint-warning">
+    <h4>⚠️ Security Recommendation</h4>
+    <p>Always load secrets from environment variables. If `APP_SECRET` changes (due to a restart or variable rotation), all active client-side sessions will fail verification and be invalidated automatically.</p>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

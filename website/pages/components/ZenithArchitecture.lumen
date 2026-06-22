@@ -1,0 +1,73 @@
+<template>
+<!-- 3. App Architecture & Lifecycle -->
+<section id="architecture" class="docs-section">
+  <h2>3. App Architecture & Lifecycle</h2>
+  <p>A Zenith application is instantiated via `new_app()`, which constructs an independent `ZenithApp` instance. Zenith avoids global process-level routing or middleware state. This isolated model lets you run multiple web servers on distinct ports within a single thread or process.</p>
+  <p>For production services, it is best to declare an explicit context struct to store persistent handles (like DB connection pools, Redis clients, and Mailer parameters) and inject it into the request stack via custom middleware.</p>
+
+  <CodeEditor title="app.vn" lines="30">
+    <span class="token-keyword">struct</span> <span class="token-type">AppContext</span> \{
+    db: <span class="token-type">any</span>,
+    redis: <span class="token-type">any</span>,
+    mailer: <span class="token-type">any</span>
+    \}
+
+    // Instantiate application context
+    <span class="token-keyword">let</span> ctx <span class="token-keyword">=</span> <span class="token-type">AppContext</span> \{
+    db: db.<span class="token-function">connect_sqlite</span>(<span class="token-string">"prod.db"</span>),
+    redis: redis.<span class="token-function">connect</span>(<span class="token-string">"redis://127.0.0.1:6379"</span>),
+    mailer: smtp.<span class="token-function">client</span>(<span class="token-string">"smtp.sendgrid.net"</span>, <span class="token-number">587</span>, <span class="token-string">"apikey"</span>, <span class="token-string">"SG.key"</span>)
+    \}
+
+    <span class="token-keyword">let</span> app <span class="token-keyword">=</span> <span class="token-function">new_app</span>()
+
+    // Inject global handles into every request context
+    app.<span class="token-function">add_middleware</span>(|req, next| \{
+    req.context <span class="token-keyword">=</span> ctx
+    <span class="token-keyword">return</span> <span class="token-function">next</span>(req)
+    \})
+
+    app.<span class="token-function">get</span>(<span class="token-string">"/health"</span>, |req| \{
+    <span class="token-keyword">return</span> Response \{
+    status: <span class="token-number">200</span>,
+    body: <span class="token-string">"OK"</span>,
+    content_type: <span class="token-string">"text/plain"</span>
+    \}
+    \}, <span class="token-string">"Check service health status"</span>)
+
+    app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)
+  </CodeEditor>
+
+  <div class="hint-box hint-performance">
+    <h4>⚡ High-Performance Execution Sandbox</h4>
+    <p>Zenith handles requests using a cooperative thread pool where each worker operates its own Varian virtual machine (VM). A <strong>per-request struct arena</strong> allocates strings, request cookies, and parameters using a fast bump allocator. Once a request completes, the arena is reset instantly, bypassing the garbage collector and eliminating heap fragmentation.</p>
+  </div>
+</section>
+
+<!-- 4. Routing & Radix Triestructure -->
+<section id="routing" class="docs-section">
+  <h2>4. Routing & Radix Triestructure</h2>
+  <p>Under the hood, Zenith registers paths using a radix/segment trie system. Instead of matching paths line-by-line using regular expressions (which slows down as routes increase), route lookups descend the trie path segment by path segment.</p>
+  <p>The time complexity is $O(K)$, where $K$ is the number of slash-delimited segments in the URL, making lookup speeds constant regardless of whether you have 10 or 10,000 registered endpoints.</p>
+
+  <CodeEditor title="routing.vn" lines="7">
+    <span class="token-comment">// Wildcard path registration</span>
+    app.<span class="token-function">get</span>(<span class="token-string">"/orgs/:org_id/projects/:project_id"</span>, |req| \{
+    <span class="token-keyword">let</span> org <span class="token-keyword">=</span> req.params.org_id
+    <span class="token-keyword">let</span> proj <span class="token-keyword">=</span> req.params.project_id
+
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ org: org, project: proj \}, 200)
+    \}, <span class="token-string">"Fetch project details under organization"</span>)
+  </CodeEditor>
+
+  <div class="hint-box">
+    <h4>💡 Hint: Wildcard Priority</h4>
+    <p>Zenith's Radix router prioritizes static segments over wildcards. A path matching `/api/users/profile` will execute a static route registered at that exact path rather than falling back to `/api/users/:id`.</p>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

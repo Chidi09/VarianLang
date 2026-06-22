@@ -1,0 +1,29 @@
+<template>
+<nav class="navbar" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
+  <a href="/" class="nav-brand">
+    <img src="/favicon-32x32.png" alt="Varian Logo" width="36" height="36" style="border-radius: 6px;">
+    <span style="font-size: 1.5rem;">Varian</span>
+  </a>
+  <button class="nav-toggle" @click="toggleMenu" aria-label="Toggle navigation menu">
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+    <span class="nav-toggle-bar"></span>
+  </button>
+  <div class="nav-links {{#if menuOpen}}nav-links--open{{/if}}">
+    <a href="/zenith" @click="closeMenu">Zenith</a>
+    <a href="/lumen" @click="closeMenu">Lumen</a>
+    <a href="/kiln" @click="closeMenu">Kiln</a>
+    <a href="/constellation" @click="closeMenu">Constellation</a>
+    <a href="/the-varian-book" @click="closeMenu">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang" @click="closeMenu">GitHub</a>
+    <ThemeToggle />
+  </div>
+</nav>
+</template>
+
+<script>
+fn state() { return { menuOpen: false } }
+fn toggleMenu(s, v) { return s.set("menuOpen", !s.get("menuOpen")) }
+fn closeMenu(s, v) { return s.set("menuOpen", false) }
+
+</script>

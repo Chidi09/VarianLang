@@ -1,0 +1,64 @@
+<template>
+<section style="padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
+  <div style="max-width: 900px; margin: 0 auto;">
+    <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-2);">Language Features</h2>
+    <p style="color: var(--text-secondary); font-size: var(--text-lg); margin-bottom: var(--space-8);">
+      Varian is dynamically typed with optional type annotations, featuring a rich set of modern language constructs.
+    </p>
+
+    <div class="features" style="padding: 0;">
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline></svg>
+        </div>
+        <h3>Variables &amp; Control Flow</h3>
+        <p><code>let</code> bindings, <code>if/else</code>, <code>while</code>, <code>for i in 0..n</code> (exclusive ranges), <code>loop/break</code>. Bool operators: <code>&&</code>, <code>||</code>, <code>!</code> or <code>and</code>, <code>or</code>, <code>not</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 3 21 8"></polyline><line x1="4" y1="20" x2="21" y2="3"></line><polyline points="21 16 21 21 16 21"></polyline><line x1="15" y1="15" x2="21" y2="21"></line><line x1="3" y1="3" x2="21" y2="21"></line></svg>
+        </div>
+        <h3>Functions &amp; Closures</h3>
+        <p>Multi-return-value functions, lambdas with <code>|args| { body }</code>, closures capture enclosing scope by value. <code>@cache</code> and <code>@retry</code> decorators.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+        </div>
+        <h3>Structs, Enums &amp; Traits</h3>
+        <p>Named and anonymous structs, enums with payload variants, <code>match</code> with guards, implicit structural typing via <code>trait</code>, generics (type-erased).</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+        </div>
+        <h3>Error Handling</h3>
+        <p><code>try/catch</code> with bound error values, <code>throw</code> for unrecoverable errors, <code>?</code> for null propagation, optional chaining (<code>?.</code>) and null coalescing (<code>??</code>).</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"></polygon><line x1="12" y1="22" x2="12" y2="15.5"></line><polyline points="22 8.5 12 15.5 2 8.5"></polyline></svg>
+        </div>
+        <h3>Comptime &amp; Decorators</h3>
+        <p><code>comptime { }</code> executes at compile time (powers the comptime ORM). Struct field validation: <code>@is_email</code>, <code>@min_len(n)</code>, <code>@is_url</code>, <code>@is_uuid</code>.</p>
+      </div>
+      <div class="feature-card">
+        <div class="feature-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 5m-7-3l-4 8"></path><circle cx="9" cy="21" r="2"></circle><circle cx="17" cy="21" r="2"></circle><path d="M5 17h14l2-8H7"></path></svg>
+        </div>
+        <h3>C FFI &amp; Python</h3>
+        <p><code>@ffi("lib.so", "symbol")</code> binds C libraries via libffi. <code>python.run("module", "fn", args)</code> calls any Python library from an embedded interpreter.</p>
+      </div>
+    </div>
+
+    <div style="margin-top: var(--space-8); text-align: center;">
+      <a href="/the-varian-book" class="btn btn-secondary">Read the full Varian Book &gt;</a>
+    </div>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

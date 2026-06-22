@@ -1,0 +1,88 @@
+<template>
+<!-- 12. Socketless Testing -->
+<section id="testing" class="docs-section">
+  <h2>12. Socketless Testing</h2>
+  <p>Zenith simplifies writing unit and integration tests. Instead of launching real TCP servers and sending requests over network sockets (which makes tests slow and flaky), you can run requests directly using `app.handle(req)`.</p>
+  <p>This processes the request through the entire routing and middleware stack synchronously, returning a `Response` object inside your test runner.</p>
+
+  <CodeEditor title="test.vn" lines="24">
+    <span class="token-comment">// Utility helper to construct a request payload mock</span>
+    <span class="token-keyword">fn</span> <span class="token-function">mock_req</span>(http_method, url_path, request_body) \{
+    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>(
+    [<span class="token-string">"method"</span>, <span class="token-string">"path"</span>, <span class="token-string">"body"</span>, <span class="token-string">"json"</span>],
+    [http_method, url_path, request_body, <span class="token-keyword">null</span>]
+    )
+    \}
+
+    <span class="token-keyword">fn</span> <span class="token-function">run_tests</span>() \{
+    <span class="token-keyword">let</span> test_app <span class="token-keyword">=</span> <span class="token-function">new_app</span>()
+
+    test_app.<span class="token-function">get</span>(<span class="token-string">"/api/info"</span>, |req| \{
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ info: <span class="token-string">"test data"</span> \}, <span class="token-number">200</span>)
+    \}, <span class="token-string">"API Info"</span>)
+
+    <span class="token-comment">// Run app routing logic synchronously</span>
+    <span class="token-keyword">let</span> response <span class="token-keyword">=</span> test_app.<span class="token-function">handle</span>(<span class="token-function">mock_req</span>(<span class="token-string">"GET"</span>, <span class="token-string">"/api/info"</span>, <span class="token-string">""</span>))
+
+    <span class="token-keyword">if</span> response.status <span class="token-keyword">==</span> <span class="token-number">200</span> \{
+    <span class="token-function">print</span>(<span class="token-string">"Test passed: /api/info returned 200"</span>)
+    \} <span class="token-keyword">else</span> \{
+    <span class="token-function">print</span>(<span class="token-string">"Test failed: expected 200, got "</span> + response.status)
+    \}
+    \}
+  </CodeEditor>
+</section>
+
+<!-- 13. AOT & Compilation -->
+<section id="aot" class="docs-section">
+  <h2>13. AOT & Compilation</h2>
+  <p>For production deployments, Varian compiles code directly to machine binaries instead of running it through the bytecode interpreter. Using `vn compile` transpiles your Varian code into equivalent C source code, which is then compiled using an optimizing compiler like GCC.</p>
+  <p>By compiling the web server into a standalone static binary, you bypass virtual machine interpreter loops and function dispatch tables, improving performance.</p>
+
+  <CodeEditor title="build_standalone.sh" lines="33">
+    <span class="token-comment"># 1. Transpile Varian code into optimized C source</span>
+    $ ./vn compile server.vn build/zenith_aot.c
+
+    <span class="token-comment"># 2. Compile main.c for standalone AOT mode</span>
+    $ gcc -Wall -Wextra -std=gnu11 -O3 \
+    -Iinclude \
+    -I/usr/include/x86_64-linux-gnu \
+    -I/usr/include/postgresql \
+    -D_POSIX_C_SOURCE=200809L \
+    -DVARIAN_AOT_STANDALONE \
+    -c src/main.c -o build/main_aot.o
+
+    <span class="token-comment"># 3. Compile the transpiled C file</span>
+    $ gcc -Wall -Wextra -std=gnu11 -O3 \
+    -Iinclude \
+    -I/usr/include/x86_64-linux-gnu \
+    -I/usr/include/postgresql \
+    -D_POSIX_C_SOURCE=200809L \
+    -c build/zenith_aot.c -o build/zenith_aot.o
+
+    <span class="token-comment"># 4. Link runtime objects and system libraries into a single binary</span>
+    $ gcc -Wall -Wextra -std=gnu11 -O3 \
+    build/main_aot.o build/zenith_aot.o build/aot.o build/arena.o \
+    build/ast.o build/ffi.o build/fmt.o build/json.o build/lexer.o \
+    build/lib_auth.o build/lib_http.o build/lib_io.o build/lib_math.o \
+    build/lib_mock.o build/lib_postgres.o build/lib_python.o \
+    build/lib_redis.o build/lib_sanitize.o build/lib_smtp.o \
+    build/lib_sqlite.o build/lib_string.o build/lib_task.o \
+    build/lib_time.o build/lib_validate.o build/lint.o build/parser.o \
+    build/picohttpparser.o build/pkg_manager.o build/test_runner.o \
+    build/vm.o -o build/zenith_standalone \
+    -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring
+
+  </CodeEditor>
+
+  <div class="hint-box hint-performance">
+    <h4>⚡ Native Performance Benefits</h4>
+    <p>Compiling with `-O3` optimizations allows GCC to inline stack operations and variables. Linking system libraries like `libpq`, `libsqlite3`, and `hiredis` directly into the binary removes library lookup overhead and provides native execution speed.</p>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

@@ -1,0 +1,48 @@
+<template>
+<section style="padding: var(--space-16) 0; border-top: 1px solid var(--border-subtle);">
+  <div style="max-width: 900px; margin: 0 auto;">
+    <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin-bottom: var(--space-8);">Standard Library &amp; Built-In Security</h2>
+
+    <div class="features" style="padding: 0;">
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">Math &amp; I/O</h3>
+        <p><code>math.sqrt()</code>, <code>math.sin()</code>, <code>io.read_text()</code>, <code>io.write_text()</code> — all pre-registered globals, no import needed.</p>
+      </div>
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">Databases</h3>
+        <p><code>sqlite</code> and <code>postgres</code> with parameterized queries (bound <code>?</code> placeholders). <code>redis</code> with generic command dispatch.</p>
+      </div>
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">Auth &amp; Crypto</h3>
+        <p><code>auth.sign_jwt()</code>, <code>auth.verify_jwt()</code>, <code>auth.hash_sha256()</code>, <code>constant_time_eq()</code> — secure defaults built in.</p>
+      </div>
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">HTTP &amp; JSON</h3>
+        <p><code>http.get()</code>, <code>http.serve()</code>, <code>json_encode()</code>, <code>json_decode()</code> — work generically over structs, arrays, and primitives.</p>
+      </div>
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">Validation &amp; Sanitization</h3>
+        <p><code>validate.is_email()</code>, <code>sanitize.escape_html()</code>, <code>regex.match()</code>, <code>regex.replace()</code> with POSIX ERE and backreferences.</p>
+      </div>
+      <div class="feature-card">
+        <h3 style="font-family: var(--font-display); margin-bottom: var(--space-3);">Security Hardening</h3>
+        <p>Parameterized SQL (never concatenated), <code>shield</code> middleware (CORS, CSRF, rate-limit), escape-by-default HTML, <code>vn lint --only security</code>.</p>
+      </div>
+    </div>
+
+    <div style="margin-top: var(--space-8); padding: var(--space-6); background: var(--bg-surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-lg);">
+      <p style="margin-bottom: var(--space-3); color: var(--text-secondary);">
+        <strong style="color: var(--text-primary);">Python Bridge:</strong> Call any Python library directly with <code>python.run("module", "fn", args)</code> — embedded interpreter, automatic value conversion.
+      </p>
+      <p style="margin-bottom: 0; color: var(--text-secondary);">
+        <strong style="color: var(--text-primary);">C FFI:</strong> Bind any C shared library with <code>@ffi("lib.so", "symbol")</code> via libffi — <code>c_int</code>, <code>c_double</code>, <code>ptr</code> types supported.
+      </p>
+    </div>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

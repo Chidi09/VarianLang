@@ -1,0 +1,10 @@
+<template>
+<footer style="border-top: 1px solid var(--border-subtle); padding: var(--space-8) 0; text-align: center; color: var(--text-muted); font-size: var(--text-sm);">
+  <p>&copy; 2026 VarianLang. The stars are the limit.</p>
+</footer>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

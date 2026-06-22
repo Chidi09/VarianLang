@@ -1,0 +1,47 @@
+<template>
+<Section anchor="community" border={true}>
+  <Container size="md">
+    <Stack gap="10" align="center">
+      <Stack gap="2" align="center">
+        <Heading size="3xl" as="h2">Community & Contributing</Heading>
+        <Text size="lg" muted={true}>Varian is open-source and built by a growing community. Whether you're reporting issues, submitting patches, or helping others, your contribution matters.</Text>
+      </Stack>
+      <Grid cols="2" gap="6">
+        <Card>
+          <Stack gap="3">
+            <Heading size="lg" as="h3">Report an Issue</Heading>
+            <Text muted={true}>Found a bug or have a feature request? Open an issue on our GitHub repository to help us improve. Every report helps us make Varian more robust and reliable for everyone.</Text>
+            <Button href="https://github.com/Chidi09/VarianLang/issues" variant="outline">Go to Issues &rarr;</Button>
+          </Stack>
+        </Card>
+        <Card>
+          <Stack gap="3">
+            <Heading size="lg" as="h3">Contribute Code</Heading>
+            <Text muted={true}>Want to write some C or Varian? The core VM and compiler are written in C; the standard library and framework code are written in Varian itself. Check out the contribution guide and submit a pull request.</Text>
+            <Button href="https://github.com/Chidi09/VarianLang/pulls" variant="outline">View Pull Requests &rarr;</Button>
+          </Stack>
+        </Card>
+        <Card>
+          <Stack gap="3">
+            <Heading size="lg" as="h3">Join the Discussion</Heading>
+            <Text muted={true}>Have questions, ideas, or want to show off what you built? Join the conversation on GitHub Discussions to connect with other Varian developers and contributors.</Text>
+            <Button href="https://github.com/Chidi09/VarianLang/discussions" variant="outline">Start a Discussion &rarr;</Button>
+          </Stack>
+        </Card>
+        <Card>
+          <Stack gap="3">
+            <Heading size="lg" as="h3">Read the Docs</Heading>
+            <Text muted={true}>Dive deep into specific topics — the docs directory covers the VM internals, the Zenith web framework, the Lumen frontend framework, Kiln build tool, and the Constellation package registry.</Text>
+            <Button href="/the-varian-book" variant="outline">Read the Book &rarr;</Button>
+          </Stack>
+        </Card>
+      </Grid>
+    </Stack>
+  </Container>
+</Section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

@@ -1,0 +1,120 @@
+<template>
+<Section border={true}>
+  <Container size="md">
+    <Stack gap="12">
+
+      <Stack gap="3">
+        <Heading size="4xl" as="h2">Cooperative Concurrency</Heading>
+        <Text>Varian runs a cooperative, single-threaded green-thread scheduler. Tasks yield explicitly at blocking operations — there is no preemption across OS threads. Three abstractions build on this: tasks, channels, and actors.</Text>
+      </Stack>
+
+      <h3 style="font-size: var(--text-xl); margin-top: var(--space-8); margin-bottom: var(--space-4);">Tasks</h3>
+      <p style="color: var(--text-secondary); margin-bottom: var(--space-4);"><code>task.spawn(fn_or_closure, args_array)</code> starts a new cooperative task. <code>task.yield()</code> gives other tasks a turn. <code>task.id()</code> returns a unique task identifier.</p>
+      <CodeEditor title="tasks.vn" lines="8">
+        <span class="token-keyword">fn</span> <span class="token-function">worker</span>(n) {
+        <span class="token-function">print</span>(n)
+        <span class="token-function">task.yield</span>()
+        <span class="token-function">print</span>(n + <span class="token-number">10</span>)
+        }
+
+        <span class="token-keyword">let</span> t1 <span class="token-keyword">=</span> <span class="token-function">task.spawn</span>(worker, [<span class="token-number">1</span>])
+        <span class="token-keyword">let</span> t2 <span class="token-keyword">=</span> <span class="token-function">task.spawn</span>(worker, [<span class="token-number">2</span>])
+        <span class="token-function">print</span>(<span class="token-function">task.id</span>(t1))
+      </CodeEditor>
+
+      <h3 style="font-size: var(--text-xl); margin-top: var(--space-8); margin-bottom: var(--space-4);">Channels</h3>
+      <p style="color: var(--text-secondary); margin-bottom: var(--space-4);">Buffered channels with automatic backpressure. Full capacity yields the sender; empty yields the receiver. Closed channels return <code>nil</code> instead of blocking forever — the clean worker-shutdown mechanism.</p>
+      <CodeEditor title="channels.vn" lines="12">
+        <span class="token-keyword">fn</span> <span class="token-function">sender</span>(ch) {
+        ch <span class="token-operator">&lt;-</span> <span class="token-number">42</span>    <span class="token-comment">// yields if channel is full</span>
+        ch <span class="token-operator">&lt;-</span> <span class="token-number">100</span>
+        }
+
+        <span class="token-keyword">fn</span> <span class="token-function">receiver</span>(ch) {
+        <span class="token-keyword">let</span> a <span class="token-keyword">=</span> <span class="token-operator">&lt;-</span> ch  <span class="token-comment">// yields if channel is empty</span>
+        <span class="token-function">print</span>(a)
+        }
+
+        <span class="token-keyword">let</span> ch <span class="token-keyword">=</span> <span class="token-function">task.channel</span>(<span class="token-number">10</span>)
+        <span class="token-function">task.spawn</span>(sender, [ch])
+        <span class="token-function">task.yield</span>()
+        <span class="token-function">task.spawn</span>(receiver, [ch])
+      </CodeEditor>
+
+      <h3 style="font-size: var(--text-xl); margin-top: var(--space-8); margin-bottom: var(--space-4);">Actors</h3>
+      <p style="color: var(--text-secondary); margin-bottom: var(--space-4);">Stateful actor types with transparent message-passing. Method calls dispatch to the actor's inbox — looks synchronous but is async under the hood. No locks needed.</p>
+      <CodeEditor title="actors.vn" lines="12">
+        <span class="token-keyword">actor</span> <span class="token-type">Counter</span> {
+        val: <span class="token-type">int</span> <span class="token-keyword">=</span> <span class="token-number">0</span>,
+        <span class="token-keyword">fn</span> <span class="token-function">increment</span>(self) {
+        self.val <span class="token-keyword">=</span> self.val + <span class="token-number">1</span>
+        }
+        <span class="token-keyword">fn</span> <span class="token-function">get</span>(self) -&gt; <span class="token-type">int</span> {
+        <span class="token-keyword">return</span> self.val
+        }
+        }
+
+        <span class="token-keyword">let</span> c <span class="token-keyword">=</span> <span class="token-type">Counter</span>.<span class="token-function">spawn</span>()
+        c.<span class="token-function">increment</span>()
+        <span class="token-function">print</span>(c.<span class="token-function">get</span>())
+      </CodeEditor>
+
+      <h3 style="font-size: var(--text-xl); margin-top: var(--space-8); margin-bottom: var(--space-4);">Background Jobs</h3>
+      <p style="color: var(--text-secondary); margin-bottom: var(--space-4);">The <code>vn_modules/queue.vn</code> module provides <code>cron(interval_ms, handler)</code> for periodic tasks and <code>WorkerPool</code> with channel-backed backpressure for job processing.</p>
+      <CodeEditor title="queue.vn" lines="6">
+        <span class="token-function">cron</span>(<span class="token-number">200</span>, || { <span class="token-function">print</span>(<span class="token-string">"tick"</span>) })
+
+        <span class="token-keyword">let</span> pool <span class="token-keyword">=</span> <span class="token-type">WorkerPool</span> { ch: <span class="token-function">task.channel</span>(<span class="token-number">1000</span>), count: <span class="token-number">0</span>, workers: <span class="token-number">0</span> }
+        pool.<span class="token-function">spawn</span>(<span class="token-number">3</span>)
+        pool.<span class="token-function">submit</span>(|| { <span class="token-function">print</span>(<span class="token-string">"job"</span>) })
+      </CodeEditor>
+
+      <Stack gap="3">
+        <Heading size="4xl" as="h2">The <code>vn</code> CLI</Heading>
+        <Text>A single binary for the entire development workflow. No <code>import</code> keyword — <code>vn_modules/</code> is concatenated as a prelude above your entry file. See the Tooling docs for full reference.</Text>
+        <CodeEditor title="terminal" lines="8">
+          $ vn run hello.vn          <span class="token-comment"># Execute a script</span>
+          $ vn fmt main.vn           <span class="token-comment"># Format in place</span>
+          $ vn test tests/           <span class="token-comment"># Run tests</span>
+          $ vn lint src/             <span class="token-comment"># Static analysis</span>
+          $ vn build --release       <span class="token-comment"># Native binary via Kiln</span>
+          $ vn add zenith            <span class="token-comment"># Add package dependency</span>
+          $ VN_DEBUG_AST=1 vn run x.vn   <span class="token-comment"># Debug: print AST</span>
+        </CodeEditor>
+
+        <Stack gap="3">
+          <Heading size="4xl" as="h2">Standard Library</Heading>
+          <Text>All native modules are pre-registered globals — no imports. <code>math</code>, <code>sqlite</code>, <code>postgres</code>, <code>redis</code>, <code>auth</code>, <code>http</code>, <code>json</code>, <code>regex</code>, <code>sanitize</code>, <code>validate</code>, <code>errors</code>, and the <code>python</code> bridge are always available. String and array methods dispatch by value type.</Text>
+          <CodeEditor title="stdlib.vn" lines="10">
+            <span class="token-function">print</span>(<span class="token-function">math.sqrt</span>(<span class="token-number">9.0</span>))
+            <span class="token-keyword">let</span> conn <span class="token-keyword">=</span> <span class="token-function">sqlite.connect</span>(<span class="token-string">":memory:"</span>)
+            <span class="token-function">sqlite.query</span>(conn, <span class="token-string">"CREATE TABLE t (n TEXT)"</span>)
+            <span class="token-keyword">let</span> rows <span class="token-keyword">=</span> <span class="token-function">sqlite.query</span>(conn, <span class="token-string">"SELECT * FROM t"</span>)
+
+            <span class="token-keyword">let</span> s <span class="token-keyword">=</span> <span class="token-string">"Hello"</span>
+            <span class="token-function">print</span>(s.<span class="token-function">upper</span>())        <span class="token-comment">// HELLO</span>
+            <span class="token-function">print</span>(s.<span class="token-function">starts_with</span>(<span class="token-string">"He"</span>))  <span class="token-comment">// true</span>
+            <span class="token-function">print</span>(<span class="token-function">json_encode</span>(rows))
+          </CodeEditor>
+
+          <Stack gap="3">
+            <Heading size="4xl" as="h2">Security Built-In</Heading>
+            <Text>Parameterized SQL queries via bound <code>?</code> placeholders (never string-concatenated). <code>shield</code> middleware provides CORS, CSRF, and rate-limiting. JWT auth with <code>auth.sign_jwt()</code> / <code>verify_jwt()</code>. Escape-by-default HTML rendering. <code>vn lint --only security</code> flags hardcoded secrets and concatenated SQL.</Text>
+            <CodeEditor title="security.vn" lines="6">
+              <span class="token-comment">// Parameterized query — never string-concatenate SQL</span>
+              <span class="token-function">sqlite.query</span>(conn, <span class="token-string">"SELECT * FROM users WHERE id = ?"</span>, [id])
+
+              <span class="token-comment">// JWT auth</span>
+              <span class="token-keyword">let</span> token <span class="token-keyword">=</span> <span class="token-function">auth.sign_jwt</span>({ user_id: <span class="token-number">42</span> }, <span class="token-string">"secret"</span>)
+              <span class="token-keyword">let</span> decoded <span class="token-keyword">=</span> <span class="token-function">auth.verify_jwt</span>(token, <span class="token-string">"secret"</span>)
+            </CodeEditor>
+
+          </Stack>
+        </Container>
+      </Section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

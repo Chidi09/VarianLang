@@ -1,0 +1,25 @@
+<template>
+<Section anchor="features" border="true">
+  <Container size="md">
+    <Stack gap="10" align="center">
+      <Stack gap="2" align="center">
+        <Heading size="4xl" as="h2">What is Varian?</Heading>
+        <Text size="lg" muted="true">Varian combines three distinct paradigms into a robust development platform.</Text>
+      </Stack>
+      <Grid cols="3" gap="6">
+        <Feature icon="zap" title="Native Speed">Built from scratch in C with a highly optimized custom bytecode VM. Struct arena allocation with per-task bump arenas and escape-promote write barriers for zero-GC request handling.</Feature>
+        <Feature icon="bars" title="Concurrency Built-In">Cooperative green-thread tasks, buffered channels with automatic backpressure, and stateful actors with transparent message-passing. No locks, no races, no thread overhead.</Feature>
+        <Feature icon="code" title="C FFI &amp; Python Bridge">Bind C shared libraries directly with <code>@ffi("lib.so", "symbol")</code> via libffi, or embed Python and call any library with <code>python.run()</code>. No wrapper code needed.</Feature>
+        <Feature icon="clock" title="Comptime &amp; Decorators">Compile-time evaluation (<code>comptime { }</code>) for the comptime ORM, <code>@cache</code>/<code>@retry</code> function decorators, and struct field validation decorators (<code>@is_email</code>, <code>@min_len</code>).</Feature>
+        <Feature icon="box" title="Zero-Config Tooling">A single <code>vn</code> binary for run, test, lint, fmt, and build. No <code>import</code> hell — <code>vn_modules/</code> is concatenated as a prelude. <code>vn build --release</code> produces a standalone native binary via Kiln.</Feature>
+        <Feature icon="lock" title="Security Built-In">Parameterized SQL queries (never string-concatenated), JWT auth, CSP/CSRF middleware, escape-by-default HTML rendering, and <code>vn lint --only security</code> — all in the standard library.</Feature>
+      </Grid>
+    </Stack>
+  </Container>
+</Section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

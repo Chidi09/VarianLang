@@ -1,0 +1,101 @@
+<template>
+<!-- 8. HTML Templating -->
+<section id="templates" class="docs-section">
+  <h2>8. HTML Templating</h2>
+  <p>Zenith features a built-in server-side template engine similar to ERB syntax. Templates are parsed to execute structural loops, logic switches, and variable interpolations before rendering output.</p>
+
+  <p>The parser uses distinct delimiters to handle escaping and code blocks:</p>
+  <ul>
+    <li><strong>`&lt;%= expr %&gt;`:</strong> Evaluates the expression and escapes the output, protecting against cross-site scripting (XSS) attacks.</li>
+    <li><strong>`&lt;%- expr %&gt;`:</strong> Evaluates the expression and outputs raw HTML without escaping. Use only with trusted content.</li>
+    <li><strong>`&lt;% if cond %&gt; ... &lt;% else %&gt; ... &lt;% endif %&gt;`:</strong> Condition blocks.</li>
+    <li><strong>`&lt;% for item in collection %&gt; ... &lt;% endfor %&gt;`:</strong> Loop blocks.</li>
+  </ul>
+
+  <div class="hint-box">
+    <h4>💡 Syntax Note</h4>
+    <p>Varian uses ERB-style tags (`&lt;% %&gt;`) instead of double-mustache tags (`\{\{ \}\}`) because curly braces are reserved for lexer-level string interpolation within the language spec.</p>
+  </div>
+
+  <CodeEditor title="template.vn" lines="23">
+    <span class="token-keyword">let</span> template_content <span class="token-keyword">=</span> <span class="token-string">"
+      &lt;div class='user-card'&gt;
+      &lt;h3&gt;&lt;%= user.name %&gt;&lt;/h3&gt;
+      &lt;p&gt;Access Status: &lt;%= user.role %&gt;&lt;/p&gt;
+      &lt;h4&gt;Managed Projects:&lt;/h4&gt;
+      &lt;ul&gt;
+      &lt;% for project in projects %&gt;
+      &lt;li&gt;&lt;%= project.title %&gt; - &lt;%- project.badge_html %&gt;&lt;/li&gt;
+      &lt;% endfor %&gt;
+      &lt;/ul&gt;
+      &lt;/div&gt;
+      "</span>
+
+    <span class="token-keyword">let</span> context <span class="token-keyword">=</span> \{
+    user: \{ name: <span class="token-string">"Alice Smith"</span>, role: <span class="token-string">"Project Lead"</span> \},
+    projects: [
+    \{ title: <span class="token-string">"Web Engine"</span>, badge_html: <span class="token-string">"&lt;span class='green'&gt;Stable&lt;/span&gt;"</span> \},
+    \{ title: <span class="token-string">"Bytecode VM"</span>, badge_html: <span class="token-string">"&lt;span class='yellow'&gt;Beta&lt;/span&gt;"</span> \}
+    ]
+    \}
+
+    <span class="token-comment">// Returns a text/html Response structure</span>
+    <span class="token-keyword">let</span> response <span class="token-keyword">=</span> <span class="token-function">render_response</span>(template_content, context)
+  </CodeEditor>
+</section>
+
+<!-- 9. Comptime Database ORM -->
+<section id="orm" class="docs-section">
+  <h2>9. Comptime Database ORM</h2>
+  <p>The companion ORM (`vn_modules/db.vn`) leverages Varian's compile-time execution engine (`comptime`) to avoid the performance costs of runtime query building. When wrapping query generation in a `comptime` block, Zenith parses table properties, builds fields lists, validates SQL query syntax, and formats parameterized variables during compilation.</p>
+  <p>At runtime, queries execute instantly as static string templates with zero string concatenation overhead.</p>
+
+  <CodeEditor title="orm_query.vn" lines="22">
+    <span class="token-keyword">let</span> conn <span class="token-keyword">=</span> db.<span class="token-function">connect_postgres</span>(env.<span class="token-function">get</span>(<span class="token-string">"DATABASE_URL"</span>))
+
+    <span class="token-comment">// 1. Compile the query shape at compile time</span>
+    <span class="token-keyword">let</span> fetch_user_query <span class="token-keyword">=</span> <span class="token-keyword">comptime</span> \{
+    db.<span class="token-function">select</span>(<span class="token-string">"users"</span>)
+    .<span class="token-function">fields</span>([<span class="token-string">"id"</span>, <span class="token-string">"username"</span>, <span class="token-string">"email"</span>])
+    .<span class="token-function">where</span>(<span class="token-string">"status"</span>, <span class="token-string">"="</span>)
+    .<span class="token-function">where</span>(<span class="token-string">"created_at"</span>, <span class="token-string">"&gt;"</span>)
+    .<span class="token-function">limit</span>(<span class="token-number">5</span>)
+    .<span class="token-function">use_dialect</span>(<span class="token-string">"postgres"</span>)
+    .<span class="token-function">build</span>()
+    \}
+
+    <span class="token-comment">// Under the hood:</span>
+    <span class="token-comment">// fetch_user_query.sql == "SELECT id, username, email FROM users WHERE status = $1 AND created_at &gt; $2 LIMIT 5"</span>
+    <span class="token-comment">// fetch_user_query.param_count == 2</span>
+
+    <span class="token-comment">// 2. Bind parameters and query the database at runtime</span>
+    <span class="token-keyword">let</span> query_params <span class="token-keyword">=</span> [<span class="token-string">"active"</span>, <span class="token-string">"2026-01-01"</span>]
+    <span class="token-keyword">let</span> bound_stmt <span class="token-keyword">=</span> <span class="token-function">bind</span>(fetch_user_query, query_params)
+
+    <span class="token-keyword">let</span> active_users <span class="token-keyword">=</span> <span class="token-function">run_postgres</span>(bound_stmt, conn)
+  </CodeEditor>
+
+  <div class="hint-box hint-warning">
+    <h4>⚠️ Parameter Count Safety Check</h4>
+    <p>The `bind()` function checks that the length of your parameters array matches the exact parameter count determined during compile-time query analysis. If there is a mismatch, the engine throws an error immediately to prevent database driver panic or syntax errors.</p>
+  </div>
+
+  <h3>ORM Query Builder API Reference</h3>
+  <p>The `QueryBuilder` provides fluent API methods to build queries programmatically:</p>
+  <ul>
+    <li><strong>`.select(table)` / `.insert(table)` / `.update(table)` / `.delete(table)`:</strong> Initializes the builder action.</li>
+    <li><strong>`.fields(arr)`:</strong> Sets database target fields.</li>
+    <li><strong>`.where(field, operator)`:</strong> Adds a query condition. Accepts comparison operators like `"="`, `"&gt;"`, `"&lt;"`, `"LIKE"`.</li>
+    <li><strong>`.limit(n)` / `.offset(n)`:</strong> Configures pagination constraints.</li>
+    <li><strong>`.paginate(page, per_page)`:</strong> Computes the limit and offset for traditional page-based paging.</li>
+    <li><strong>`.cursor_paginate(field, has_cursor, limit)`:</strong> Generates cursor-based pagination queries.</li>
+    <li><strong>`.find_by_key(field)`:</strong> Shorthand method for adding a single key check with a limit of 1.</li>
+    <li><strong>`.use_dialect(dialect_name)`:</strong> Swaps query outputs between SQLite placeholder styles (`?`) and Postgres formats (`$1`, `$2`).</li>
+  </ul>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

@@ -1,0 +1,163 @@
+<template>
+<Section border={true}>
+  <Container size="md">
+    <Stack gap="12">
+
+      <Stack gap="3">
+        <Heading size="4xl" as="h2">Variables &amp; Primitives</Heading>
+        <Text>Varian is dynamically typed with optional type annotations. <code>let</code> declares a binding; reassigning doesn't need <code>let</code> again. Primitives include <code>bool</code>, <code>int</code>, <code>float</code>, <code>string</code> (immutable UTF-8), arrays (copy-on-write via <code>.push()</code>), tuples, structs, and enums.</Text>
+        <CodeEditor title="variables.vn" lines="8">
+          <span class="token-keyword">let</span> x <span class="token-keyword">=</span> <span class="token-number">10</span>
+          <span class="token-keyword">let</span> name <span class="token-keyword">=</span> <span class="token-string">"Chidi"</span>
+          <span class="token-keyword">let</span> active <span class="token-keyword">=</span> <span class="token-atom">true</span>
+          x <span class="token-keyword">=</span> x + <span class="token-number">1</span>
+
+          <span class="token-comment">// Optional type annotation (discarded at runtime)</span>
+          <span class="token-keyword">let</span> price: <span class="token-type">float</span> <span class="token-keyword">=</span> <span class="token-number">9.99</span>
+        </CodeEditor>
+
+        <h2 style="font-family: var(--font-display); font-size: var(--text-4xl); margin: var(--space-12) 0 var(--space-2);">Control Flow</h2>
+        <p style="color: var(--text-secondary); margin-bottom: var(--space-4);">Standard <code>if/else</code>, <code>while</code>, exclusive-range <code>for</code>, and infinite <code>loop</code>. Boolean operators support both C-style (<code>&&</code>, <code>||</code>, <code>!</code>) and keyword aliases (<code>and</code>, <code>or</code>, <code>not</code>).</p>
+        <CodeEditor title="control-flow.vn" lines="12">
+          <span class="token-keyword">if</span> x <span class="token-operator">&gt;</span> <span class="token-number">10</span> {
+          <span class="token-function">print</span>(<span class="token-string">"big"</span>)
+          } <span class="token-keyword">else</span> {
+          <span class="token-function">print</span>(<span class="token-string">"small"</span>)
+          }
+
+          <span class="token-keyword">for</span> i <span class="token-keyword">in</span> <span class="token-number">0</span>..<span class="token-number">10</span> {
+          <span class="token-function">print</span>(i)  <span class="token-comment">// 0 through 9</span>
+          }
+
+          <span class="token-keyword">loop</span> {
+          <span class="token-keyword">if</span> done { <span class="token-keyword">break</span> }
+          }
+        </CodeEditor>
+
+        <Stack gap="3">
+          <Heading size="4xl" as="h2">Functions &amp; Closures</Heading>
+          <Text>Functions support multiple return values and optional type annotations. Lambdas use pipe syntax and capture enclosing scope by value. Decorators like <code>@cache</code> and <code>@retry</code> extend function behavior.</Text>
+          <CodeEditor title="functions.vn" lines="14">
+            <span class="token-keyword">fn</span> <span class="token-function">add</span>(a, b) {
+            <span class="token-keyword">return</span> a + b
+            }
+
+            <span class="token-comment">// Multiple return values</span>
+            <span class="token-keyword">fn</span> <span class="token-function">divide</span>(a, b) {
+            <span class="token-keyword">if</span> b <span class="token-operator">==</span> <span class="token-number">0</span> { <span class="token-keyword">return</span> <span class="token-atom">null</span>, <span class="token-string">"div by zero"</span> }
+            <span class="token-keyword">return</span> a / b, <span class="token-atom">null</span>
+            }
+
+            <span class="token-comment">// Lambda closures</span>
+            <span class="token-keyword">let</span> double <span class="token-keyword">=</span> |x| { <span class="token-keyword">return</span> x <span class="token-operator">*</span> <span class="token-number">2</span> }
+            <span class="token-function">print</span>(<span class="token-function">double</span>(<span class="token-number">21</span>))
+
+            @<span class="token-function">cache</span>
+            <span class="token-keyword">fn</span> <span class="token-function">expensive</span>(n) { <span class="token-keyword">return</span> n <span class="token-operator">*</span> <span class="token-number">2</span> }
+          </CodeEditor>
+
+          <Stack gap="3">
+            <Heading size="4xl" as="h2">Structs, Enums &amp; Traits</Heading>
+            <Text>Structs group fields with optional validation decorators. Methods attach via <code>impl</code>. Anonymous structs (object literals) are available for ad-hoc data. Enums are sum types with payloads. Traits use implicit structural typing — types satisfy traits by having matching methods.</Text>
+            <CodeEditor title="structs.vn" lines="18">
+              <span class="token-keyword">struct</span> <span class="token-type">User</span> {
+              id: <span class="token-type">string</span>,
+              name: <span class="token-type">string</span>,
+              email: <span class="token-type">string</span>
+              }
+
+              <span class="token-keyword">impl</span> <span class="token-type">User</span> {
+              <span class="token-keyword">fn</span> <span class="token-function">display</span>(self) {
+              <span class="token-keyword">return</span> self.name + <span class="token-string">" &lt;"</span> + self.email + <span class="token-string">"&gt;"</span>
+              }
+              }
+
+              <span class="token-keyword">let</span> u <span class="token-keyword">=</span> <span class="token-type">User</span> { id: <span class="token-string">"1"</span>, name: <span class="token-string">"Chidi"</span>, email: <span class="token-string">"chidi@ex.com"</span> }
+              <span class="token-function">print</span>(u.<span class="token-function">display</span>())
+
+              <span class="token-comment">// Anonymous struct / object literal</span>
+              <span class="token-keyword">let</span> row <span class="token-keyword">=</span> { name: <span class="token-string">"Ada"</span>, age: <span class="token-number">30</span>, active: <span class="token-atom">true</span> }
+            </CodeEditor>
+
+            <p style="color: var(--text-secondary); margin-top: var(--space-6);">Enums with pattern matching, nil-safe operators, and structural traits:</p>
+            <CodeEditor title="enums-traits.vn" lines="18">
+              <span class="token-keyword">enum</span> <span class="token-type">Option</span>&lt;T&gt; { <span class="token-type">Some</span>(T), <span class="token-type">None</span> }
+
+              <span class="token-keyword">match</span> x {
+              <span class="token-type">Option</span>::Some(<span class="token-number">10</span>) =&gt; <span class="token-function">print</span>(<span class="token-string">"got 10"</span>),
+              <span class="token-type">Option</span>::None =&gt; <span class="token-function">print</span>(<span class="token-string">"none"</span>)
+              }
+
+              <span class="token-comment">// Nil safety</span>
+              <span class="token-keyword">let</span> role <span class="token-keyword">=</span> user?.profile?.role ?? <span class="token-string">"guest"</span>
+
+              <span class="token-comment">// Structural typing (traits)</span>
+              <span class="token-keyword">trait</span> <span class="token-type">Shape</span> { <span class="token-keyword">fn</span> <span class="token-function">area</span>(self) -&gt; <span class="token-type">int</span> }
+              <span class="token-keyword">struct</span> <span class="token-type">Rect</span> { w: <span class="token-type">int</span>, h: <span class="token-type">int</span> }
+              <span class="token-keyword">impl</span> <span class="token-type">Rect</span> { <span class="token-keyword">fn</span> <span class="token-function">area</span>(self) { <span class="token-keyword">return</span> self.w * self.h } }
+              <span class="token-keyword">fn</span> <span class="token-function">print_area</span>(s: <span class="token-type">Shape</span>) { <span class="token-function">print</span>(s.<span class="token-function">area</span>()) }
+            </CodeEditor>
+
+            <Stack gap="3">
+              <Heading size="4xl" as="h2">Error Handling</Heading>
+              <Text>Three mechanisms: <code>throw</code> for unrecoverable errors, <code>try/catch</code> with bound values for recovery, and <code>?</code> for null propagation. The <code>errors</code> module provides friendly diagnostics via <code>errors.explain()</code>.</Text>
+              <CodeEditor title="errors.vn" lines="12">
+                <span class="token-keyword">try</span> {
+                <span class="token-keyword">let</span> result <span class="token-keyword">=</span> <span class="token-function">risky_call</span>()
+                <span class="token-function">print</span>(result)
+                } <span class="token-keyword">catch</span> e {
+                <span class="token-function">print</span>(<span class="token-string">"Caught: "</span> + e)
+                }
+
+                <span class="token-comment">// Null propagation — short-circuits if null</span>
+                <span class="token-keyword">fn</span> <span class="token-function">try_div</span>(a, b) {
+                <span class="token-keyword">let</span> val <span class="token-keyword">=</span> <span class="token-function">safe_div</span>(a, b)?
+                <span class="token-keyword">return</span> val + <span class="token-number">10</span>
+                }
+              </CodeEditor>
+
+            </Stack>
+
+            <Stack gap="3">
+              <Heading size="4xl" as="h2">Comptime &amp; Decorators</Heading>
+              <Text><code>comptime { }</code> runs its body at compile time — used by the comptime ORM to bake query statements. Struct field validation runs automatically at construction. Function decorators memoize or retry.</Text>
+              <CodeEditor title="comptime.vn" lines="10">
+                <span class="token-keyword">let</span> x <span class="token-keyword">=</span> <span class="token-function">comptime</span> { <span class="token-number">10</span> + <span class="token-number">20</span> }  <span class="token-comment">// computed once at compile time</span>
+
+                <span class="token-comment">// Comptime ORM — see docs/ZENITH.md</span>
+                <span class="token-keyword">let</span> query <span class="token-keyword">=</span> <span class="token-function">comptime</span> {
+                <span class="token-function">select</span>(<span class="token-string">"users"</span>).<span class="token-function">where</span>(<span class="token-string">"id"</span>, <span class="token-string">"="</span>).<span class="token-function">build</span>()
+                }
+
+                <span class="token-comment">// Field validation decorators</span>
+                <span class="token-keyword">struct</span> <span class="token-type">SignupForm</span> {
+                @<span class="token-function">is_email</span> email: <span class="token-type">string</span>,
+                @<span class="token-function">min_len</span>(<span class="token-number">3</span>) name: <span class="token-type">string</span>
+                }
+              </CodeEditor>
+
+            </Stack>
+
+            <Stack gap="3">
+              <Heading size="4xl" as="h2">C FFI &amp; Python Bridge</Heading>
+              <Text>Bind C shared libraries directly with <code>@ffi("lib.so", "symbol")</code> via libffi, or call any Python library via an embedded interpreter — no wrapper code needed for either.</Text>
+              <CodeEditor title="ffi-python.vn" lines="8">
+                <span class="token-comment">// C FFI via libffi</span>
+                @<span class="token-function">ffi</span>(<span class="token-string">"libm.so.6"</span>, <span class="token-string">"sqrt"</span>)
+                <span class="token-keyword">fn</span> <span class="token-function">fast_sqrt</span>(x: <span class="token-type">c_double</span>) -&gt; <span class="token-type">c_double</span>
+                <span class="token-function">print</span>(<span class="token-function">fast_sqrt</span>(<span class="token-number">9.0</span>))  <span class="token-comment">// 3.0</span>
+
+                <span class="token-comment">// Python bridge</span>
+                <span class="token-keyword">let</span> result <span class="token-keyword">=</span> <span class="token-function">python.run</span>(<span class="token-string">"math"</span>, <span class="token-string">"sqrt"</span>, [<span class="token-number">9</span>])
+              </CodeEditor>
+            </Stack>
+
+          </Stack>
+        </Container>
+      </Section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

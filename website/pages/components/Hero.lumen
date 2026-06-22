@@ -1,0 +1,29 @@
+<template>
+<Container size="md">
+  <Stack gap="8" align="center">
+    <Stack gap="4" align="center">
+      <Heading size="6xl" as="h1">Blazing fast.<br/>Beautifully concurrent.</Heading>
+      <Text size="lg" muted={true}>Varian is a systems-level programming language built from scratch in C with a custom bytecode VM. Direct C FFI via libffi, a cooperative green-thread actor model, an embedded Python bridge, comptime evaluation, and zero-config tooling — all in one binary.</Text>
+    </Stack>
+
+    <CodeEditor title="main.vn" editable={true} show_run={true} lines="11">
+      <span class="token-keyword">fn</span> <span class="token-function">main</span>() {
+      <span class="token-comment">// Native cooperative actors without the thread overhead</span>
+      <span class="token-keyword">let</span> ch <span class="token-keyword">=</span> <span class="token-function">make</span>(<span class="token-type">chan</span>, 10)
+
+      <span class="token-keyword">spawn</span> <span class="token-keyword">fn</span>() {
+      <span class="token-function">send</span>(ch, <span class="token-string">"Hello from goroutine-like actor!"</span>)
+      }()
+
+      <span class="token-keyword">let</span> msg <span class="token-keyword">=</span> <span class="token-function">recv</span>(ch)
+      <span class="token-function">print</span>(msg)
+      }
+    </CodeEditor>
+  </Stack>
+</Container>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

@@ -1,0 +1,76 @@
+<template>
+<Stack gap="0">
+  <Section border={true}>
+    <Container size="lg">
+      <Row gap="12" align="center">
+        <Stack gap="4" style="flex:1">
+          <Heading size="4xl" as="h2">Zenith Web Server</Heading>
+          <Text size="lg" muted={true}>Zenith is Varian's high-performance HTTP and WebSocket server. Capable of handling millions of concurrent connections, Zenith leverages Varian's actor model to serve traffic with unparalleled efficiency and virtually zero overhead.</Text>
+          <Row gap="3">
+            <Button href="/zenith" variant="outline">Explore Zenith docs &gt;</Button>
+          </Row>
+        </Stack>
+        <Row justify="center" style="flex:1">
+          <img src="/assets/zenith-logo.png" alt="Zenith Logo" style="width:200px;height:200px;object-fit:contain;border-radius:var(--lumen-radius,14px);background:var(--lumen-card,var(--bg-main));padding:24px;border:1px solid var(--lumen-border,var(--border-subtle))">
+        </Row>
+      </Row>
+    </Container>
+  </Section>
+
+  <Section border={true}>
+    <Container size="lg">
+      <Row gap="12" align="center" justify="flex-start">
+        <Row justify="center" style="flex:1">
+          <img src="/assets/lumen-logo.png" alt="Lumen Logo" style="width:200px;height:200px;object-fit:contain;border-radius:var(--lumen-radius,14px);background:var(--lumen-card,var(--bg-main));padding:24px;border:1px solid var(--lumen-border,var(--border-subtle))">
+        </Row>
+        <Stack gap="4" style="flex:1">
+          <Heading size="4xl" as="h2">Lumen Framework</Heading>
+          <Text size="lg" muted={true}>Lumen is the Varian frontend framework. Components render to HTML on the server. A tiny client runtime forwards events over WebSockets, and the server re-renders and morphs the new HTML into the live DOM. No page reload, no client state, no hydration mismatch.</Text>
+          <Row gap="3">
+            <Button href="/lumen" variant="outline">Explore Lumen docs &gt;</Button>
+          </Row>
+        </Stack>
+      </Row>
+    </Container>
+  </Section>
+
+  <Section border={true}>
+    <Container size="lg">
+      <Row gap="12" align="center">
+        <Stack gap="4" style="flex:1">
+          <Heading size="4xl" as="h2">Kiln Build Tool</Heading>
+          <Text size="lg" muted={true}>Kiln fires raw Varian into a hardened, shippable artifact. It's a unified orchestrator that resolves dependency graphs offline and bundles logic and assets into single-file deliverables without the need for complex configuration.</Text>
+          <Row gap="3">
+            <Button href="/kiln" variant="outline">Explore Kiln docs &gt;</Button>
+          </Row>
+        </Stack>
+        <Row justify="center" style="flex:1">
+          <img src="/assets/kiln-logo.png" alt="Kiln Logo" style="width:200px;height:200px;object-fit:contain;border-radius:var(--lumen-radius,14px);background:var(--lumen-card,var(--bg-main));padding:24px;border:1px solid var(--lumen-border,var(--border-subtle))">
+        </Row>
+      </Row>
+    </Container>
+  </Section>
+
+  <Section border={true}>
+    <Container size="lg">
+      <Row gap="12" align="center" justify="flex-start">
+        <Row justify="center" style="flex:1">
+          <img src="/assets/constellation-logo.png" alt="Constellation Logo" style="width:200px;height:200px;object-fit:contain;border-radius:var(--lumen-radius,14px);background:var(--lumen-card,var(--bg-main));padding:24px;border:1px solid var(--lumen-border,var(--border-subtle))">
+        </Row>
+        <Stack gap="4" style="flex:1">
+          <Heading size="4xl" as="h2">Constellation Registry</Heading>
+          <Text size="lg" muted={true}>Packages are stars; Constellation is the map. It's Varian's built-in package manager utilizing a hybrid CDN index with direct Git vendoring. Reproducible offline builds made absolutely simple.</Text>
+          <Row gap="3">
+            <Button href="/constellation" variant="outline">Explore Constellation docs &gt;</Button>
+          </Row>
+        </Stack>
+      </Row>
+    </Container>
+  </Section>
+</Stack>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

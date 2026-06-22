@@ -1,0 +1,77 @@
+<template>
+<!-- 10. WebSockets & SSE -->
+<section id="websockets" class="docs-section">
+  <h2>10. WebSockets & SSE</h2>
+  <p>Zenith handles real-time bidirectional communication using WebSocket endpoints. Behind the scenes, the native C web server detects connection upgrade headers, performs the handshake, and wraps the socket stream in a WebSocket structure before passing it to your handler.</p>
+  <p>WebSocket connections run in light thread contexts, which allows thousands of concurrent sockets to remain open without blocking background workers.</p>
+
+  <CodeEditor title="websockets.vn" lines="19">
+    app.<span class="token-function">ws</span>(<span class="token-string">"/chat/:room"</span>, |ws_client| \{
+    <span class="token-keyword">let</span> chat_room <span class="token-keyword">=</span> ws_client.params.room
+    <span class="token-function">print</span>(<span class="token-string">"New user joined chat room: "</span> + chat_room)
+
+    ws_client.<span class="token-function">on_message</span>(|message_text| \{
+    <span class="token-comment">// Broadcast to all active clients in this room</span>
+    ws_client.<span class="token-function">broadcast</span>(json_encode(\{
+    room: chat_room,
+    payload: message_text,
+    timestamp: <span class="token-function">time_now_ms</span>()
+    \}))
+    \})
+
+    ws_client.<span class="token-function">on_close</span>(|exit_code, reason| \{
+    <span class="token-function">print</span>(<span class="token-string">"User left room "</span> + chat_room + <span class="token-string">" with code "</span> + exit_code)
+    \})
+
+    ws_client.<span class="token-function">send</span>(<span class="token-string">"Welcome to room: "</span> + chat_room)
+    \})
+  </CodeEditor>
+</section>
+
+<!-- 11. Background Job Workers -->
+<section id="queues" class="docs-section">
+  <h2>11. Background Job Workers</h2>
+  <p>Running expensive computational operations (such as processing video clips, rendering documents, or communicating with external APIs) during HTTP handlers increases response latency. Zenith includes a built-in background job queue backed by Redis.</p>
+  <p>Jobs are enqueued directly within request handlers and run asynchronously in the worker pool, separating task processing from HTTP request handlers.</p>
+
+  <CodeEditor title="queue.vn" lines="27">
+    <span class="token-keyword">let</span> app <span class="token-keyword">=</span> <span class="token-function">new_app</span>()
+
+    <span class="token-comment">// 1. Enqueue job from request handler</span>
+    app.<span class="token-function">post</span>(<span class="token-string">"/api/video/process"</span>, |req| \{
+    <span class="token-keyword">let</span> params <span class="token-keyword">=</span> <span class="token-function">json_decode</span>(req.body)
+
+    <span class="token-comment">// Push task to background queue</span>
+    app.<span class="token-function">enqueue</span>(<span class="token-string">"transcode_video"</span>, \{
+    video_id: params.video_id,
+    target_resolution: <span class="token-string">"1080p"</span>
+    \})
+
+    <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ task_status: <span class="token-string">"queued"</span> \}, <span class="token-number">202</span>)
+    \}, <span class="token-string">"Enqueue video job"</span>)
+
+    <span class="token-comment">// 2. Declare queue worker handler</span>
+    app.<span class="token-function">worker</span>(<span class="token-string">"transcode_video"</span>, |job_item| \{
+    <span class="token-keyword">let</span> id <span class="token-keyword">=</span> job_item.data.video_id
+    <span class="token-keyword">let</span> res <span class="token-keyword">=</span> job_item.data.target_resolution
+
+    <span class="token-function">print</span>(<span class="token-string">"Processing job item "</span> + job_item.id + <span class="token-string">": Transcoding "</span> + id + <span class="token-string">" to "</span> + res)
+
+    <span class="token-comment">// Heavy ffmpeg call via python shell wrapper</span>
+    python.<span class="token-function">run</span>(<span class="token-string">"video_tools"</span>, <span class="token-string">"transcode"</span>, [id, res])
+
+    <span class="token-function">print</span>(<span class="token-string">"Job item completed successfully: "</span> + job_item.id)
+    \})
+  </CodeEditor>
+
+  <div class="hint-box">
+    <h4>💡 Hint: Scalability Model</h4>
+    <p>Workers run on Zenith's cooperative actor thread pool. You can scale out horizontally by running `vn run worker.vn` on multiple separate machines connected to the same Redis instance.</p>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

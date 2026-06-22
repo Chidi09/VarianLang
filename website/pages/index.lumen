@@ -175,6 +175,43 @@
       font-size: var(--text-xs);
       font-family: var(--font-mono);
     }
+    .btn-nav-toggle {
+      display: none;
+      background: none;
+      border: 1px solid var(--border-subtle);
+      border-radius: var(--radius-full);
+      width: 36px;
+      height: 36px;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--text-secondary);
+      transition: all var(--transition-fast);
+      margin-left: var(--space-2);
+    }
+    .btn-nav-toggle:hover {
+      color: var(--text-primary);
+      border-color: var(--text-muted);
+    }
+    .btn-nav-toggle .material-symbols-outlined { font-size: 18px; }
+    @media (max-width: 720px) {
+      .btn-nav-toggle { display: inline-flex; }
+      .nav-links {
+        display: none;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        background: var(--bg-main);
+        border-bottom: 1px solid var(--border-subtle);
+        flex-direction: column;
+        padding: var(--space-4) var(--space-6);
+        gap: var(--space-4);
+        z-index: 99;
+      }
+      .nav-links.nav-open { display: flex; }
+      .navbar { position: relative; }
+    }
     .community-links {
       display: flex;
       flex-wrap: wrap;
@@ -208,6 +245,9 @@
       </div>
       <button id="theme-toggle" class="btn-theme-toggle" aria-label="Toggle theme">
         <span class="material-symbols-outlined" id="theme-icon">light_mode</span>
+      </button>
+      <button id="nav-toggle" class="btn-nav-toggle" aria-label="Menu" aria-expanded="false">
+        <span class="material-symbols-outlined">menu</span>
       </button>
     </nav>
 
@@ -913,6 +953,22 @@ fn runCode(s, v) {
       a.style.color = 'var(--accent)';
     }
   });
+  var navToggle = document.getElementById('nav-toggle');
+  var navLinks = document.querySelector('.nav-links');
+  if (navToggle && navLinks) {
+    navToggle.addEventListener('click', function() {
+      var open = navLinks.classList.toggle('nav-open');
+      navToggle.setAttribute('aria-expanded', open);
+      navToggle.querySelector('.material-symbols-outlined').textContent = open ? 'close' : 'menu';
+    });
+    document.addEventListener('click', function(e) {
+      if (!navToggle.contains(e.target) && !navLinks.contains(e.target)) {
+        navLinks.classList.remove('nav-open');
+        navToggle.setAttribute('aria-expanded', 'false');
+        navToggle.querySelector('.material-symbols-outlined').textContent = 'menu';
+      }
+    });
+  }
   const html = document.documentElement;
   const toggle = document.getElementById("theme-toggle");
   const icon = document.getElementById("theme-icon");

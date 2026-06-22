@@ -1,0 +1,47 @@
+<template>
+<!-- 5. Middleware & Security -->
+<section id="middleware" class="docs-section">
+  <h2>5. Middleware & Security</h2>
+  <p>Middleware in Zenith uses functional closures that wrap downstream actions. Middlewares are registered using `app.add_middleware()`. Each middleware receives a `req` context and a `next` function, which invokes the remainder of the pipeline and routing handlers.</p>
+
+  <CodeEditor title="middleware.vn" lines="9">
+    <span class="token-comment">// Log response latency</span>
+    app.<span class="token-function">add_middleware</span>(|req, next| \{
+    <span class="token-keyword">let</span> start <span class="token-keyword">=</span> <span class="token-function">time_now_ms</span>()
+    <span class="token-keyword">let</span> response <span class="token-keyword">=</span> <span class="token-function">next</span>(req)
+    <span class="token-keyword">let</span> duration <span class="token-keyword">=</span> <span class="token-function">time_now_ms</span>() <span class="token-keyword">-</span> start
+
+    <span class="token-function">print</span>(req.method + <span class="token-string">" "</span> + req.path + <span class="token-string">" completed in "</span> + duration + <span class="token-string">"ms"</span>)
+    <span class="token-keyword">return</span> response
+    \})
+  </CodeEditor>
+
+  <h3>Shield Security Middleware</h3>
+  <p>Zenith provides a security suite in `vn_modules/shield.vn` containing ready-to-use middleware for common safety policies:</p>
+  <ul>
+    <li><strong>`shield.cors(origins, methods, headers)`:</strong> Validates incoming cross-origin resource sharing requests.</li>
+    <li><strong>`shield.csrf()`:</strong> Uses a signed double-submit cookie pattern to block cross-site request forgery attacks.</li>
+    <li><strong>`shield.rate_limit(max_requests, window_ms)`:</strong> An actor-based, thread-safe in-memory rate limiter using a Token Bucket algorithm.</li>
+    <li><strong>`shield.rate_limit_redis(redis_conn, max_requests, window_secs)`:</strong> An alternative rate limiter designed for clustered systems, storing IP buckets inside Redis.</li>
+  </ul>
+
+  <CodeEditor title="security.vn" lines="11">
+    <span class="token-keyword">let</span> app <span class="token-keyword">=</span> <span class="token-function">new_app</span>()
+
+    // Apply CORS policy
+    app.<span class="token-function">add_middleware</span>(shield.<span class="token-function">cors</span>(
+    ["https://varianlang.org"],
+    ["GET", "POST"],
+    ["Content-Type", "Authorization"]
+    ))
+
+    // Rate-limit endpoints to 60 requests per minute
+    app.<span class="token-function">add_middleware</span>(shield.<span class="token-function">rate_limit</span>(60, 60000))
+  </CodeEditor>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>

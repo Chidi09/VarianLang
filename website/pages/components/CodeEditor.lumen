@@ -1,0 +1,80 @@
+<template>
+<div class="editor-container">
+  <div class="editor-header">
+    <div class="editor-dots">
+      <div class="editor-dot red"></div>
+      <div class="editor-dot yellow"></div>
+      <div class="editor-dot green"></div>
+    </div>
+    <div class="editor-tabs">
+      <div class="editor-tab active">
+        <span class="tab-icon">📄</span>
+        <span class="tab-title">{{ title }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="editor-body">
+    <div class="editor-lines">
+      {{! _gen_lines_html(lines) }}
+    </div>
+    <div class="editor-code" contenteditable="{{ editable }}" spellcheck="false">
+      {{! children }}
+    </div>
+  </div>
+  {{#if show_run}}
+    <div class="editor-run-bar">
+      <button @click="runCode" class="btn btn-primary" style="padding: 6px 16px; font-size: 14px; box-shadow: none;">Run code &gt;</button>
+    </div>
+    <div class="editor-output" style="display: {{ _display_style(output) }}; white-space: pre-wrap;">
+      <strong>Output:</strong>
+      {{ output }}
+    </div>
+  {{/if}}
+  <div class="editor-statusbar">
+    <div class="status-left">
+      <span class="status-item">Ready</span>
+    </div>
+    <div class="status-right">
+      <span class="status-item">Ln 1, Col 1</span>
+      <span class="status-item">Spaces: 2</span>
+      <span class="status-item">UTF-8</span>
+      <span class="status-item">Varian</span>
+    </div>
+  </div>
+</div>
+</template>
+
+<script>
+fn state() {
+    return {
+        title:  "main.vn",
+        code:  "",
+        editable: false,
+        show_run: false,
+        output:  "",
+        lines:  10
+    }
+}
+
+fn _gen_lines_html(lines) {
+    let n = 10
+    if lines != null {
+        n = string_to_int("" + lines)
+    }
+    let out = ""
+    for i in 0..n {
+        out = out + (i + 1) + "<br>"
+    }
+    return out
+}
+
+fn _display_style(output) {
+    if output != "" { return "block" }
+    return "none"
+}
+
+fn runCode(s, _v) {
+    return s.set("output", "Hello from goroutine-like actor!\n[Process exited 0]")
+}
+
+</script>

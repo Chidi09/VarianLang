@@ -1,0 +1,76 @@
+<template>
+<!-- 1. The Zenith Philosophy -->
+<section id="philosophy" class="docs-section">
+  <h2>1. The Zenith Philosophy</h2>
+  <p>Zenith (`vn_modules/zenith.vn`) is Varian's core systems-level web framework. Built with efficiency and simplicity in mind, it rejects the common dynamic programming trend of bloated node packages and nested dependencies. Zenith features a zero-dependency architecture that runs in a highly optimized sandbox.</p>
+
+  <p>Zenith's goals are focused on real-world engineering productivity and safety:</p>
+  <ul>
+    <li><strong>Zero Dependency Footprint:</strong> There is no `npm install` and no risk of supply-chain attacks. Standard database drivers (Postgres, SQLite, Redis), cryptographic algorithms (Argon2id, JWT, HMACS), email protocols (SMTP), validation pipelines, and templating engines all ship standard in the single binary.</li>
+    <li><strong>Secure by Default:</strong> HTML rendering defaults to safe escaping; cookies default to secure, HTTP-only, and Lax SameSite configurations; database inputs are bound safely; secret comparisons use time-constant comparison functions; and SMTP blocks header-injection attacks automatically.</li>
+    <li><strong>No Startup Overhead:</strong> Database schemas and request structures are computed during compile time, resolving query parameters and validation metadata before the server starts.</li>
+  </ul>
+
+  <div class="hint-box hint-performance">
+    <h4>⚡ Performance Comparison: Zenith vs Alternatives</h4>
+    <table class="spec-table">
+      <thead>
+        <tr>
+          <th>Framework (Language)</th>
+          <th>Dependency Size</th>
+          <th>Raw Throughput (req/s)</th>
+          <th>Memory Footprint</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Zenith (Varian)</strong></td>
+          <td>0 KB (Built-in)</td>
+          <td>10,500 req/s (Single thread)</td>
+          <td>&lt; 15 MB</td>
+        </tr>
+        <tr>
+          <td>Fastify / Express (Node)</td>
+          <td>50 MB - 150 MB (node_modules)</td>
+          <td>8,200 req/s (Clustered)</td>
+          <td>&gt; 45 MB</td>
+        </tr>
+        <tr>
+          <td>FastAPI (Python)</td>
+          <td>30 MB - 80 MB (pip)</td>
+          <td>3,500 req/s</td>
+          <td>&gt; 60 MB</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<!-- 2. Installation & The Varian Prelude -->
+<section id="prelude" class="docs-section">
+  <h2>2. Installation & The Varian Prelude</h2>
+  <p>Unlike regular libraries, Zenith and its companion ORM (`vn_modules/db.vn`) are not loaded via runtime file-system import hooks. Every file situated inside the `vn_modules/` folder is automatically concatenated as a prelude when you execute a script using the `vn` compiler.</p>
+  <p>This means that classes such as `ZenithApp` and global factory helpers like `new_app()` are available globally in your program's scope without using import statements.</p>
+
+  <CodeEditor title="run_command.sh" lines="8">
+    <span class="token-comment"># format your project's code</span>
+    $ vn fmt
+
+    <span class="token-comment"># run security and syntax static analysis</span>
+    $ vn lint
+
+    <span class="token-comment"># start development server</span>
+    $ vn run server.vn
+  </CodeEditor>
+
+  <div class="hint-box">
+    <h4>💡 Guideline: The Linter's Role</h4>
+    <p>Varian's built-in linter checks your code against standard security hazards: it warns you if you construct SQL queries by string concatenation instead of using the Comptime ORM, and flags hardcoded JWT or session tokens.</p>
+  </div>
+</section>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>
