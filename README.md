@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/varian-logo.png" alt="Varian" width="560" />
+  <img src="docs/assets/varian-logo.png" alt="Varian" width="280" />
 </p>
 
 <h1 align="center">Varian</h1>
@@ -213,7 +213,7 @@ vn build --release    # Compile to a native binary
 ## Zenith — the web framework
 
 <p align="center">
-  <img src="docs/assets/zenith-logo.png" alt="Zenith Logo" width="300" />
+  <img src="docs/assets/zenith-logo.png" alt="Zenith Logo" width="200" />
 </p>
 
 Zenith is Varian's built-in HTTP web framework — a non-blocking,

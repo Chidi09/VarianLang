@@ -7,6 +7,7 @@
 #include <limits.h>
 #include <stdarg.h>
 #include <sys/time.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <stdatomic.h>
@@ -3203,7 +3204,8 @@ bool vm_run(VM *vm, bool run_tests) {
         if (!any_alive) break;
 
         if (!made_progress && !vm->io_activity_this_tick) {
-            usleep(1000); // Sleep for 1ms to prevent hot spinning when truly idle
+            struct timespec ts = { .tv_sec = 0, .tv_nsec = 1000000 };
+            nanosleep(&ts, NULL);
         }
     }
 
