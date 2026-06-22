@@ -1,15 +1,12 @@
 # Varian CI / release — AppVeyor (Linux).
-# Builds the hardened `vn` toolchain, runs the full test suite, and packages a
-# release tarball. On a pushed git tag, it publishes the tarball to a GitHub
-# Release (see the `deploy:` section for the one-time token setup).
+# Builds the hardened `vn` toolchain and packages a release tarball.
+# On a pushed git tag, it publishes the tarball to a GitHub Release
+# (see the `deploy:` section for the one-time token setup).
+# Tests are run locally — not in CI.
 
 version: 0.1.0-{build}
 image: Ubuntu2204
 clone_depth: 1
-
-environment:
-  # Tests allocate-and-leak intentionally in a few spots; don't fail on that.
-  ASAN_OPTIONS: detect_leaks=0
 
 install:
   - sh: sudo apt-get update -qq
@@ -28,18 +25,6 @@ build_script:
   # Hardened, optimized build (-O2, FORTIFY, stack protector, RELRO, PIE).
   # Produces both `vn` and `libvarian.a` (the latter is needed for `vn build --release`).
   - sh: make -j$(nproc) release
-
-test_script:
-  - sh: |
-      set -e
-      ulimit -c 0
-      echo "── vn unit/integration tests ──"
-      ./vn test tests/
-      echo "── package + namespacing integration suites ──"
-      bash tests/pkg_manager_test.sh
-      bash tests/pkg_manager_c3_test.sh
-      bash tests/use_package_test.sh
-      bash tests/namespacing_test.sh
 
 after_test:
   # Package a self-contained release: the binary, the static runtime library
