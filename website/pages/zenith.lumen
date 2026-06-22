@@ -98,6 +98,14 @@
       padding: 0;
       color: var(--text-primary);
     }
+    .code-block .code-block-body pre {
+      background: none;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      margin: 0;
+      overflow: visible;
+    }
     .markdown-body blockquote {
       border-left: 4px solid var(--accent);
       color: var(--text-muted);

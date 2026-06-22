@@ -315,6 +315,15 @@ a:hover { color: var(--accent-hover); }
 .token-tag { color: #ff79c6; }
 .token-attr { color: #f1fa8c; }
 
+.code-block .code-block-body pre {
+  background: none;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  margin: 0;
+  overflow: visible;
+}
+
 .section-title {
   font-size: var(--text-3xl);
   text-align: center;
