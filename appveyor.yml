@@ -1,86 +1,165 @@
-# AppVeyor CI — builds the Linux `vn` toolchain and publishes to GitHub
-# Releases whenever a vX.Y.Z tag is pushed.
+# AppVeyor CI — multi-platform build + release.
+# Builds the `vn` toolchain on Linux, macOS, and Windows.
+# On a pushed tag, uploads all platform artifacts to a GitHub Release.
 #
 # Setup (one-time):
 #   1. https://ci.appveyor.com/ → Log in with GitHub → New Project → pick Chidi09/VarianLang
-#   2. Settings → Environment → add secret: GITHUB_TOKEN (a classic PAT with repo scope)
+#   2. Settings → Environment → add secret: GITHUB_TOKEN
 #   3. Push a tag — AppVeyor picks it up automatically.
 
 skip_non_tags: true
-
-image: Ubuntu2204
-
 clone_depth: 1
+
+image:
+  - Ubuntu2204
+  - macos-ventura
+  - Visual Studio 2022
 
 environment:
   GITHUB_TOKEN: $(GITHUB_TOKEN)
 
-install:
-  - sh: sudo apt-get update -qq
-  - sh: >
-      sudo apt-get install -y -qq
-      build-essential
-      libffi-dev
-      libcurl4-openssl-dev
-      libpq-dev
-      libssl-dev
-      libsqlite3-dev
-      libhiredis-dev
-      liburing-dev
+# ─── Linux ────────────────────────────────────────────────────────────
+for:
+  -
+    matrix:
+      only:
+        - image: Ubuntu2204
+    install:
+      - sh: sudo apt-get update -qq
+      - sh: >
+          sudo apt-get install -y -qq
+          build-essential
+          libffi-dev
+          libcurl4-openssl-dev
+          libpq-dev
+          libssl-dev
+          libsqlite3-dev
+          libhiredis-dev
+          liburing-dev
+    build_script:
+      - sh: make -j$(nproc) release
+    after_build:
+      - sh: |
+          set -e
+          PKG=varian-linux-x64
+          rm -rf dist && mkdir -p dist/$PKG
+          cp vn libvarian.a dist/$PKG/
+          cp -r include vn_modules dist/$PKG/
+          cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
+          tar -czf $PKG.tar.gz -C dist $PKG
+          sha256sum $PKG.tar.gz | tee $PKG.tar.gz.sha256
 
-build_script:
-  - sh: make -j$(nproc) release
+          # Upload to GitHub Release (create if not exists)
+          TAG="$APPVEYOR_REPO_TAG_NAME"
+          if [ -z "$TAG" ]; then echo "No tag — skipping upload"; exit 0; fi
 
-after_build:
-  - sh: |
-      set -e
-      PKG=varian-linux-x64
-      rm -rf dist && mkdir -p dist/$PKG
-      cp vn libvarian.a dist/$PKG/
-      cp -r include vn_modules dist/$PKG/
-      cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
-      tar -czf $PKG.tar.gz -C dist $PKG
-      sha256sum $PKG.tar.gz | tee $PKG.tar.gz.sha256
+          REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
+          if echo "$REL" | grep -q '"message": "Not Found"'; then
+            REL=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Varian v${TAG#v} — compiled, concurrent, batteries-included language.\\n\\nDownloads:\\n- varian-linux-x64.tar.gz — Linux binary + toolchain\\n- varian-macos-x64.tar.gz — macOS binary + toolchain\\n- varian-windows-x64.zip — Windows binary + toolchain\\n\\nSee README.md and docs/ for full reference.\"}" \
+              "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases")
+          fi
+          REL_ID=$(echo "$REL" | grep -o '"id": [0-9]*' | head -1 | cut -d' ' -f2)
+          [ -z "$REL_ID" ] && { echo "Failed to get release ID"; exit 1; }
 
-      # Upload to GitHub Release via API (like crush does)
-      TAG="$APPVEYOR_REPO_TAG_NAME"
-      if [ -z "$TAG" ]; then echo "No tag — skipping release upload"; exit 0; fi
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @"$PKG.tar.gz" \
+            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-binary @"$PKG.tar.gz.sha256" \
+            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
+          echo "Linux release uploaded."
 
-      echo "Fetching release for tag $TAG..."
-      REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-        "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
+  # ─── macOS ──────────────────────────────────────────────────────────
+  -
+    matrix:
+      only:
+        - image: macos-ventura
+    install:
+      - sh: brew install libffi curl openssl sqlite3 hiredis postgresql
+    build_script:
+      - sh: make -j$(sysctl -n hw.logicalcpu) release
+    after_build:
+      - sh: |
+          set -e
+          PKG=varian-macos-x64
+          rm -rf dist && mkdir -p dist/$PKG
+          cp vn libvarian.a dist/$PKG/ 2>/dev/null || true
+          cp -r include vn_modules dist/$PKG/
+          cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
+          tar -czf $PKG.tar.gz -C dist $PKG
+          shasum -a 256 $PKG.tar.gz | tee $PKG.tar.gz.sha256
 
-      # If release doesn't exist yet, create it
-      if echo "$REL" | grep -q '"message": "Not Found"'; then
-        echo "Creating new release for $TAG..."
-        REL=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Varian v${TAG#v} — compiled, concurrent, batteries-included language.\\n\\nSee README.md and docs/ for full reference.\"}" \
-          "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases")
-      fi
+          TAG="$APPVEYOR_REPO_TAG_NAME"
+          [ -z "$TAG" ] && exit 0
+          REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
+          REL_ID=$(echo "$REL" | grep -o '"id": [0-9]*' | head -1 | cut -d' ' -f2)
+          [ -z "$REL_ID" ] && { echo "No release found"; exit 1; }
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: application/gzip" \
+            --data-binary @"$PKG.tar.gz" \
+            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
+          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Content-Type: text/plain" \
+            --data-binary @"$PKG.tar.gz.sha256" \
+            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
+          echo "macOS release uploaded."
 
-      REL_ID=$(echo "$REL" | grep -o '"id": [0-9]*' | head -1 | cut -d' ' -f2)
-      if [ -z "$REL_ID" ]; then echo "Failed to get release ID"; exit 1; fi
-      echo "Release ID: $REL_ID"
+  # ─── Windows ────────────────────────────────────────────────────────
+  -
+    matrix:
+      only:
+        - image: Visual Studio 2022
+    install:
+      - cmd: choco install mingw make curl openssl sqlite3 hiredis 2>nul || ver>nul
+    build_script:
+      - cmd: mingw32-make -j%NUMBER_OF_PROCESSORS% release
+    after_build:
+      - ps: |
+          $PKG = "varian-windows-x64"
+          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "dist/$PKG" | Out-Null
+          Copy-Item vn.exe "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item libvarian.a "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse include "dist/$PKG/include" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse vn_modules "dist/$PKG/vn_modules"
+          Copy-Item README.md "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item LICENSE "dist/$PKG/" -ErrorAction SilentlyContinue
+          Push-Location dist
+          & 7z a -tzip "..\$PKG.zip" $PKG
+          Pop-Location
+          $hash = (Get-FileHash "$PKG.zip" -Algorithm SHA256).Hash.ToLower()
+          Set-Content "$PKG.zip.sha256" "$hash  $PKG.zip"
 
-      # Upload tarball
-      echo "Uploading $PKG.tar.gz..."
-      curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-        -H "Content-Type: application/gzip" \
-        --data-binary @"$PKG.tar.gz" \
-        "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
-
-      # Upload checksum
-      echo "Uploading $PKG.tar.gz.sha256..."
-      curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-        -H "Content-Type: text/plain" \
-        --data-binary @"$PKG.tar.gz.sha256" \
-        "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
-
-      echo "Release published."
+          $tag = $env:APPVEYOR_REPO_TAG_NAME
+          if (-not $tag) { exit 0 }
+          $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "appveyor-varian" }
+          $all = Invoke-RestMethod "https://api.github.com/repos/$env:APPVEYOR_REPO_NAME/releases?per_page=100" -Headers $headers
+          $rel = $all | Where-Object { $_.tag_name -eq $tag } | Select-Object -First 1
+          if (-not $rel) { Write-Host "Release not found for $tag"; exit 1 }
+          $upload = "https://uploads.github.com/repos/$env:APPVEYOR_REPO_NAME/releases/$($rel.id)/assets"
+          foreach ($f in @("$PKG.zip", "$PKG.zip.sha256")) {
+            $name = [System.IO.Path]::GetFileName($f)
+            Invoke-RestMethod -Uri "$upload?name=$name" -Method Post -Headers $headers `
+              -ContentType "application/octet-stream" -InFile $f
+            Write-Host "Uploaded $name"
+          }
 
 artifacts:
   - path: varian-linux-x64.tar.gz
     name: varian-linux-x64
   - path: varian-linux-x64.tar.gz.sha256
     name: varian-linux-x64-sha256
+  - path: varian-macos-x64.tar.gz
+    name: varian-macos-x64
+  - path: varian-macos-x64.tar.gz.sha256
+    name: varian-macos-x64-sha256
+  - path: varian-windows-x64.zip
+    name: varian-windows-x64
+  - path: varian-windows-x64.zip.sha256
+    name: varian-windows-x64-sha256
