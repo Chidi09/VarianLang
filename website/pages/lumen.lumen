@@ -5,6 +5,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lumen — VarianLang Docs</title>
+  <meta name="description" content="Lumen is Varian's server-driven UI framework — HTML-over-WebSocket live components, reactive server state, import system, scoped CSS, Lumen UI component registry, and test helpers.">
+  <meta name="application-name" content="VarianLang">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "name": "Lumen — server-driven live components",
+    "description": "Lumen is Varian's server-driven UI framework with live components over WebSocket, reactive server state, file-based routing, scoped CSS, import system, Lumen UI registry, and comprehensive test helpers.",
+    "applicationCategory": "Web Framework",
+    "programmingLanguage": "Varian",
+    "author": { "@type": "Organization", "name": "VarianLang" }
+  }
+  </script>
   <link rel="stylesheet" href="/global.css">
   <style>
     /* Doc-specific layout */
@@ -84,6 +97,14 @@
       padding: 0;
       color: var(--text-primary);
     }
+    .code-block .code-block-body pre {
+      background: none;
+      padding: 0;
+      border: none;
+      border-radius: 0;
+      margin: 0;
+      overflow: visible;
+    }
     .markdown-body blockquote {
       border-left: 4px solid var(--accent);
       color: var(--text-muted);
@@ -153,16 +174,16 @@ because the server is the only place state lives and renders — <strong>no hydr
    API the compiler targets. Read this if you're embedding Lumen by hand or hacking on it.</li>
 </ol>
 <hr />
-<h2>The developer guide (Lumen + <code>vn dev</code>)</h2>
-<h2>From zero to live</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> The developer guide (Lumen + <code>vn dev</code>)</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">rocket_launch</span> From zero to live</h2>
 
-<h3>Quick start</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">play_arrow</span> Quick start</h3>
 <pre><code class="language-sh">vn lumen new myapp     # scaffold pages/ + public/ (favicons, manifest) + a starter component
 cd myapp
 vn dev                 # serve ./pages with live reload + the dev console (default :8090)
 </code></pre>
 <p>Open <code>http://localhost:8090/</code> and click the logo — its colour is reactive server state.</p>
-<h3>The <code>.lumen</code> file format</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">draft</span> The <code>.lumen</code> file format</h3>
 <p>A component is up to three blocks in one file:</p>
 <pre><code class="language-html">&lt;template&gt;            &lt;!-- markup with &#123;&#123; &#125;&#125; bindings and @event hooks --&gt;
   &lt;button @click=&quot;pulse&quot;&gt;&#123;&#123; count &#125;&#125;&lt;/button&gt;
@@ -187,7 +208,7 @@ fn pulse(s, v) { return s.set(&quot;count&quot;, s.get(&quot;count&quot;) + 1) }
   <code>lumen_component(...)</code> and registers it. The language has no <code>eval</code>, so <code>vn dev</code> does
   this in a build pass that emits one runnable <code>.vn</code>, then serves it.</li>
 </ul>
-<h3>Import system</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">import_export</span> Import system</h3>
 <p><code>.lumen</code> files can import other components, utilities, and Lumen UI components
 using a standard ES-module-like syntax:</p>
 <pre><code class="language-varian">import UserCard from "./components/UserCard"
@@ -209,7 +230,7 @@ import { format } from "./helpers"
 <p>Imports are resolved at compile time by <code>_lumen_extract_imports</code> and
 <code>_lumen_collect_pages</code>, which perform full transitive dependency resolution.
 Circular imports are detected and produce a build error.</p>
-<h3>Scoped CSS</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">palette</span> Scoped CSS</h3>
 <p>Lumen supports both global and scoped styles in <code>.lumen</code> files. A
 <code>&lt;style scoped&gt;</code> block is rewritten so that every selector is prefixed with
 <code>[data-lumen-css="ComponentName"]</code>, isolating the component's styles from
@@ -229,7 +250,7 @@ selectors, and <code>_lumen_scope_html</code> which injects <code>data-lumen-css
 onto the component's root elements. This means zero class-name collisions
 between components — each component's styles are sealed behind its own
 attribute selector.</p>
-<h3>Reactivity model</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">bolt</span> Reactivity model</h3>
 <p>State is <strong>plain Varian data on the server</strong>. There is no <code>useState</code>, no signals, no
 effect dependency arrays, no virtual DOM in the browser. The whole loop is:</p>
 <pre><code>click ─▶ data-lumen-click ──WS──▶ run handler ▶ new state ▶ re-render ▶ diff ──WS──▶ morph
@@ -244,7 +265,7 @@ and arena-safe — <code>s.set(k, v)</code> returns a <em>new</em> struct, and t
 <p>The scaffolded starter wires <code>&#123;&#123; color &#125;&#125;</code> into an SVG <code>fill</code>, so each click recomputes a
 colour server-side and Lumen morphs <strong>only the changed attribute</strong> into the DOM — a live
 demonstration of the model with zero client code.</p>
-<h3>File-based routing</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">signpost_2</span> File-based routing</h3>
 <p><code>vn dev &lt;dir&gt;</code> scans <code>&lt;dir&gt;</code> for <code>.lumen</code> files and maps each to a route (<code>_lumen_route</code>):</p>
 <table>
 <thead>
@@ -268,7 +289,7 @@ demonstration of the model with zero client code.</p>
 </tr>
 </tbody>
 </table>
-<h3>The interactive dev console</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">terminal</span> The interactive dev console</h3>
 <p><code>vn dev</code> prints a Nuxt/Next-style console and then watches for changes:</p>
 <pre><code class="language-text">   LUMEN   v0.1.0   the Varian frontend framework
 
@@ -289,7 +310,7 @@ demonstration of the model with zero client code.</p>
   <code>http.serve</code> startup line is silenced via the <code>LUMEN_QUIET</code> env var so the console is
   the single source of truth.</li>
 </ul>
-<h3>Batteries included (no extra deps)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">inventory_2</span> Batteries included (no extra deps)</h3>
 <p>Every page Lumen serves gets, with zero setup, the same defaults <code>create-next-app</code> /
 <code>nuxi init</code> / <code>create-vite</code> give you — injected by <code>_lumen_head()</code>:</p>
 <ul>
@@ -304,19 +325,19 @@ demonstration of the model with zero client code.</p>
   full system-font fallback so a page looks right even before the webfont arrives.</li>
 <li><strong>Escape-by-default rendering</strong> and the branded <strong>error overlay</strong> (below).</li>
 </ul>
-<h3>Error overlay</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">bug_report</span> Error overlay</h3>
 <p>A runtime error inside a handler is caught in <code>_lumen_live_loop</code> and pushed to the browser
 as a Lumen-branded overlay (navy/amber, inline-SVG logo) carrying the friendly
 <code>errors.explain()</code> what/fix text. It auto-clears on the next successful render. Dismissable;
 dev-only by nature (it only appears when a live handler throws).</p>
-<h3>DOM patch protocol (M4)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">merge</span> DOM patch protocol (M4)</h3>
 <p>After the first full render per connection, the server sends a <strong>minimal splice patch</strong>
 instead of full HTML: it computes the longest common ASCII prefix/suffix between the last
 HTML and the new HTML and sends only the changed middle as <code>{"t":"p","s":p,"e":q,"d":mid}</code>.
 Prefix/suffix are kept ASCII so server byte offsets equal the client's UTF-16 string
 indices (Unicode in the changed middle is sent verbatim and stays safe). The client
 reconstructs <code>prev[0:s] + d + prev[len-e:]</code> and morphs. Invisible to authors.</p>
-<h3>Composition &amp; slots</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">widgets</span> Composition <h3>Composition &amp; slotsamp; slots</h3>
 <ul>
 <li><strong>Child components.</strong> <code>&lt;UserCard id="u1" name="Ada"/&gt;</code> renders a child with props and its
   own server-side event scope — events are namespaced <code>id:handler</code> so two instances of the
@@ -324,7 +345,7 @@ reconstructs <code>prev[0:s] + d + prev[len-e:]</code> and morphs. Invisible to 
 <li><strong>Slots.</strong> <code>&lt;Card&gt; inner markup &lt;/Card&gt;</code> projects into the card's <code>&#123;&#123;! children &#125;&#125;</code>;
   interactive components nested inside a slot keep their own scope.</li>
 </ul>
-<h3>Triple-brace &amp; JSX-style props</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">data_object</span> Triple-brace <h3>Triple-brace &amp; JSX-style propsamp; JSX-style props</h3>
 <p>Beyond standard <code>&#123;&#123; var &#125;&#125;</code> interpolation, Lumen supports two additional template
 syntaxes for special cases:</p>
 <ul>
@@ -340,14 +361,14 @@ syntaxes for special cases:</p>
   identically. This is purely syntactic sugar for authors who prefer the
   JSX aesthetic.</li>
 </ul>
-<h3>Client islands (M8)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">lan</span> Client islands (M8)</h3>
 <p>For a genuinely client-only widget (chart, canvas, map), add a <code>&lt;client&gt;</code> block of real
 browser JS. It's embedded as a <code>&lt;script&gt;</code> that runs once on first paint and is left
 untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-run scripts). This is the <em>honest</em>
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.</p>
-<h3>LumenJS &amp; event modifiers</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS <h3>LumenJS &amp; event modifiersamp; event modifiers</h3>
 <p>Lumen ships a tiny (~2.5 KB gzipped) client-side JavaScript runtime called
 <strong>LumenJS</strong>. It is not a framework you write against — it is a transport layer
 that Lumen emits on your behalf. The user never writes JS; they write Varian.
@@ -389,7 +410,7 @@ and only shipped if the page uses them:</p>
 <p>A page that only uses <code>@click</code> handlers ships core LumenJS and nothing else.
 A page that uses <code>data-lumen-copy</code> ships <code>core + clipboard</code>. The bundling
 is automatic — no configuration, no manual tree-shaking.</p>
-<h3>Lumen UI (Component Registry)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">widgets</span> Lumen UI (Component Registry)</h3>
 <p>Lumen ships with an official, Shadcn-inspired component registry called <strong>Lumen UI</strong>. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in <code>pages/components/</code>) so you fully own and customize the code.</p>
 <p>Add components via the CLI:</p>
 <pre><code class="language-sh">vn lumen add button
@@ -400,7 +421,7 @@ vn lumen add card
 - <strong>Theme-Aware:</strong> Lumen is "Light Mode First" but ships with native Dark Mode. Global CSS variables (<code>var(--lumen-bg)</code>, <code>var(--lumen-primary)</code>, etc.) adapt automatically when the <code>dark</code> class is toggled on the <code>&lt;html&gt;</code> element. Use <code>vn lumen add theme-toggle</code> for a pre-built switcher.
 - <strong>Inline SVG Icons:</strong> Icons are pure, inline Lucide SVG vectors baked directly into the <code>.lumen</code> files. They inherit <code>currentColor</code>, cause zero layout shift, and require no external CDN scripts.
 - <strong>Batteries Included:</strong> Available components: <code>button</code>, <code>card</code>, <code>input</code>, <code>dialog</code>, <code>badge</code>, <code>accordion</code>, <code>alert</code>, <code>progress</code>, <code>select</code>, <code>checkbox</code>, <code>switch</code>, <code>separator</code>, and <code>theme-toggle</code>.</p>
-<h3>Built-in layout components</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">dashboard</span> Built-in layout components</h3>
 <p>Beyond the copyable Lumen UI registry, Lumen ships a set of built-in layout
 and content components that are available globally — no <code>vn lumen add</code> needed.
 They form a complete page-building vocabulary:</p>
@@ -481,7 +502,7 @@ attributes rather than class names:</p>
 <p>These props are resolved through <code>_ui_style_props</code>, which converts them to
 inline CSS declarations. Every built-in component threads this function into
 its <code>style</code> attribute, so author-set props always apply.</p>
-<h3>Icons</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">image</span> Icons</h3>
 <p>Lumen ships with an inline SVG icon system. Use <code>lumen_icon(name)</code> in your
 handler or template to render an SVG string:</p>
 <pre><code class="language-html">&lt;button @click=&quot;submit&quot;&gt;
@@ -493,7 +514,7 @@ handler or template to render an SVG string:</p>
 <code>layers</code>, <code>rocket</code>, <code>check</code>, <code>shield</code>. Icons are Lucide-style SVG vectors
 baked directly into the runtime — zero CDN dependencies, zero layout shift
 (they use <code>currentColor</code> and fixed viewBox).</p>
-<h3>CLI reference</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">terminal</span> CLI reference</h3>
 <table>
 <thead>
 <tr>
@@ -516,7 +537,7 @@ baked directly into the runtime — zero CDN dependencies, zero layout shift
 </tr>
 </tbody>
 </table>
-<h3>Static Site Generation (SSG)</h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">static</span> Static Site Generation (SSG)</h3>
 <p>Lumen can also generate a fully static HTML site — no server, no WebSocket,
 no runtime required:</p>
 <pre><code class="language-sh">vn lumen build --static ./pages ./out_dir --base-url https://example.com
@@ -533,11 +554,11 @@ no runtime required:</p>
 that doesn't require per-connection server state. The generated output
 can be served by any HTTP server or CDN.</p>
 <hr />
-<h2>Advanced client-server APIs</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">layers</span> Advanced client-server APIs</h2>
 <p>Beyond the core <code>lumen_component</code> / <code>lumen_mount</code> API, Lumen provides a set
 of higher-level primitives for data loading, shared state, cross-connection
 communication, form validation, and SEO.</p>
-<h3><code>lumen_mount_dynamic(app, path, component, param)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> <code>lumen_mount_dynamic(app, path, component, param)</code></h3>
 <p>Mount a component at a dynamic route, e.g. <code>/product/:id</code>. The <code>param</code>
 argument is the URL parameter name (e.g. <code>"id"</code>). The parameter value is
 extracted from <code>req.params</code> and merged into the component's initial state:</p>
@@ -550,7 +571,7 @@ lumen_mount_dynamic(app, "/product/:id", detail, "id")
 </code></pre>
 <p>File-based routing also supports this: a file named <code>[id].lumen</code> in the
 <code>pages/</code> directory automatically maps to a <code>:id</code> route segment.</p>
-<h3><code>lumen_mount_data(app, path, component, provider)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> <code>lumen_mount_data(app, path, component, provider)</code></h3>
 <p>Mount a component with a data provider callback that runs before each
 render. The provider receives the request and can access databases, APIs,
 or authentication before the component renders:</p>
@@ -566,7 +587,7 @@ lumen_mount_data(app, "/profile", profile, |req| {
 </code></pre>
 <p>The provider's return value is shallow-merged into the component's state
 before the initial render.</p>
-<h3><code>lumen_store(initial)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">storage</span> <code>lumen_store(initial)</code></h3>
 <p>A Zustand-style shared mutable store. Created inside <code>state()</code> it is
 per-connection; created at the module level it is app-global:</p>
 <pre><code class="language-varian">// Module-level (shared across all connections)
@@ -583,7 +604,7 @@ fn addItem(s, v) {
 </code></pre>
 <p>Returns <code>{ get(key), set(key, value), all() }</code>. <code>set</code> mutates in place
 (suitable for shared state where immutability would be expensive).</p>
-<h3><code>lumen_resource(fetcher)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">data_fetch</span> <code>lumen_resource(fetcher)</code></h3>
 <p>A React-Query-style async data container. The fetcher function is called
 once on construction and returns <code>{ data, error }</code>. The resource provides
 <code>state()</code> for reactive access in templates:</p>
@@ -595,7 +616,7 @@ once on construction and returns <code>{ data, error }</code>. The resource prov
 </code></pre>
 <p>Returns <code>{ state (fn), refetch (fn) }</code>. <code>state()</code> returns
 <code>{ loading, error, data }</code> — bind it in your template for live updates.</p>
-<h3><code>lumen_async_resource(fetcher)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">sync</span> <code>lumen_async_resource(fetcher)</code></h3>
 <p>An off-thread version of <code>lumen_resource</code> that uses <code>task.spawn()</code> and
 <code>task.channel()</code> to fetch data in a background task. When the fetch
 completes, it pushes a signal onto a global channel
@@ -606,7 +627,7 @@ should not block the event loop:</p>
     return external_api.fetch("/analytics/dashboard")
 })
 </code></pre>
-<h3><code>lumen_publish(topic, key, value)</code> / <code>lumen_subscribe(topic)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">campaign</span> <code>lumen_publish(topic, key, value)</code> / <code>lumen_subscribe(topic)</code></h3>
 <p>Cross-connection pub-sub. <code>lumen_publish</code> broadcasts a key-value update
 to all WebSocket connections subscribed to a topic. <code>lumen_subscribe</code>
 returns the current data for a topic as a struct:</p>
@@ -619,7 +640,7 @@ let chat = lumen_subscribe("chat")  // { message: "Hello everyone!" }
 <p>Data is stored in <code>_lumen_pubsub_data</code>, a global struct shared across
 all connections. This enables real-time features like chat, notifications,
 and live dashboards without a separate message broker.</p>
-<h3><code>lumen_broadcast_store(topic, initial)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">rss_feed</span> <code>lumen_broadcast_store(topic, initial)</code></h3>
 <p>Combines <code>lumen_store</code> with <code>lumen_publish</code>. Creates a store that
 automatically publishes every <code>set()</code> call to all subscribers on the
 topic:</p>
@@ -628,7 +649,7 @@ topic:</p>
 // Any connection can call notif.set("count", n) and all
 // subscribed connections see the update on next render.
 </code></pre>
-<h3><code>lumen_form(field_schemas)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">fact_check</span> <code>lumen_form(field_schemas)</code></h3>
 <p>Zod-inspired form validation. Define a schema for each field and call
 <code>validate(values)</code> to get a result:</p>
 <pre><code class="language-varian">let loginForm = lumen_form({
@@ -649,7 +670,7 @@ fn submit(s, v) {
 <p>Returns <code>{ validate(values) -> { ok, values, errors }, schema }</code>.
 Integrates with <code>vn_modules/validate.vn</code> for rule parsing and error
 message generation.</p>
-<h3><code>lumen_meta(title, description, og)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">search</span> <code>lumen_meta(title, description, og)</code></h3>
 <p>Declare SEO metadata for a page. Call this in a component's handler or
 <code>state()</code> to set the document title, meta description, Open Graph tags,
 and Twitter Card tags:</p>
@@ -665,8 +686,8 @@ and Twitter Card tags:</p>
 The <code>&lt;Page&gt;</code> built-in component calls <code>_lumen_meta_tags()</code> to inject
 these into the document <code>&lt;head&gt;</code>.</p>
 <hr />
-<h2>Public API</h2>
-<h3><code>lumen_component(state_fn, render_fn, handler_names, handler_fns)</code></h3>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">api</span> Public API</h2>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">component</span> <code>lumen_component(state_fn, render_fn, handler_names, handler_fns)</code></h3>
 <p>Create a component struct from four pieces:</p>
 <table>
 <thead>
@@ -699,7 +720,7 @@ closures receive the current state and the event value (the element's <code>.val
 and must return the <strong>new</strong> state (mutation works but the returned value is what's used).</p>
 <p>Returns a struct (built with <code>http.create_struct</code> so there's no parse-order dependency
 on zenith.vn's struct declarations).</p>
-<h3><code>lumen_mount(app, path, component)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> <code>lumen_mount(app, path, component)</code></h3>
 <p>Mount a live component on a Zenith app at <code>path</code>. Registers two routes:</p>
 <ul>
 <li><strong><code>GET &lt;path&gt;</code></strong> — renders the component's initial HTML wrapped in the live shell
@@ -707,7 +728,7 @@ on zenith.vn's struct declarations).</p>
 <li><strong><code>GET &lt;path&gt;/live</code></strong> — WebSocket upgrade endpoint. Upgrades to RFC 6455, then enters
   the per-connection event loop until the socket closes.</li>
 </ul>
-<h3><code>lumen_snapshot(component)</code></h3>
+<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">camera</span> <code>lumen_snapshot(component)</code></h3>
 <p>Render a component against its initial state and return the HTML string.
 Useful for snapshot testing and SSG:</p>
 <pre><code class="language-varian">let html = lumen_snapshot(counter)
@@ -735,7 +756,7 @@ assert(lumen_test_contains(html, "Count: 5"))
 let newState = lumen_test_event(counter, { count: 0 }, "inc", null)
 assert(newState.count == 1)
 </code></pre>
-<h2>Wire Protocol</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">wifi</span> Wire Protocol</h2>
 <p>Both directions are JSON text frames over a single WebSocket.</p>
 <p><strong>Client → Server</strong> (an event happened):</p>
 <pre><code class="language-json">{&quot;t&quot;:&quot;event&quot;,&quot;h&quot;:&quot;&lt;handlerName&gt;&quot;,&quot;v&quot;:&quot;&lt;value-or-null&gt;&quot;}
@@ -749,23 +770,23 @@ assert(newState.count == 1)
 </code></pre>
 <p>The client morphs (not replaces) the new HTML onto the live DOM, preserving focus and
 input values in untouched fields.</p>
-<h2>Per-Connection State</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">memory</span> Per-Connection State</h2>
 <p>Each WebSocket connection gets its own independent state held in a local variable in the
 <code>_lumen_live_loop</code> function. State lives exactly as long as the socket. Shared/multi-user
 state via actors is a future milestone.</p>
-<h2>Security Rules</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">shield</span> Security Rules</h2>
 <ol>
 <li><strong>Handler names from the wire are resolved only against the registered set.</strong>
    An unknown name is silently dropped — never evaluated.</li>
 <li><strong>Re-rendering goes through <code>lumen_render</code>, which HTML-escapes <code>&#123;&#123; &#125;&#125;</code> by default.</strong>
    Never bypass it.</li>
 </ol>
-<h2>Scheduler Model</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">schedule</span> Scheduler Model</h2>
 <p>The Varian VM is a single-threaded cooperative round-robin scheduler.
 <code>ws.read()</code> is <strong>non-blocking</strong>: it returns <code>""</code> (empty string) when no data is available
 (EAGAIN), not <code>null</code>. The per-connection live loop calls <code>task.yield()</code> when there's no
 message, allowing the scheduler to service other connections/tasks on the next tick.</p>
-<h2>Example</h2>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">play_circle</span> Example</h2>
 <pre><code class="language-varian">let counter = lumen_component(
     | | { return { count: 0 } },
     |s| { return lumen_render(&quot;&lt;div&gt;&lt;p&gt;Count: &#123;&#123; count &#125;&#125;&lt;/p&gt;&quot; +
