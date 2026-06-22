@@ -856,71 +856,100 @@ static void gc_collect(VM *vm) {
 }
 
 /* ─── Value Operations ─── */
-void value_print(Value value) {
+/* value_fprint writes a value's display form to any FILE*; value_print is the
+ * stdout wrapper. Splitting them lets the print native also capture into an
+ * in-memory stream (open_memstream) for the Lumen devtools "server logs in
+ * browser" feature without duplicating this formatting logic. */
+static void value_fprint(FILE *f, Value value) {
     switch (value.type) {
-        case VAL_NIL:      printf("nil"); break;
-        case VAL_BOOL:     printf("%s", value.as.boolean ? "true" : "false"); break;
-        case VAL_INT:      printf("%ld", (long)value.as.integer); break;
-        case VAL_FLOAT:    printf("%g", value.as.floating); break;
-        case VAL_STRING:   printf("%s", value.as.string->chars); break;
+        case VAL_NIL:      fprintf(f, "nil"); break;
+        case VAL_BOOL:     fprintf(f, "%s", value.as.boolean ? "true" : "false"); break;
+        case VAL_INT:      fprintf(f, "%ld", (long)value.as.integer); break;
+        case VAL_FLOAT:    fprintf(f, "%g", value.as.floating); break;
+        case VAL_STRING:   fprintf(f, "%s", value.as.string->chars); break;
         case VAL_ARRAY: {
-            printf("[");
+            fprintf(f, "[");
             for (int i = 0; i < value.as.array->count; i++) {
-                if (i > 0) printf(", ");
-                value_print(value.as.array->elements[i]);
+                if (i > 0) fprintf(f, ", ");
+                value_fprint(f, value.as.array->elements[i]);
             }
-            printf("]");
+            fprintf(f, "]");
             break;
         }
         case VAL_TUPLE: {
-            printf("(");
+            fprintf(f, "(");
             for (int i = 0; i < value.as.tuple->count; i++) {
-                if (i > 0) printf(", ");
-                value_print(value.as.tuple->elements[i]);
+                if (i > 0) fprintf(f, ", ");
+                value_fprint(f, value.as.tuple->elements[i]);
             }
-            printf(")");
+            fprintf(f, ")");
             break;
         }
-        case VAL_FUNCTION: printf("<fn %p>", (void *)value.as.function); break;
-        case VAL_CLOSURE: printf("<closure %p>", (void *)value.as.closure); break;
-        case VAL_NATIVE_FN: printf("<native fn>"); break;
+        case VAL_FUNCTION: fprintf(f, "<fn %p>", (void *)value.as.function); break;
+        case VAL_CLOSURE: fprintf(f, "<closure %p>", (void *)value.as.closure); break;
+        case VAL_NATIVE_FN: fprintf(f, "<native fn>"); break;
         case VAL_STRUCT: {
             ObjStruct *s = value.as.structure;
-            printf("{");
+            fprintf(f, "{");
             for (int i = 0; i < s->field_count; i++) {
-                if (i > 0) printf(", ");
-                printf("%s: ", s->field_names[i]);
-                value_print(s->fields[i]);
+                if (i > 0) fprintf(f, ", ");
+                fprintf(f, "%s: ", s->field_names[i]);
+                value_fprint(f, s->fields[i]);
             }
-            printf("}");
+            fprintf(f, "}");
             break;
         }
         case VAL_ENUM: {
             ObjEnum *e = value.as.enum_val;
-            printf("#%d", e->tag);
+            fprintf(f, "#%d", e->tag);
             if (e->count > 0) {
-                printf("(");
+                fprintf(f, "(");
                 for (int i = 0; i < e->count; i++) {
-                    if (i > 0) printf(", ");
-                    value_print(e->values[i]);
+                    if (i > 0) fprintf(f, ", ");
+                    value_fprint(f, e->values[i]);
                 }
-                printf(")");
+                fprintf(f, ")");
             }
             break;
         }
         case VAL_MODULE:
-            printf("<module %s>", value.as.module->name);
+            fprintf(f, "<module %s>", value.as.module->name);
             break;
         case VAL_TASK:
-            printf("<task %d>", value.as.task_obj->task->id);
+            fprintf(f, "<task %d>", value.as.task_obj->task->id);
             break;
         case VAL_CHANNEL:
-            printf("<channel %d/%d>", value.as.channel->count, value.as.channel->capacity);
+            fprintf(f, "<channel %d/%d>", value.as.channel->count, value.as.channel->capacity);
             break;
         case VAL_ACTOR:
-            printf("<actor %s>", value.as.actor->type_name);
+            fprintf(f, "<actor %s>", value.as.actor->type_name);
             break;
     }
+}
+
+void value_print(Value value) { value_fprint(stdout, value); }
+
+/* ─── print capture (Lumen dev: forward server `print()` to the browser) ───
+ * A process-global sink, enabled only by `__lumen_log_start()` which the Lumen
+ * live handler calls in dev mode around each handler/render. In production it is
+ * never enabled, so `print` keeps its original zero-overhead path. `vn dev` is a
+ * single-process, cooperatively-scheduled event loop, so a global is safe here
+ * (handlers don't yield mid-execution). */
+static char  *g_log_cap = NULL;
+static size_t g_log_cap_len = 0, g_log_cap_cap = 0;
+static bool   g_log_capturing = false;
+
+static void log_cap_append(const char *s, size_t n) {
+    if (g_log_cap_len + n + 1 > g_log_cap_cap) {
+        size_t nc = g_log_cap_cap ? g_log_cap_cap : 1024;
+        while (nc < g_log_cap_len + n + 1) nc *= 2;
+        char *np = realloc(g_log_cap, nc);
+        if (!np) return;
+        g_log_cap = np; g_log_cap_cap = nc;
+    }
+    memcpy(g_log_cap + g_log_cap_len, s, n);
+    g_log_cap_len += n;
+    g_log_cap[g_log_cap_len] = '\0';
 }
 
 bool value_is_truthy(Value value) {
@@ -2550,6 +2579,26 @@ static Value native_test_recycle_arena(VM *vm, int arg_count, Value *args) {
 
 static Value native_print(VM *vm, int arg_count, Value *args) {
     (void)vm;
+    /* Dev capture path: build the line once into a memory stream, then send it
+     * to BOTH the terminal and the Lumen log buffer (so server logs appear in
+     * the browser devtools without leaving the terminal). */
+    if (g_log_capturing && arg_count > 0) {
+        char *buf = NULL; size_t sz = 0;
+        FILE *ms = open_memstream(&buf, &sz);
+        if (ms) {
+            for (int i = 0; i < arg_count; i++) {
+                value_fprint(ms, args[i]);
+                if (i < arg_count - 1) fputc(' ', ms);
+            }
+            fputc('\n', ms);
+            fclose(ms);
+            fwrite(buf, 1, sz, stdout);
+            fflush(stdout);
+            log_cap_append(buf, sz);
+            free(buf);
+            return val_nil();
+        }
+    }
     for (int i = 0; i < arg_count; i++) {
         value_print(args[i]);
         if (i < arg_count - 1) printf(" ");
@@ -2557,6 +2606,25 @@ static Value native_print(VM *vm, int arg_count, Value *args) {
     if (arg_count > 0) printf("\n");
     fflush(stdout);
     return val_nil();
+}
+
+/* `__lumen_log_start()` — enable print capture and clear the buffer (Lumen dev).
+ * `__lumen_log_drain()` — return captured text since last drain, clearing it. */
+static Value native_lumen_log_start(VM *vm, int arg_count, Value *args) {
+    (void)vm; (void)arg_count; (void)args;
+    g_log_capturing = true;
+    g_log_cap_len = 0;
+    if (g_log_cap) g_log_cap[0] = '\0';
+    return val_nil();
+}
+
+static Value native_lumen_log_drain(VM *vm, int arg_count, Value *args) {
+    (void)vm; (void)arg_count; (void)args;
+    if (g_log_cap_len == 0) return val_string(copy_string("", 0));
+    Value r = val_string(copy_string(g_log_cap, (int)g_log_cap_len));
+    g_log_cap_len = 0;
+    if (g_log_cap) g_log_cap[0] = '\0';
+    return r;
 }
 
 static Value native_throw(VM *vm, int arg_count, Value *args) {
@@ -2971,6 +3039,8 @@ bool vm_run(VM *vm, bool run_tests) {
     define_global(vm, copy_string("json_encode", 11), val_native_fn((void *)native_json_encode));
     define_global(vm, copy_string("json_decode", 11), val_native_fn((void *)native_json_decode));
     define_global(vm, copy_string("_lumen_escape_str", 17), val_native_fn((void *)native_lumen_escape_str));
+    define_global(vm, copy_string("__lumen_log_start", 17), val_native_fn((void *)native_lumen_log_start));
+    define_global(vm, copy_string("__lumen_log_drain", 17), val_native_fn((void *)native_lumen_log_drain));
 
     /* Initialize built-in modules */
     {

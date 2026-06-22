@@ -1,0 +1,50 @@
+// Tests for Lumen test helpers
+
+let _simple = lumen_component(
+    | | { return { count: 0 } },
+    |s| { return lumen_render("<p>\{\{ count \}\}</p>", s) },
+    ["inc"],
+    [ |s, v| { return s.set("count", s.get("count") + 1) } ]
+)
+
+test "lumen_test_render produces HTML" {
+    let html = lumen_test_render(_simple, { count: 5 })
+    assert_ne(html, null)
+    assert_ne(html.index_of("5"), -1)
+}
+
+test "lumen_test_event runs handler and returns new state + html" {
+    let res = lumen_test_event(_simple, { count: 0 }, "inc", null)
+    let st = _validate.get_field(res, "state")
+    let html = _validate.get_field(res, "html")
+    assert_ne(st, null)
+    assert_eq(_validate.get_field(st, "count"), 1)
+    assert_ne(html, null)
+    assert_ne(html.index_of("1"), -1)
+}
+
+test "lumen_test_contains finds substring" {
+    assert_eq(lumen_test_contains("<p>hello</p>", "hello"), true)
+    assert_eq(lumen_test_contains("<p>hello</p>", "world"), false)
+}
+
+test "lumen_test_attr detects attribute" {
+    assert_eq(lumen_test_attr("<div class=\"foo\">", "class"), true)
+    assert_eq(lumen_test_attr("<div class=\"foo\">", "id"), false)
+}
+
+test "lumen_test_count counts occurrences" {
+    assert_eq(lumen_test_count("a b a c a", "a"), 3)
+    assert_eq(lumen_test_count("hello", "x"), 0)
+}
+
+test "lumen_test_render_response returns a response" {
+    let comp = lumen_component(
+        | | { return { name: "test" } },
+        |s| { return lumen_render("<p>\{\{ name \}\}</p>", s) },
+        [], []
+    )
+    let resp = lumen_test_render_response(comp, { name: "test" })
+    assert_eq(_validate.get_field(resp, "status"), 200)
+    assert_eq(_validate.get_field(resp, "content_type"), "text/html")
+}

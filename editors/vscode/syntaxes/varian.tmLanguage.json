@@ -1,0 +1,109 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Varian",
+  "scopeName": "source.varian",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#numbers" },
+    { "include": "#keywords" },
+    { "include": "#constants" },
+    { "include": "#types" },
+    { "include": "#declarations" },
+    { "include": "#functions" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.line.double-slash.varian",
+          "begin": "//",
+          "end": "$"
+        },
+        {
+          "name": "comment.block.varian",
+          "begin": "/\\*",
+          "end": "\\*/"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.varian",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            { "name": "constant.character.escape.varian", "match": "\\\\." },
+            {
+              "name": "meta.template.expression.varian",
+              "begin": "(?<!\\\\)\\{",
+              "end": "\\}",
+              "beginCaptures": { "0": { "name": "punctuation.definition.template-expression.begin.varian" } },
+              "endCaptures": { "0": { "name": "punctuation.definition.template-expression.end.varian" } },
+              "patterns": [ { "include": "$self" } ]
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.varian",
+          "begin": "'",
+          "end": "'",
+          "patterns": [ { "name": "constant.character.escape.varian", "match": "\\\\." } ]
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        { "name": "constant.numeric.float.varian", "match": "\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9]+)?\\b" },
+        { "name": "constant.numeric.hex.varian", "match": "\\b0[xX][0-9a-fA-F_]+\\b" },
+        { "name": "constant.numeric.integer.varian", "match": "\\b[0-9][0-9_]*\\b" }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        { "name": "keyword.control.varian", "match": "\\b(return|if|else|while|for|in|loop|match|case|break|continue|try|catch|async|await)\\b" },
+        { "name": "keyword.declaration.varian", "match": "\\b(let|const|fn|struct|enum|actor|impl|trait|type|use|pub|mut|test|comptime)\\b" },
+        { "name": "keyword.operator.word.varian", "match": "\\b(and|or|not|as|assert)\\b" }
+      ]
+    },
+    "constants": {
+      "name": "constant.language.varian",
+      "match": "\\b(true|false|null)\\b"
+    },
+    "types": {
+      "patterns": [
+        { "name": "support.type.primitive.varian", "match": "\\b(bool|int|float|string|byte|void)\\b" },
+        { "name": "entity.name.type.varian", "match": "\\b[A-Z][A-Za-z0-9_]*\\b" }
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([a-zA-Z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.varian" },
+            "2": { "name": "entity.name.function.varian" }
+          }
+        },
+        {
+          "match": "\\b(struct|enum|actor|trait|impl|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.varian" },
+            "2": { "name": "entity.name.type.varian" }
+          }
+        }
+      ]
+    },
+    "functions": {
+      "name": "meta.function-call.varian",
+      "match": "\\b([a-zA-Z_][A-Za-z0-9_]*)\\s*(?=\\()",
+      "captures": { "1": { "name": "entity.name.function.call.varian" } }
+    },
+    "operators": {
+      "name": "keyword.operator.varian",
+      "match": "(\\+|\\-|\\*|/|%|==|!=|<=|>=|<|>|=|&&|\\|\\||!|\\.\\.|->|<-|\\|)"
+    }
+  }
+}

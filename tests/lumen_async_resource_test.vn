@@ -1,0 +1,30 @@
+// Tests for lumen_async_resource — off-thread fetch with live re-render
+// These tests verify the synchronous path (the eager first run) and the
+// background-spawn path (refetch then yield so the spawned task runs).
+
+test "async resource resolves data synchronously" {
+    let r = lumen_async_resource(| | { return 42 })
+    assert_eq((r.state)().loading, false)
+    assert_eq((r.state)().data, 42)
+    assert_eq((r.state)().error, null)
+}
+
+test "async resource captures fetch error" {
+    let r = lumen_async_resource(| | { throw("boom") })
+    assert_eq((r.state)().data, null)
+    assert_eq((r.state)().error.contains("boom"), true)
+}
+
+test "async resource refetch spawns background task" {
+    let calls = []
+    let r = lumen_async_resource(| | {
+        calls = calls.push(1)
+        return calls.len()
+    })
+    assert_eq((r.state)().data, 1)
+    // refetch spawns a bg task; yield twice so it runs
+    let _ = (r.refetch)()
+    task.yield()
+    task.yield()
+    assert_eq((r.state)().data, 2)
+}

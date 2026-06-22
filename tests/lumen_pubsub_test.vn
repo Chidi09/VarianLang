@@ -1,0 +1,47 @@
+// Tests for lumen_publish / lumen_subscribe / lumen_broadcast_store
+// Cross-connection pub-sub works via shared module-level globals; these tests
+// verify the single-connection case (same task, same module scope).
+
+test "publish and subscribe reads latest value" {
+    let _ = lumen_publish("t1", "color", "red")
+    let sub = lumen_subscribe("t1")
+    assert_eq((sub.get)("color"), "red")
+    let _ = lumen_publish("t1", "color", "blue")
+    assert_eq((sub.get)("color"), "blue")
+}
+
+test "subscribe returns null for unknown topic or key" {
+    let sub = lumen_subscribe("nonexistent")
+    assert_eq((sub.get)("x"), null)
+}
+
+test "broadcast store publishes on creation" {
+    let store = lumen_broadcast_store("b1", http.create_struct(["msg"], ["hello"]))
+    let sub = lumen_subscribe("b1")
+    assert_eq((sub.get)("msg"), "hello")
+}
+
+test "broadcast store publishes on every set" {
+    let store = lumen_broadcast_store("b2", http.create_struct(["msg"], ["hello"]))
+    let sub = lumen_subscribe("b2")
+    let _ = (store.set)("msg", "world")
+    assert_eq((sub.get)("msg"), "world")
+    let _ = (store.set)("msg", "again")
+    assert_eq((sub.get)("msg"), "again")
+}
+
+test "broadcast store get/set works like normal store" {
+    let s = lumen_broadcast_store("b3", http.create_struct(["count"], [0]))
+    assert_eq((s.get)("count"), 0)
+    let _ = (s.set)("count", 7)
+    assert_eq((s.get)("count"), 7)
+    assert_eq((s.all)().count, 7)
+}
+
+test "multiple keys on one topic" {
+    let _ = lumen_publish("multi", "a", 1)
+    let _ = lumen_publish("multi", "b", 2)
+    let sub = lumen_subscribe("multi")
+    assert_eq((sub.get)("a"), 1)
+    assert_eq((sub.get)("b"), 2)
+}

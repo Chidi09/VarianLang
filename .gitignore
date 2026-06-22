@@ -30,3 +30,20 @@ test_array_assignment.vn
 
 # Secrets / local env
 .env
+
+# Scratch files from interactive sessions
+*.mp4
+*ChatGPT Image*.png
+*removebg-preview*
+*ChatGPT*Image*
+docs/*.png
+aurora/
+patch.c
+test.c
+test.vn
+test_vnb.vn
+test_pkg/
+app
+app.c
+favicons*.zip
+website/debug_source.vn

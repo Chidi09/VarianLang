@@ -1,8 +1,16 @@
 {
     "name": "varian",
     "displayName": "Varian Language Support",
-    "description": "Language support and LSP for Varian",
+    "description": "Syntax highlighting, LSP (diagnostics, hover, completion, go-to-definition, formatting) for Varian, Zenith, and Lumen.",
     "version": "0.1.0",
+    "publisher": "varianlang",
+    "license": "MIT",
+    "icon": "icon.png",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/Chidi09/VarianLang.git",
+        "directory": "editors/vscode"
+    },
     "engines": {
         "vscode": "^1.75.0"
     },
@@ -11,8 +19,15 @@
         "Linters",
         "Formatters"
     ],
+    "keywords": [
+        "varian",
+        "zenith",
+        "lumen",
+        "aurora"
+    ],
     "activationEvents": [
-        "onLanguage:varian"
+        "onLanguage:varian",
+        "onLanguage:lumen"
     ],
     "main": "./extension.js",
     "contributes": {
@@ -25,9 +40,40 @@
                 ],
                 "extensions": [
                     ".vn",
-                    ".vhtml",
+                    ".vhtml"
+                ],
+                "icon": {
+                    "light": "./icons/varian-light.svg",
+                    "dark": "./icons/varian-dark.svg"
+                },
+                "configuration": "./language-configuration.json"
+            },
+            {
+                "id": "lumen",
+                "aliases": [
+                    "Lumen",
+                    "lumen"
+                ],
+                "extensions": [
                     ".lumen"
-                ]
+                ],
+                "icon": {
+                    "light": "./icons/lumen-light.svg",
+                    "dark": "./icons/lumen-dark.svg"
+                },
+                "configuration": "./language-configuration.json"
+            }
+        ],
+        "grammars": [
+            {
+                "language": "varian",
+                "scopeName": "source.varian",
+                "path": "./syntaxes/varian.tmLanguage.json"
+            },
+            {
+                "language": "lumen",
+                "scopeName": "source.varian",
+                "path": "./syntaxes/varian.tmLanguage.json"
             }
         ],
         "configuration": {

@@ -1,0 +1,137 @@
+// Lumen vocabulary Part-B style props + Part-A section components.
+// Tests run against the built-in vocabulary registered at prelude load.
+
+fn _render(tpl) {
+    _lumen_active_child_states = {}
+    return lumen_render(tpl, {})
+}
+
+test "Stack pad gap props emit correct CSS" {
+    let html = _render("<Stack pad=\"6\" gap=\"4\">hello</Stack>")
+    assert_ne(html.index_of("padding:1.5rem"), -1)
+    assert_ne(html.index_of("gap:1rem"), -1)
+}
+
+test "Stack shadow flag emits box-shadow" {
+    let html = _render("<Stack shadow=\"true\">hi</Stack>")
+    assert_ne(html.index_of("box-shadow:var(--lumen-shadow)"), -1)
+}
+
+test "Stack border flag emits border" {
+    let html = _render("<Stack border=\"true\">hi</Stack>")
+    assert_ne(html.index_of("border:1px solid var(--lumen-border)"), -1)
+}
+
+test "Stack padx pady radius" {
+    let html = _render("<Stack padx=\"4\" pady=\"6\" radius=\"lg\">hi</Stack>")
+    assert_ne(html.index_of("padding-inline:1rem"), -1)
+    assert_ne(html.index_of("padding-block:1.5rem"), -1)
+    assert_ne(html.index_of("border-radius:16px"), -1)
+}
+
+test "Row justify align gap" {
+    let html = _render("<Row justify=\"between\" align=\"center\" gap=\"4\">a b</Row>")
+    assert_ne(html.index_of("justify-content:space-between"), -1)
+    assert_ne(html.index_of("align-items:center"), -1)
+    assert_ne(html.index_of("gap:1rem"), -1)
+}
+
+test "Alert tone=danger carries data-tone and danger style" {
+    let html = _render("<Alert tone=\"danger\">oh no</Alert>")
+    assert_ne(html.index_of("data-tone=\"danger\""), -1)
+    assert_ne(html.index_of("var(--lumen-danger-bg)"), -1)
+}
+
+test "Hero renders eyebrow title subtitle and slot" {
+    let html = _render("<Hero title=\"Welcome\" eyebrow=\"Hello\" subtitle=\"Sub\">actions</Hero>")
+    assert_ne(html.index_of("Welcome"), -1)
+    assert_ne(html.index_of("Hello"), -1)
+    assert_ne(html.index_of("Sub"), -1)
+    assert_ne(html.index_of("actions"), -1)
+}
+
+test "Field label hint error rendered (safe text)" {
+    let html = _render("<Field label=\"Name\" hint=\"enter name\" error=\"bad\"></Field>")
+    assert_ne(html.index_of("Name"), -1)
+    assert_ne(html.index_of("enter name"), -1)
+    assert_ne(html.index_of("bad"), -1)
+}
+
+test "Stat value and label render" {
+    let html = _render("<Stat value=\"42\" label=\"users\"></Stat>")
+    assert_ne(html.index_of("42"), -1)
+    assert_ne(html.index_of("users"), -1)
+}
+
+test "Tag tone attributes" {
+    let html = _render("<Tag tone=\"success\">live</Tag>")
+    assert_ne(html.index_of("data-tone=\"success\""), -1)
+}
+
+test "Avatar with src renders img tag" {
+    let html = _render("<Avatar src=\"/pic.jpg\" alt=\"me\"></Avatar>")
+    assert_ne(html.index_of("<img"), -1)
+    assert_ne(html.index_of("src=\"/pic.jpg\""), -1)
+    assert_ne(html.index_of("alt=\"me\""), -1)
+}
+
+test "Skeleton width height radius" {
+    let html = _render("<Skeleton w=\"200px\" h=\"20px\" radius=\"full\"></Skeleton>")
+    assert_ne(html.index_of("width:200px"), -1)
+    assert_ne(html.index_of("height:20px"), -1)
+    assert_ne(html.index_of("border-radius:999px"), -1)
+}
+
+test "Nav and Footer render correctly" {
+    let html = _render("<Nav brand=\"Site\">link</Nav>")
+    assert_ne(html.index_of("Site"), -1)
+    assert_ne(html.index_of("link"), -1)
+    let html2 = _render("<Footer>(c) 2024</Footer>")
+    assert_ne(html2.index_of("(c) 2024"), -1)
+}
+
+test "Empty renders icon and title" {
+    let html = _render("<Empty icon=\"box\" title=\"No items\">try again</Empty>")
+    assert_ne(html.index_of("No items"), -1)
+    assert_ne(html.index_of("try again"), -1)
+    assert_ne(html.index_of("<svg"), -1)
+}
+
+test "Split ratio and gap" {
+    let html = _render("<Split ratio=\"2fr 1fr\" gap=\"4\"><div>A</div><div>B</div></Split>")
+    assert_ne(html.index_of("--lumen-split-ratio:2fr 1fr"), -1)
+    assert_ne(html.index_of("--lumen-split-gap:1rem"), -1)
+    assert_ne(html.index_of("A"), -1)
+    assert_ne(html.index_of("B"), -1)
+}
+
+test "Card accepts shared style props" {
+    let html = _render("<Card pad=\"8\" bg=\"surface-2\">content</Card>")
+    assert_ne(html.index_of("padding:2rem"), -1)
+    assert_ne(html.index_of("background:var(--lumen-surface-2)"), -1)
+    assert_ne(html.index_of("content"), -1)
+}
+
+test "Card shadow flag emits box-shadow" {
+    let html = _render("<Card shadow=\"true\">content</Card>")
+    assert_ne(html.index_of("box-shadow:var(--lumen-shadow)"), -1)
+}
+
+test "Page emits lumen-ui stylesheet exactly once" {
+    let html = _render("<Page><Stack gap=\"4\">hello</Stack></Page>")
+    let id_str = "id=\"lumen-ui\""
+    let count = 0
+    let pos = 0
+    while true {
+        let found = html.index_of(id_str, pos)
+        if found < 0 { break }
+        count = count + 1
+        pos = found + 1
+    }
+    assert_eq(count, 1)
+}
+
+test "Button href is preserved" {
+    let html = _render("<Button href=\"/shop\">Shop</Button>")
+    assert_ne(html.index_of("href=\"/shop\""), -1)
+}

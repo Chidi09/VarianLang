@@ -1,0 +1,154 @@
+// LumenJS modular client runtime tests.
+// Tests verify the Varian-side infrastructure: module catalog, directive scanning,
+// manifest assembly, and core JS content.
+
+fn _arr_has(arr, val) {
+    if arr == null { return false }
+    for i in 0..arr.len() {
+        if arr[i] == val { return true }
+    }
+    return false
+}
+
+test "lumen_module returns JS for known modules" {
+    let clip = _lumen_module("clipboard")
+    assert_ne(clip.index_of("data-lumen-copy"), -1)
+    assert_ne(clip.index_of("clipboard"), -1)
+
+    let foc = _lumen_module("focus")
+    assert_ne(foc.index_of("data-lumen-focus"), -1)
+
+    let scr = _lumen_module("scroll")
+    assert_ne(scr.index_of("data-lumen-scroll"), -1)
+
+    let toast = _lumen_module("toast")
+    assert_ne(toast.index_of("__lumen_toast"), -1)
+
+    let key = _lumen_module("key")
+    assert_ne(key.index_of("data-lumen-key"), -1)
+}
+
+test "lumen_module returns empty for unknown" {
+    assert_eq(_lumen_module("nope"), "")
+}
+
+test "lumen_scan_directives detects known attributes" {
+    let mods = _lumen_scan_directives("<div data-lumen-copy=\"text\">copy</div>")
+    assert_ne(mods, null)
+    assert_eq(mods.len(), 1)
+    assert_eq(mods[0], "clipboard")
+
+    let mods2 = _lumen_scan_directives("<div data-lumen-focus></div><div data-lumen-toast></div>")
+    assert_eq(mods2.len(), 2)
+    assert_eq(_arr_has(mods2, "focus"), true)
+    assert_eq(_arr_has(mods2, "toast"), true)
+}
+
+test "lumen_scan_directives returns empty for plain template" {
+    let mods = _lumen_scan_directives("<p>hello</p>")
+    assert_eq(mods.len(), 0)
+    // The function returns [] not null for no matches
+    assert_ne(mods, null)
+}
+
+test "lumen_scan_directives detects key and scroll attributes" {
+    let mods = _lumen_scan_directives("<input data-lumen-key=\"Enter:search\">")
+    assert_eq(_arr_has(mods, "key"), true)
+
+    let mods2 = _lumen_scan_directives("<div data-lumen-scroll=\"into-view\">x</div>")
+    assert_eq(_arr_has(mods2, "scroll"), true)
+}
+
+test "lumen_client_js_with_manifest appends module JS" {
+    let js = _lumen_client_js_with_manifest(["clipboard", "focus"])
+    assert_ne(js, null)
+    assert_ne(js.index_of("data-lumen-root"), -1)
+    assert_ne(js.index_of("reconcile"), -1)
+    assert_ne(js.index_of("data-lumen-copy"), -1)
+    assert_ne(js.index_of("data-lumen-focus"), -1)
+}
+
+test "lumen_client_js_with_manifest with empty manifest is just core" {
+    let js = _lumen_client_js_with_manifest([])
+    assert_ne(js.index_of("data-lumen-root"), -1)
+    assert_eq(js.index_of("data-lumen-copy"), -1)
+}
+
+test "core has exponential backoff" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("bf=250"), -1)
+    assert_ne(core.index_of("bf=Math.min"), -1)
+}
+
+test "core has event queue" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("eq=[]"), -1)
+    assert_ne(core.index_of("eq.push"), -1)
+    assert_ne(core.index_of("eq.length"), -1)
+}
+
+test "core has pending state" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("data-lumen-pending"), -1)
+    assert_ne(core.index_of("lumen-pending"), -1)
+    assert_ne(core.index_of("classList.remove"), -1)
+    assert_ne(core.index_of("classList.add"), -1)
+}
+
+test "core has event modifiers" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("data-lumen-mod"), -1)
+    assert_ne(core.index_of("'prevent'"), -1)
+    assert_ne(core.index_of("'stop'"), -1)
+    assert_ne(core.index_of("'once'"), -1)
+    assert_ne(core.index_of("'debounce'"), -1)
+    assert_ne(core.index_of("'throttle'"), -1)
+    assert_ne(core.index_of("'confirm'"), -1)
+}
+
+test "core exposes __lumen_ws for modules" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("__lumen_ws"), -1)
+}
+
+test "core has morph with selection/scroll preservation" {
+    let core = _lumen_client_core()
+    assert_ne(core.index_of("selectionStart"), -1)
+    assert_ne(core.index_of("selectionEnd"), -1)
+    assert_ne(core.index_of("scrollLeft"), -1)
+    assert_ne(core.index_of("scrollTop"), -1)
+}
+
+test "_lumen_shell with manifest includes module JS" {
+    let shell = _lumen_shell("<div>x</div>", "/live", ["clipboard"])
+    assert_ne(shell.index_of("data-lumen-copy"), -1)
+    assert_ne(shell.index_of("__LUMEN_WS__"), -1)
+    assert_ne(shell.index_of("function showErr"), -1)
+}
+
+test "_lumen_shell without manifest (null) still works" {
+    let shell = _lumen_shell("<div>x</div>", "/live", null)
+    assert_ne(shell.index_of("__LUMEN_WS__"), -1)
+    assert_ne(shell.index_of("function showErr"), -1)
+    assert_eq(shell.index_of("data-lumen-copy"), -1)
+}
+
+// Regression: the scan→shell wiring the mount path uses (was passing null, so
+// modules never shipped on a real page). A page whose HTML uses a directive
+// must actually ship that module; a plain page must stay core-only.
+test "scanned manifest from real HTML ships the used module" {
+    let inner = "<div data-lumen-copy=\"hi\">copy</div>"
+    let manifest = _lumen_scan_directives(inner)
+    let shell = _lumen_shell(inner, "/live", manifest)
+    assert_ne(shell.index_of("clipboard"), -1)
+    assert_ne(shell.index_of("navigator.clipboard"), -1)
+}
+
+test "scanned manifest for plain HTML stays core-only" {
+    let inner = "<div>just text</div>"
+    let manifest = _lumen_scan_directives(inner)
+    assert_eq(manifest.len(), 0)
+    let shell = _lumen_shell(inner, "/live", manifest)
+    assert_eq(shell.index_of("navigator.clipboard"), -1)
+    assert_ne(shell.index_of("__LUMEN_WS__"), -1)
+}

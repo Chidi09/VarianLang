@@ -1,0 +1,17 @@
+<template>
+<Page>
+  <MyCustomWidget>not a real component</MyCustomWidget>
+</Page>
+</template>
+
+<style>
+.page {
+  color: var(--lumen-fg);
+}
+</style>
+
+<script>
+fn state() {
+  return {}
+}
+</script>

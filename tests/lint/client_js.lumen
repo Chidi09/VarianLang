@@ -1,0 +1,22 @@
+<template>
+<Page>
+  <Button>Click me</Button>
+</Page>
+</template>
+
+<style>
+.btn {
+  color: var(--lumen-fg);
+}
+</style>
+
+<client>
+document.querySelector(".btn").classList.toggle("active");
+fetch("/api/data");
+</client>
+
+<script>
+fn state() {
+  return {}
+}
+</script>

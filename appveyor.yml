@@ -75,6 +75,6 @@ deploy:
     artifact: varian-linux-x64, varian-linux-x64-sha256
     draft: false
     prerelease: false
-    force_update: true
+    force_update:     true
     on:
       APPVEYOR_REPO_TAG: true

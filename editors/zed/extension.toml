@@ -1,0 +1,19 @@
+id = "varian"
+name = "Varian"
+description = "Varian language support for Zed — syntax highlighting and LSP (Zenith, Lumen, Aurora)."
+version = "0.1.0"
+schema_version = 1
+authors = ["VarianLang"]
+repository = "https://github.com/Chidi09/VarianLang"
+
+[language_servers.varian]
+name = "Varian Language Server"
+languages = ["Varian"]
+
+# Tree-sitter grammar for syntax highlighting. Zed fetches and compiles this from
+# its own git repository at the pinned revision. The grammar source lives under
+# editors/tree-sitter-varian/ in this repo; publish it as its own repo (or point
+# `repository` at this monorepo path mirror) before shipping the Zed extension.
+[grammars.varian]
+repository = "https://github.com/Chidi09/tree-sitter-varian"
+rev = "0000000000000000000000000000000000000000"

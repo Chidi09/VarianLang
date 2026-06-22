@@ -22,7 +22,10 @@ function activate(context) {
     };
 
     const clientOptions = {
-        documentSelector: [{ scheme: 'file', language: 'varian' }]
+        documentSelector: [
+            { scheme: 'file', language: 'varian' },
+            { scheme: 'file', language: 'lumen' }
+        ]
     };
 
     client = new LanguageClient(

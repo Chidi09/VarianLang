@@ -479,37 +479,75 @@ fn _lumen_escape_string(s) {
     return _lumen_escape_str(s)
 }
 
+// True if `ch` (a single character) is an identifier character. Returns a real
+// bool (an explicit if/return): `>=` yields an int 0/1 in Varian, and `0 ==
+// false` is false, so callers that compare `== false` need a genuine boolean.
+fn _lumen_is_ident_char(ch) {
+    let alphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+    if alphabet.index_of(ch) >= 0 { return true }
+    return false
+}
+
+// True if `name` is a plain identifier (non-empty, ident chars only). Guards the
+// extractor against treating a stray `fn ` followed by junk as a handler.
+fn _lumen_is_simple_ident(name) {
+    if name.len() == 0 { return false }
+    for k in 0..name.len() {
+        if _lumen_is_ident_char(name.substring(k, k + 1)) == false { return false }
+    }
+    return true
+}
+
 fn _lumen_extract_fns(script) {
+    // Collect top-level `fn name(...)` handler names from a component <script>.
+    // The hard part is NOT line position (handlers can sit on one line with no
+    // newlines, e.g. `}fn b(`) but distinguishing a real `fn` from one that
+    // appears inside a string literal — code samples stored in an examples map
+    // would otherwise register phantom handlers and crash the page. So we scan
+    // structurally: a `fn ` only counts when we are NOT inside a string ("..."
+    // or '...', escapes honored) and NOT inside a // or /* */ comment, and it
+    // sits at a word boundary. `state` is the reserved init fn, never a handler.
     let names = []
-    let i = 0
     let n = script.len()
+    let i = 0
     while i < n {
-        let fn_pos = script.index_of("fn ", i)
-        if fn_pos < 0 { break }
-        // Only a `fn` that STARTS a line is a real top-level handler definition.
-        // This skips `fn` that occurs inside a string literal — e.g. code samples
-        // in an examples map ('...\n    fn greet(self)...') whose backslash-n is
-        // literal text on one physical line, not a newline — which would otherwise
-        // be mis-registered as undefined event handlers and crash the component.
-        let at_line_start = (fn_pos == 0)
-        let j = fn_pos - 1
-        while j >= 0 {
-            let c = script.substring(j, j + 1)
-            if c == " " or c == "\t" { j = j - 1 } else { break }
-        }
-        if j < 0 { at_line_start = true }
-        else if script.substring(j, j + 1) == "\n" { at_line_start = true }
-        if at_line_start {
-            let name_start = fn_pos + 3
-            let open_paren = script.index_of("(", name_start)
-            if open_paren > name_start {
-                let name = _sanitize.trim(script.substring(name_start, open_paren))
-                if name != "state" and name != "" {
-                    names = names.push(name)
+        let c = script.substring(i, i + 1)
+        if c == "/" and i + 1 < n and script.substring(i + 1, i + 2) == "/" {
+            let nl = script.index_of("\n", i)
+            if nl < 0 { break }
+            i = nl + 1
+        } else if c == "/" and i + 1 < n and script.substring(i + 1, i + 2) == "*" {
+            let close = script.index_of("*/", i + 2)
+            if close < 0 { break }
+            i = close + 2
+        } else if c == "\"" or c == "'" {
+            let quote = c
+            i = i + 1
+            while i < n {
+                let d = script.substring(i, i + 1)
+                if d == "\\" { i = i + 2 }
+                else if d == quote { i = i + 1; break }
+                else { i = i + 1 }
+            }
+        } else if c == "f" and i + 3 <= n and script.substring(i, i + 3) == "fn " {
+            let boundary = (i == 0)
+            if i > 0 {
+                if _lumen_is_ident_char(script.substring(i - 1, i)) == false { boundary = true }
+            }
+            if boundary {
+                let name_start = i + 3
+                let open_paren = script.index_of("(", name_start)
+                if open_paren > name_start {
+                    let name = _sanitize.trim(script.substring(name_start, open_paren))
+                    if name != "state" and _lumen_is_simple_ident(name) {
+                        names = names.push(name)
+                    }
                 }
             }
+            i = i + 3
+        } else {
+            i = i + 1
         }
-        i = fn_pos + 3
     }
     return names
 }
@@ -1645,16 +1683,36 @@ fn _lumen_error_msg(e) {
     return detail
 }
 
+// Dev only: drain server-side print() output captured during a handler/render
+// and push it to the browser devtools over the live socket as a {t:"log"} frame
+// (one entry per line). This is the "view server logs in the browser" feature —
+// print() still writes to the terminal too. No-op unless `vn dev` set LUMEN_DEV.
+fn _lumen_emit_logs(ws) {
+    let out = __lumen_log_drain()
+    if out == "" { return }
+    let raw = out.split("\n")
+    let lines = []
+    for i in 0..raw.len() {
+        if raw[i] != "" { lines = lines.push(raw[i]) }
+    }
+    if lines.len() > 0 {
+        ws.write(json_encode({ t: "log", lines: lines }))
+    }
+}
+
 // Per-connection event loop.
 // ws.read() is NON-BLOCKING (returns "" on EAGAIN, null on close).
 // The loop yields via task.yield() when no message is available so the
 // cooperative scheduler can service other connections.
 fn _lumen_live_loop(ws, component, provider, req) {
+    let _dev = env.get("LUMEN_DEV")
+    let _devon = _dev != null and _dev != ""
     // Initial state comes from the data provider when one is given (see
     // lumen_mount_data) so the live socket re-renders with the same DB/request
     // data the page was first rendered with — otherwise the first event would
     // re-init from the component's own (dataless) state_fn() and the data would
     // vanish. provider is null for plain lumen_mount / lumen_mount_dynamic.
+    if _devon { __lumen_log_start() }
     let state = null
     if provider != null {
         state = (provider)(req)
@@ -1666,10 +1724,12 @@ fn _lumen_live_loop(ws, component, provider, req) {
     _lumen_active_child_states = {}
     let _initial = (component.render_fn)(state)
     let child_states = _lumen_active_child_states
+    if _devon { _lumen_emit_logs(ws) }
     let prev = null
     let alive = true
     while alive {
         let msg = ws.read()
+        if msg != null and msg != "" { print("[WSDEBUG]", msg) }
         if msg == null {
             alive = false
         } else if msg != "" {
@@ -1691,6 +1751,7 @@ fn _lumen_live_loop(ws, component, provider, req) {
                         if comp != null {
                             let handler = _lumen_handler(comp, child_hname)
                             if handler != null {
+                                if _devon { __lumen_log_start() }
                                 try {
                                     let new_child_state = handler(child_state, value)
                                     new_child_state = _tpl_bind(new_child_state, "_comp", comp_name)
@@ -1700,8 +1761,10 @@ fn _lumen_live_loop(ws, component, provider, req) {
 
                                     let html = (component.render_fn)(state)
                                     child_states = _lumen_active_child_states
+                                    if _devon { _lumen_emit_logs(ws) }
                                     prev = _lumen_send_update(ws, prev, html)
                                 } catch e {
+                                    if _devon { _lumen_emit_logs(ws) }
                                     ws.write(json_encode({ t: "error", msg: _lumen_error_msg(e) }))
                                 }
                             }
@@ -1710,12 +1773,15 @@ fn _lumen_live_loop(ws, component, provider, req) {
                 } else {
                     let handler = _lumen_handler(component, hname)
                     if handler != null {
+                        if _devon { __lumen_log_start() }
                         try {
                             state = handler(state, value)
                             let html = (component.render_fn)(state)
                             child_states = _lumen_active_child_states
+                            if _devon { _lumen_emit_logs(ws) }
                             prev = _lumen_send_update(ws, prev, html)
                         } catch e {
+                            if _devon { _lumen_emit_logs(ws) }
                             ws.write(json_encode({ t: "error", msg: _lumen_error_msg(e) }))
                         }
                     }
@@ -2331,6 +2397,7 @@ fn _lumen_shell(inner, ws_path, manifest) {
     let body_end = inner.index_of("</body>")
     let head_end = inner.index_of("</head>")
     let meta_tags = _lumen_meta_tags()
+    let _dev_inject = _lumen_dev_inject(manifest)
 
     if body_start == -1 or body_end == -1 {
         // Fragment — wrap in full document.
@@ -2339,7 +2406,7 @@ fn _lumen_shell(inner, ws_path, manifest) {
         let client_js = _lumen_client_js_with_manifest(manifest)
         return "<!DOCTYPE html><html lang=\"en\"><head>" + head_html + "</head><body>" +
                "<div data-lumen-root>" + inner + "</div>" +
-               "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + client_js + "</script>" +
+               "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + client_js + _dev_inject + "</script>" +
                "</body></html>"
     }
 
@@ -2363,7 +2430,7 @@ fn _lumen_shell(inner, ws_path, manifest) {
     return head_prefix + meta_tags + _lumen_head() + "</head>" +
            body_before +
            "<div data-lumen-root>" + body_content + "</div>" +
-           "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + client_js + "</script>" +
+           "<script>window.__LUMEN_WS__=\"" + ws_path + "\";" + client_js + _dev_inject + "</script>" +
            body_after
 }
 
@@ -2423,7 +2490,7 @@ fn _lumen_scan_directives(tpl) {
 
 // Core runtime — always included.
 fn _lumen_client_core() {
-    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,eq=[],bf=250;function cn()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}bf=250;r.classList.remove('lumen-pending');var pe=r.querySelector('[data-lumen-pending]');if(pe)pe.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(cn,bf);bf=Math.min(bf*2,5e3)\};w.onopen=function()\{bf=250;for(var i=0;i<eq.length;i++)\{if(w.readyState===1)w.send(eq[i])\}eq=[]\}\}var EV=['click','input','change','submit','keydown','keyup','blur','focus'];EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;var mod=el.getAttribute('data-lumen-mod');if(mod)\{var ms=mod.split(' ');for(var mi=0;mi<ms.length;mi++)\{var kv=ms[mi].split(':'),k=kv[0],v=kv[1];if(k==='prevent'&&e.preventDefault)e.preventDefault();if(k==='stop'&&e.stopPropagation)e.stopPropagation();if(k==='once'&&el.getAttribute('data-lumen-once'))return;if(k==='once')el.setAttribute('data-lumen-once','1');if(k==='confirm'&&!confirm(v||'Are you sure?'))return;if(k==='debounce'||k==='throttle')\{var t=parseInt(v||300),n=Date.now(),l=el.getAttribute('data-lumen-'+k);if(k==='debounce')\{if(el._lumen_d)clearTimeout(el._lumen_d);el._lumen_d=setTimeout(function()\{el.removeAttribute('data-lumen-debounce')\},t);if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-debounce',n)\}else\{if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-throttle',n)\}\}if(k==='key')\{var c=e.key||e.code;if(c!==(v||'Enter'))return\}\}\}if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;var msg=JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\});if(w&&w.readyState===1)w.send(msg);else eq.push(msg);el.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\},true)\});function morph(a,h)\{var f=document.activeElement,sa,ss,se,sx,sy;if(f&&(f===a||a.contains(f)))\{ss=f.selectionStart;se=f.selectionEnd;sx=f.scrollLeft;sy=f.scrollTop\}var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=ss;f.selectionEnd=se\}catch(e)\{\}f.scrollLeft=sx;f.scrollTop=sy\}\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}cn()\})();"
+    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,eq=[],bf=250,co=0;function cn()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='log')\{if(window.__lumen_onlog)window.__lumen_onlog(m.lines);return\}if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}bf=250;r.classList.remove('lumen-pending');var pe=r.querySelector('[data-lumen-pending]');if(pe)pe.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(cn,bf);bf=Math.min(bf*2,5e3)\};w.onopen=function()\{if(window.__LUMEN_DEV__&&co)\{try\{sessionStorage.setItem('__lumen_hot','1')\}catch(e)\{\}location.reload();return\}co=1;bf=250;for(var i=0;i<eq.length;i++)\{if(w.readyState===1)w.send(eq[i])\}eq=[]\}\}var EV=['click','input','change','submit','keydown','keyup','blur','focus'];EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;var mod=el.getAttribute('data-lumen-mod');if(mod)\{var ms=mod.split(' ');for(var mi=0;mi<ms.length;mi++)\{var kv=ms[mi].split(':'),k=kv[0],v=kv[1];if(k==='prevent'&&e.preventDefault)e.preventDefault();if(k==='stop'&&e.stopPropagation)e.stopPropagation();if(k==='once'&&el.getAttribute('data-lumen-once'))return;if(k==='once')el.setAttribute('data-lumen-once','1');if(k==='confirm'&&!confirm(v||'Are you sure?'))return;if(k==='debounce'||k==='throttle')\{var t=parseInt(v||300),n=Date.now(),l=el.getAttribute('data-lumen-'+k);if(k==='debounce')\{if(el._lumen_d)clearTimeout(el._lumen_d);el._lumen_d=setTimeout(function()\{el.removeAttribute('data-lumen-debounce')\},t);if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-debounce',n)\}else\{if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-throttle',n)\}\}if(k==='key')\{var c=e.key||e.code;if(c!==(v||'Enter'))return\}\}\}if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;var msg=JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\});if(w&&w.readyState===1)w.send(msg);else eq.push(msg);el.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\},true)\});function morph(a,h)\{var f=document.activeElement,sa,ss,se,sx,sy;if(f&&(f===a||a.contains(f)))\{ss=f.selectionStart;se=f.selectionEnd;sx=f.scrollLeft;sy=f.scrollTop\}var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=ss;f.selectionEnd=se\}catch(e)\{\}f.scrollLeft=sx;f.scrollTop=sy\}\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}cn()\})();"
 }
 
 // Build the complete client JS for a page given its required module names.
@@ -2442,4 +2509,33 @@ fn _lumen_client_js_with_manifest(manifest) {
 // Convenience wrapper — returns core only (backward-compatible).
 fn _lumen_client_js() {
     return _lumen_client_core()
+}
+
+// ─── Browser devtools overlay (Next.js-style) ───
+// Injected by _lumen_shell ONLY when LUMEN_DEV is set (the `vn dev` server
+// sets it). Reads window.__LUMEN_DEV__ {mode,modules,ver}. mode 'aurora'
+// => fullstack badge, anything else => Lumen frontend badge. Self-contained:
+// observes the live root for renders/latency/errors, polls the WS for status.
+fn _lumen_devtools() {
+    return "(function()\{var cfg=window.__LUMEN_DEV__||\{\};var isA=cfg.mode==='aurora';var brand=isA?'Aurora':'Lumen';var ACC=isA?'#4FACFE':'#f5b829';var start=Date.now();var st=\{renders:0,patches:0,errors:0,trips:0,lat:0,latAvg:0,t0:0,open:false,lastConn:'',log:[],filter:'all',actq:[]\};var KCOL=\{net:ACC,patch:ACC,error:'#ff5f56',nav:'#a78bfa',ws:'#4dd4ac',server:'#22d3ee',info:'#71717a'\};var GROUP=\{all:null,net:['net','patch'],server:['ws','info','server','nav'],error:['error']\};var favEl=document.querySelector('link[rel=\"icon\"],link[rel=\"shortcut icon\"],link[rel*=\"icon\"]');var fav=(favEl&&favEl.href)?favEl.href:'/favicon-32x32.png';var favimg='<img src=\"'+fav+'\" alt=\"\" style=\"width:20px;height:20px;border-radius:5px;display:block;flex:none\">';function esc(s)\{return(''+s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');\}function now()\{return new Date().toTimeString().slice(0,8);\}function fmt(v)\{if(v==null)return'';var s=typeof v==='string'?v:JSON.stringify(v);if(s.length>40)s=s.slice(0,38)+'…';return s;\}function logit(kind,msg)\{st.log.unshift(\{ts:now(),kind:kind,msg:msg\});if(st.log.length>80)st.log.pop();if(st.open)renderLog();updatePill();\}function conState()\{var w=window.__lumen_ws;if(!w)return'connecting';if(w.readyState===1)return'live';if(w.readyState===0)return'connecting';return'offline';\}function conColor()\{var s=conState();return s==='live'?'#4dd4ac':s==='connecting'?ACC:'#ff5f56';\}var box=document.createElement('div');box.id='__lumen_dev';box.style.cssText='position:fixed;left:16px;bottom:16px;z-index:2147483000;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:1.5;color:#fafafa';var panel=document.createElement('div');panel.style.cssText='display:none;flex-direction:column;width:380px;max-height:74vh;margin-bottom:12px;background:#09090b;border:1px solid #232327;border-radius:14px;box-shadow:0 28px 80px rgba(0,0,0,.65);overflow:hidden';var pill=document.createElement('button');pill.type='button';pill.title=brand+' devtools';pill.style.cssText='position:relative;width:38px;height:38px;padding:0;background:none;border:none;cursor:pointer;filter:drop-shadow(0 6px 18px rgba(0,0,0,.55));transition:transform .15s';pill.onmouseenter=function()\{pill.style.transform='scale(1.08)';\};pill.onmouseleave=function()\{pill.style.transform='scale(1)';\};box.appendChild(panel);box.appendChild(pill);(document.body||document.documentElement).appendChild(box);function updatePill()\{var c=conColor();var eb=st.errors>0?'<span style=\"position:absolute;top:-5px;right:-5px;background:#ff5f56;color:#fff;border-radius:999px;min-width:16px;height:16px;padding:0 4px;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px #000\">'+st.errors+'</span>':'';pill.innerHTML='<img src=\"'+fav+'\" alt=\"'+brand+'\" style=\"width:38px;height:38px;border-radius:10px;display:block\">'+'<span style=\"position:absolute;bottom:-2px;right:-2px;width:11px;height:11px;border-radius:50%;background:'+c+';box-shadow:0 0 8px '+c+',0 0 0 2px #000\"></span>'+eb;\}function statCell(label,val,col)\{return '<div style=\"background:#131316;border:1px solid #232327;border-radius:10px;padding:9px 11px\"><div style=\"color:#71717a;font-size:10px;text-transform:uppercase;letter-spacing:.5px\">'+label+'</div><div style=\"color:'+(col||'#fafafa')+';font-size:18px;font-weight:700;margin-top:2px\">'+val+'</div></div>';\}function chip(id,label)\{var on=st.filter===id;return '<span data-f=\"'+id+'\" style=\"cursor:pointer;padding:2px 9px;border-radius:999px;font-size:10px;border:1px solid '+(on?ACC:'#232327')+';color:'+(on?'#09090b':'#a1a1aa')+';background:'+(on?ACC:'transparent')+'\">'+label+'</span>';\}function renderLog()\{var el=document.getElementById('__ld_log');if(!el)return;var grp=GROUP[st.filter];var rows=st.log.filter(function(e)\{return!grp||grp.indexOf(e.kind)>=0;\});if(rows.length===0)\{el.innerHTML='<div style=\"color:#52525b;padding:14px;text-align:center\">No events.</div>';return;\}var h='';for(var i=0;i<rows.length;i++)\{var e=rows[i];var col=KCOL[e.kind]||'#71717a';h+='<div style=\"display:flex;gap:9px;padding:6px 12px;border-bottom:1px solid #18181b;align-items:baseline\">'+'<span style=\"color:#52525b;font-size:10px;flex:none;width:54px\">'+e.ts+'</span>'+'<span style=\"color:'+col+';font-size:10px;font-weight:700;text-transform:uppercase;flex:none;width:46px\">'+e.kind+'</span>'+'<span style=\"color:#d4d4d8;word-break:break-word\">'+esc(e.msg)+'</span></div>';\}el.innerHTML=h;\}function renderPanel()\{var cs=conState();var cc=conColor();var up=Math.floor((Date.now()-start)/1000);var ups=up<60?up+'s':Math.floor(up/60)+'m '+(up%60)+'s';var mods=(cfg.modules&&cfg.modules.length)?cfg.modules.join(', '):'core only';var head='<div style=\"display:flex;align-items:center;gap:9px;padding:13px 14px;border-bottom:1px solid #232327;background:linear-gradient(90deg,'+(isA?'rgba(79,172,254,.10)':'rgba(245,184,41,.10)')+',transparent)\">'+favimg+'<span style=\"font-weight:800;letter-spacing:.4px\">'+brand+'</span>'+'<span style=\"color:#71717a;font-size:11px\">'+(isA?'fullstack devtools':'frontend devtools')+'</span>'+'<span id=\"__ld_x\" title=\"Esc\" style=\"margin-left:auto;cursor:pointer;color:#71717a;padding:0 6px;font-size:14px\">✕</span></div>';var status='<div style=\"display:flex;align-items:center;gap:10px;padding:12px 14px;border-bottom:1px solid #18181b\">'+'<span style=\"width:10px;height:10px;border-radius:50%;background:'+cc+';box-shadow:0 0 10px '+cc+'\"></span>'+'<span style=\"font-weight:700;letter-spacing:.5px;color:'+cc+'\">'+cs.toUpperCase()+'</span>'+'<span style=\"color:#52525b;font-size:11px\">'+esc(location.pathname)+'</span>'+'<span style=\"margin-left:auto;color:#52525b;font-size:11px\">'+(isA?'uptime '+ups:'v'+(cfg.ver||'dev'))+'</span></div>';var grid='<div style=\"display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;padding:12px 14px\">'+statCell('Renders',st.renders)+statCell('Actions',st.trips,ACC)+statCell('Errors',st.errors,st.errors?'#ff5f56':'#fafafa')+statCell('Avg',st.latAvg?st.latAvg+'ms':'—')+statCell('Patches',st.patches)+statCell('Modules',(cfg.modules&&cfg.modules.length)||0)+'</div>';var loghd='<div style=\"display:flex;align-items:center;gap:6px;padding:7px 14px;border-top:1px solid #232327;border-bottom:1px solid #232327;background:#0d0d0f\">'+chip('all','All')+chip('net','Network')+chip('server','Server')+chip('error','Errors')+'<span style=\"margin-left:auto;color:#52525b;font-size:10px\">'+mods+'</span></div>';var logbox='<div id=\"__ld_log\" style=\"overflow-y:auto;flex:1;min-height:90px\"></div>';var foot='<div style=\"display:flex;align-items:center;gap:8px;padding:10px 14px;border-top:1px solid #232327\">'+'<a href=\"/\" style=\"color:'+ACC+';text-decoration:none;font-size:11px\">Home</a>'+'<span id=\"__ld_clr\" style=\"cursor:pointer;color:#a1a1aa;font-size:11px\">Clear</span>'+'<span style=\"margin-left:auto;color:#52525b;font-size:10px\">window.__lumen · Esc to close</span></div>';panel.innerHTML=head+status+grid+loghd+logbox+foot;renderLog();var x=document.getElementById('__ld_x');if(x)x.onclick=function(ev)\{ev.stopPropagation();toggle(false);\};var clr=document.getElementById('__ld_clr');if(clr)clr.onclick=function(ev)\{ev.stopPropagation();st.log=[];st.errors=0;logit('info','log cleared');renderPanel();\};var fs=panel.querySelectorAll('[data-f]');for(var i=0;i<fs.length;i++)\{fs[i].onclick=function(ev)\{ev.stopPropagation();st.filter=this.getAttribute('data-f');renderPanel();\};\}\}function toggle(v)\{st.open=(v===undefined)?!st.open:v;panel.style.display=st.open?'flex':'none';if(st.open)renderPanel();\}pill.onclick=function()\{toggle();\};document.addEventListener('keydown',function(e)\{if(e.key==='Escape'&&st.open)toggle(false);\});var _send=WebSocket.prototype.send;WebSocket.prototype.send=function(data)\{try\{var m=JSON.parse(data);if(m&&m.t==='event')\{st.actq.push(\{h:m.h,t0:Date.now()\});logit('net','→ '+m.h+'('+fmt(m.v)+')');\}\}catch(_e)\{\}return _send.apply(this,arguments);\};var root=document.querySelector('[data-lumen-root]');if(root)\{new MutationObserver(function(m)\{for(var i=0;i<m.length;i++)\{if(m[i].attributeName==='class')\{var pend=root.classList.contains('lumen-pending');if(pend&&!st.t0)\{st.t0=Date.now();\}else if(!pend&&st.t0)\{st.lat=Date.now()-st.t0;st.t0=0;st.trips++;st.patches++;st.latAvg=Math.round((st.latAvg*(st.trips-1)+st.lat)/st.trips);var a=st.actq.shift();var nm=a?a.h:'action';logit('net','✓ '+nm+' · server '+st.lat+'ms');\}\}\}\}).observe(root,\{attributes:true,attributeFilter:['class']\});var rt;new MutationObserver(function()\{clearTimeout(rt);rt=setTimeout(function()\{st.renders++;if(st.open)renderPanel();\},50);\}).observe(root,\{childList:true,subtree:true,characterData:true\});\}new MutationObserver(function()\{var o=document.getElementById('__lumen_err');if(o&&!o.__ld)\{o.__ld=1;st.errors++;var pre=o.querySelector('pre');logit('error',pre?pre.textContent.split(String.fromCharCode(10))[0]:'runtime error');\}\}).observe(document.body||document.documentElement,\{childList:true\});window.addEventListener('popstate',function()\{logit('nav','navigated → '+location.pathname);\});function poll()\{var s=conState();if(s!==st.lastConn)\{st.lastConn=s;logit('ws','socket '+s);\}updatePill();if(st.open)renderPanel();\}window.__lumen=\{send:function(h,v)\{var w=window.__lumen_ws;if(w&&w.readyState===1)\{w.send(JSON.stringify(\{t:'event',h:h,v:v===undefined?null:v\}));return true;\}return false;\},reload:function()\{location.reload();\},open:function()\{toggle(true);\},clear:function()\{st.log=[];st.errors=0;if(st.open)renderPanel();\},stats:function()\{return\{renders:st.renders,actions:st.trips,patches:st.patches,errors:st.errors,avgMs:st.latAvg\};\},log:st.log\};window.__lumen_onlog=function(lines)\{if(!lines)return;for(var i=0;i<lines.length;i++)logit('server',lines[i]);\};updatePill();logit('info','devtools ready · '+brand+' '+(isA?'fullstack':'frontend'));logit('info','console API: window.__lumen.send(handler,value)');try\{if(sessionStorage.getItem('__lumen_hot'))\{sessionStorage.removeItem('__lumen_hot');logit('info','⚡ hot reload applied');\}\}catch(_e)\{\}setInterval(poll,1000);\})();"
+}
+
+// Build the dev-overlay injection: empty in production, the devtools script
+// when LUMEN_DEV is set (the `vn dev` server sets it; default "aurora", user
+// can `LUMEN_DEV=lumen vn dev` for the Lumen-only badge).
+fn _lumen_dev_inject(manifest) {
+    let dev = env.get("LUMEN_DEV")
+    if dev == null { return "" }
+    if dev == "" { return "" }
+    let ver = env.get("VN_VERSION")
+    if ver == null { ver = "dev" }
+    let modjs = "["
+    if manifest != null {
+        for i in 0..manifest.len() {
+            if i > 0 { modjs = modjs + "," }
+            modjs = modjs + "\"" + manifest[i] + "\""
+        }
+    }
+    modjs = modjs + "]"
+    return ";window.__LUMEN_DEV__=\{mode:\"" + dev + "\",modules:" + modjs + ",ver:\"" + ver + "\"\};" + _lumen_devtools()
 }

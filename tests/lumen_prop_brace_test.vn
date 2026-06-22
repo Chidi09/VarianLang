@@ -1,0 +1,11 @@
+test "single-brace prop binds like double-brace" {
+    lumen_register_component("PBChild", lumen_component(
+        | | { return {} },
+        |s| { return "<b>" + _ui_prop(s, "label", "none") + "</b>" },
+        [], []
+    ))
+    let tpl = "<PBChild label=" + "\{ who \}" + " />"
+    let html = lumen_render(tpl, http.create_struct(["who"], ["Varian"]))
+    assert_eq(html.contains("Varian"), true)
+    assert_eq(html.contains("none"), false)
+}

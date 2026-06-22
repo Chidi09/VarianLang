@@ -1,0 +1,17 @@
+<template>
+<Page>
+  <Text style="color: var(--lmn-primary)">Bad token</Text>
+</Page>
+</template>
+
+<style>
+.bad {
+  background: var(--lmn-surface);
+}
+</style>
+
+<script>
+fn state() {
+  return {}
+}
+</script>

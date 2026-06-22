@@ -1,0 +1,11 @@
+test "resource resolves data synchronously" {
+    let r = lumen_resource(| | { return 42 })
+    assert_eq((r.state)().loading, false)
+    assert_eq((r.state)().data, 42)
+    assert_eq((r.state)().error, null)
+}
+test "resource captures fetch error" {
+    let r = lumen_resource(| | { throw("boom") })
+    assert_eq((r.state)().data, null)
+    assert_eq((r.state)().error.contains("boom"), true)
+}

@@ -1,0 +1,21 @@
+// tests/string_substring_test.vn
+// Regression: substring must support both the 1-arg (start -> end of string)
+// and 2-arg (start, end) forms. The 1-arg form regressed to returning nil,
+// which crashed _lumen_shell ("Cannot dispatch method on this type").
+
+let s = "hello world"
+
+test "substring(start) returns from start to end" {
+    assert_eq(s.substring(6), "world")
+    assert_eq(s.substring(0), "hello world")
+}
+
+test "substring(start, end) returns the slice" {
+    assert_eq(s.substring(0, 5), "hello")
+    assert_eq(s.substring(6, 11), "world")
+}
+
+test "substring clamps out-of-range bounds" {
+    assert_eq(s.substring(6, 999), "world")
+    assert_eq(s.substring(99), "")
+}

@@ -1,0 +1,23 @@
+<template>
+<Page>
+  <Container size="sm">
+    <Stack gap="4">
+      <Heading>Hello</Heading>
+      <Text>World</Text>
+    </Stack>
+  </Container>
+</Page>
+</template>
+
+<style>
+.page {
+  background: var(--lumen-surface);
+  color: var(--lumen-fg);
+}
+</style>
+
+<script>
+fn state() {
+  return { name: "world" }
+}
+</script>

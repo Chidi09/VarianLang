@@ -1,0 +1,9 @@
+test "form validates good and bad input" {
+    let schema = http.create_struct(["name"], [validate.str().min(3)])
+    let f = lumen_form(schema)
+    let good = (f.validate)(http.create_struct(["name"], ["Ada"]))
+    assert_eq(good.ok, true)
+    let bad = (f.validate)(http.create_struct(["name"], ["x"]))
+    assert_eq(bad.ok, false)
+    assert_eq(_validate.get_field(bad.errors, "name") != null, true)
+}

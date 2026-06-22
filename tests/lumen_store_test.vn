@@ -1,0 +1,14 @@
+test "store get/set shares one value" {
+    let s = lumen_store(http.create_struct(["count"], [0]))
+    assert_eq((s.get)("count"), 0)
+    let _ = (s.set)("count", 5)
+    assert_eq((s.get)("count"), 5)
+}
+test "two readers see the same store" {
+    let s = lumen_store(http.create_struct(["n"], [1]))
+    let r1 = s.get
+    let r2 = s.get
+    let _ = (s.set)("n", 9)
+    assert_eq(r1("n"), 9)
+    assert_eq(r2("n"), 9)
+}
