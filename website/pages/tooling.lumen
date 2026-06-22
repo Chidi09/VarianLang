@@ -5,6 +5,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Tooling — VarianLang Docs</title>
+  <meta name="description" content="Tooling — VarianLang Docs — VarianLang documentation">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "name": "Tooling — VarianLang Docs",
+    "description": "Tooling — VarianLang Docs — VarianLang documentation",
+    "programmingLanguage": "Varian",
+    "author": { "@type": "Organization", "name": "VarianLang" }
+  }
+  </script>
   <link rel="stylesheet" href="/global.css">
   <style>
     /* Doc-specific layout */
@@ -135,7 +146,7 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<h1>Tooling — the <code>vn</code> CLI</h1>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Tooling — the <code>vn</code> CLI</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <pre><code>vn                  Start interactive REPL
 vn run &lt;file&gt;        Execute a Varian script
 vn &lt;file&gt;            Same as `vn run &lt;file&gt;` (back-compat shorthand)

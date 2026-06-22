@@ -576,7 +576,7 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
           <!-- Zenith -->
           <div style="border-top:1px solid var(--border-subtle);padding-top:var(--space-10);">
             <div style="display:flex;align-items:center;gap:var(--space-4);margin-bottom:var(--space-6);">
-              <img src="/assets/zenith-logo.png" alt="" style="width:48px;height:48px;border-radius:10px;">
+              <span style="display:inline-flex;align-items:center;justify-content:center;width:48px;height:48px;border-radius:10px;background:#000;border:1px solid var(--border-subtle);"><img src="/assets/zenith-logo.png" alt="" style="width:36px;height:36px;"></span>
               <h3 style="font-size:var(--text-4xl);font-weight:800;letter-spacing:-0.03em;">Zenith</h3>
             </div>
 

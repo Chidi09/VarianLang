@@ -5,6 +5,17 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>The Varian Book — VarianLang Docs</title>
+  <meta name="description" content="The Varian Book — VarianLang Docs — VarianLang documentation">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "TechArticle",
+    "name": "The Varian Book — VarianLang Docs",
+    "description": "The Varian Book — VarianLang Docs — VarianLang documentation",
+    "programmingLanguage": "Varian",
+    "author": { "@type": "Organization", "name": "VarianLang" }
+  }
+  </script>
   <link rel="stylesheet" href="/global.css">
   <style>
     /* Doc-specific layout */
@@ -135,7 +146,7 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<h1>The Varian Programming Language Book</h1>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">The Varian Programming Language Book</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <p>This book is a comprehensive, chapter-by-chapter guide to the <strong>Varian Programming Language</strong>, a modern, fast, agentic programming language designed to bridge native performance with universal foreign function interoperability, cooperative actor-based concurrency, and high-productivity web programming.</p>
 <hr />
 <h2>Table of Contents</h2>
