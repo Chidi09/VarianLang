@@ -101,7 +101,7 @@
 <body class="theme-lumen-light">
   <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
     <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="28" height="28">
+      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
       Varian
     </a>
     <div class="nav-links">

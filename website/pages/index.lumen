@@ -31,6 +31,10 @@
       font-size: var(--text-sm);
       line-height: 1.7;
       overflow-x: auto;
+      color: #e4e4e7;
+    }
+    .editor-body pre {
+      color: #e4e4e7;
     }
     .editor-run-bar {
       border-top: 1px solid var(--border-subtle);
@@ -68,6 +72,7 @@
       border: 1px solid var(--border-subtle);
       cursor: pointer;
       transition: all var(--transition-fast);
+      color: var(--text-primary);
     }
     .example-tab:hover, .example-tab.active {
       background: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -196,7 +201,7 @@
   <div class="container">
     <nav class="navbar">
       <a href="/" class="nav-brand">
-        <img src="/assets/varian-logo.png" alt="Varian" width="28" height="28">
+        <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
         <span>Varian</span>
       </a>
       <div class="nav-links">
@@ -239,7 +244,7 @@
           <span class="code-block-dot red"></span>
           <span class="code-block-dot yellow"></span>
           <span class="code-block-dot green"></span>
-          <span style="margin-left: 8px; color: var(--text-muted); font-size: 12px;">main.vn</span>
+          <span style="margin-left: 8px; color: var(--text-secondary); font-size: 12px;">main.vn</span>
         </div>
         <div class="editor-body">
           <pre contenteditable="true" spellcheck="false" id="code-editor" style="margin:0;white-space:pre;outline:none;">{{ code }}</pre>
