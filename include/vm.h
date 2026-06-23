@@ -344,6 +344,20 @@ typedef struct Shape {
     uint32_t *name_hashes; /* owned: precomputed FNV-1a hash per field */
     int field_count;
     char *type_name;       /* owned: moved here from ObjStruct (one copy per type) */
+
+    /* Stage 2: method dispatch PIC — small direct-mapped cache of
+     * (method_name_hash → resolved function Value).  vm_find_dispatch
+     * does an open-addressing probe over 512 entries; this tiny cache
+     * (O(1) hash-and-mod) covers the hot methods called in tight loops. */
+#define SHAPE_METHOD_CACHE_SIZE 8
+    uint32_t method_cache_keys[SHAPE_METHOD_CACHE_SIZE];  /* name_hash or 0 */
+    Value    method_cache_vals[SHAPE_METHOD_CACHE_SIZE];  /* resolved func */
+
+    /* Stage 2: field-index PIC — small direct-mapped cache of
+     * (field_name_hash → field_index) for O(1) property access. */
+#define SHAPE_FIELD_CACHE_SIZE 16
+    uint32_t field_cache_keys[SHAPE_FIELD_CACHE_SIZE];    /* name_hash or 0 */
+    int16_t  field_cache_vals[SHAPE_FIELD_CACHE_SIZE];    /* field index or -1 */
 } Shape;
 
 /* ─── Shape Registry (per-VM, stores every Shape ever created) ─── */
@@ -378,6 +392,8 @@ ObjStruct *new_struct(struct VM *vm, int field_count, bool force_heap);
 Shape *shape_get_or_create(struct VM *vm, const char *type_name,
                            const char * const *field_names, int field_count);
 int    shape_index_of(const Shape *s, const char *name, uint32_t hash);
+Value *shape_resolve_method(struct VM *vm, Shape *s, const char *method_name,
+                            uint32_t name_hash);
 
 /* Attach a shape built from a scratch name array to a native-allocated struct.
  * After this call s->field_names and s->type_name are valid aliases into the

@@ -434,6 +434,12 @@ Shape *shape_get_or_create(VM *vm, const char *type_name,
         }
     }
 
+    /* Initialise method cache and field cache to empty */
+    memset(shape->method_cache_keys, 0, sizeof(shape->method_cache_keys));
+    memset(shape->method_cache_vals, 0, sizeof(shape->method_cache_vals));
+    for (int i = 0; i < SHAPE_FIELD_CACHE_SIZE; i++)
+        shape->field_cache_vals[i] = -1;
+
     if (reg->count < SHAPE_REGISTRY_SIZE) {
         reg->shapes[reg->count++] = shape;
     } else {
@@ -443,11 +449,50 @@ Shape *shape_get_or_create(VM *vm, const char *type_name,
     return shape;
 }
 
-int shape_index_of(const Shape *s, const char *name, uint32_t hash) {
-    for (int i = 0; i < s->field_count; i++) {
-        if (s->name_hashes[i] == hash && strcmp(s->field_names[i], name) == 0)
-            return i;
+/* Stage 2: method dispatch PIC. Check the shape's direct-mapped cache first;
+ * on miss, call vm_find_dispatch and cache the result.  Returns NULL when the
+ * method is not found (caller falls back to field-scan or universal "struct"
+ * namespace).  name_hash is precomputed at the call site. */
+Value *shape_resolve_method(VM *vm, Shape *s, const char *method_name,
+                            uint32_t name_hash) {
+    int slot = name_hash & (SHAPE_METHOD_CACHE_SIZE - 1);
+    if (s->method_cache_keys[slot] == name_hash) {
+        Value *cached = &s->method_cache_vals[slot];
+        if (cached->type != VAL_NIL) return cached;
+        return NULL;  /* cached miss */
     }
+    /* Slow path */
+    Value *resolved = vm_find_dispatch(vm, s->type_name, method_name);
+    s->method_cache_keys[slot] = name_hash;
+    if (resolved) {
+        s->method_cache_vals[slot] = *resolved;
+    } else {
+        s->method_cache_vals[slot] = val_nil();  /* cache the miss */
+    }
+    return resolved;
+}
+
+int shape_index_of(const Shape *s, const char *name, uint32_t hash) {
+    /* Stage 2: direct-mapped field cache */
+    const int slot = hash & (SHAPE_FIELD_CACHE_SIZE - 1);
+    if (s->field_cache_keys[slot] == hash) {
+        return s->field_cache_vals[slot];  /* cached index or -1 */
+    }
+    for (int i = 0; i < s->field_count; i++) {
+        if (s->name_hashes[i] == hash && strcmp(s->field_names[i], name) == 0) {
+            /* Shape is const from the caller's perspective in this
+             * header, but the cache is logically mutable — we cast
+             * away const since the shape is never shared across
+             * threads (single-threaded scheduler). */
+            Shape *ms = (Shape *)s;
+            ms->field_cache_keys[slot] = hash;
+            ms->field_cache_vals[slot] = (int16_t)i;
+            return i;
+        }
+    }
+    Shape *ms = (Shape *)s;
+    ms->field_cache_keys[slot] = hash;
+    ms->field_cache_vals[slot] = -1;
     return -1;
 }
 
@@ -4647,18 +4692,30 @@ L_BC_LOOP_TOP:
 
                 /* ─── Normal dispatch for structs, modules, strings, arrays ─── */
                 const char *type_name = NULL;
+                Value *func_val = NULL;
                 if (obj.type == VAL_STRUCT) {
-                    type_name = obj.as.structure->shape ? obj.as.structure->shape->type_name : NULL;
+                    ObjStruct *s = obj.as.structure;
+                    type_name = s->shape ? s->shape->type_name : NULL;
+                    /* Stage 2: method dispatch PIC — shape_resolve_method caches
+                     * resolved functions on the Shape for O(1) hit. */
+                    if (s->shape && s->shape->type_name) {
+                        uint32_t mh = hash_string(method_name->chars, method_name->length);
+                        func_val = shape_resolve_method(vm, s->shape, method_name->chars, mh);
+                    } else {
+                        func_val = vm_find_dispatch(vm, type_name, method_name->chars);
+                    }
                 } else if (obj.type == VAL_MODULE) {
                     type_name = obj.as.module->name;
+                    func_val = vm_find_dispatch(vm, type_name, method_name->chars);
                 } else if (obj.type == VAL_STRING) {
                     type_name = "string";
+                    func_val = vm_find_dispatch(vm, type_name, method_name->chars);
                 } else if (obj.type == VAL_ARRAY) {
                     type_name = "array";
+                    func_val = vm_find_dispatch(vm, type_name, method_name->chars);
                 } else {
                     RAISE("Cannot dispatch method on this type");
                 }
-                Value *func_val = vm_find_dispatch(vm, type_name, method_name->chars);
 
                 /* Fallback: a VAL_STRUCT with no registered dispatch entry
                  * but a same-named field holding a function/closure is a
