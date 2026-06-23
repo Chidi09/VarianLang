@@ -1,0 +1,105 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - target: linux-x64
+            os: ubuntu-latest
+            archive: varian-linux-x64.tar.gz
+          - target: macos-x64
+            os: macos-latest
+            archive: varian-macos-x64.tar.gz
+          - target: windows-x64
+            os: windows-latest
+            archive: varian-windows-x64.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ccache build-essential libffi-dev libcurl4-openssl-dev libpq-dev libssl-dev libsqlite3-dev libhiredis-dev liburing-dev
+
+      - name: Install dependencies (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_UPGRADE=1
+          brew install ccache libffi openssl hiredis libpq
+
+      - name: Set up ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build
+        run: make -j$(nproc) release
+
+      - name: Package (Linux/macOS)
+        if: runner.os != 'Windows'
+        run: |
+          PKG=varian-${{ matrix.target }}
+          rm -rf dist && mkdir -p dist/$PKG
+          cp vn libvarian.a dist/$PKG/
+          cp -r include vn_modules dist/$PKG/
+          cp README.md LICENSE dist/$PKG/ 2>/dev/null || true
+          tar -czf ${{ matrix.archive }} -C dist $PKG
+          sha256sum ${{ matrix.archive }} | tee ${{ matrix.archive }}.sha256
+
+      - name: Package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $PKG = "varian-windows-x64"
+          Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path "dist/$PKG" | Out-Null
+          Copy-Item vn.exe "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item libvarian.a "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse include "dist/$PKG/include" -ErrorAction SilentlyContinue
+          Copy-Item -Recurse vn_modules "dist/$PKG/vn_modules"
+          Copy-Item README.md "dist/$PKG/" -ErrorAction SilentlyContinue
+          Copy-Item LICENSE "dist/$PKG/" -ErrorAction SilentlyContinue
+          Push-Location dist
+          & 7z a -tzip "..\varian-windows-x64.zip" $PKG
+          Pop-Location
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.target }}
+          path: |
+            varian-${{ matrix.target }}.*
+
+  publish:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - run: ls -la dist/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
