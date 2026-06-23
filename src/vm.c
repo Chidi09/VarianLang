@@ -417,6 +417,27 @@ ObjString *allocate_string(VM *vm, const char *chars, int length) {
     return s;
 }
 
+/* Return a permanent, GC-rooted ObjString for one of the common HTTP method
+ * names, allocating it once per VM on first use. Falls back to a normal
+ * allocate_string() for anything not in the small fixed set (rare verbs).
+ * The returned strings are marked every GC via gc_mark_roots(), so they are
+ * never swept and can be shared across every request on this VM. */
+ObjString *intern_http_method(VM *vm, const char *method) {
+    static const char *NAMES[8] = {
+        "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "TRACE"
+    };
+    for (int i = 0; i < 8; i++) {
+        if (strcmp(method, NAMES[i]) == 0) {
+            if (!vm->method_interns[i]) {
+                vm->method_interns[i] =
+                    allocate_string(vm, NAMES[i], (int)strlen(NAMES[i]));
+            }
+            return vm->method_interns[i];
+        }
+    }
+    return allocate_string(vm, method, (int)strlen(method));
+}
+
 ObjArray *new_array(void) {
     ObjArray *a = (ObjArray *)calloc(1, sizeof(ObjArray));
     if (!a) return NULL;
@@ -845,6 +866,12 @@ static void gc_mark_roots(VM *vm) {
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
         if (vm->dispatch_occupied[i])
             gc_mark_value(vm, vm->dispatch_functions[i]);
+    }
+
+    /* Keep the interned HTTP method strings permanently alive. */
+    for (int i = 0; i < 8; i++) {
+        if (vm->method_interns[i])
+            gc_mark_value(vm, val_string(vm->method_interns[i]));
     }
 }
 
@@ -2415,6 +2442,7 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->intern_table = NULL;
     vm->intern_capacity = 0;
     vm->intern_count = 0;
+    memset(vm->method_interns, 0, sizeof(vm->method_interns));
     memset(vm->globals, 0, sizeof(vm->globals));
     vm->ffi_entries = NULL;
     vm->ffi_entry_count = 0;

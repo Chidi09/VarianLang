@@ -566,6 +566,11 @@ typedef struct VM {
     ObjString **intern_table;
     int intern_capacity;
     int intern_count;
+    /* Permanent intern cache for the common HTTP method strings, kept alive
+     * as GC roots so the hot request path reuses one ObjString per method
+     * instead of allocate_string()-ing "GET"/"POST"/... every request.
+     * Per-VM (cluster runs one VM per worker thread), lazily populated. */
+    ObjString *method_interns[8];
     size_t next_gc_threshold;
     /* FFI registry */
     VMFFIEntry *ffi_entries;
@@ -656,6 +661,7 @@ typedef Value (*NativeFn)(VM *vm, int arg_count, Value *args);
 
 /* Allocation / task management (requires VM to be fully defined) */
 ObjString *allocate_string(VM *vm, const char *chars, int length);
+ObjString *intern_http_method(VM *vm, const char *method);
 Task *task_new(VM *vm);
 void vm_register_task(VM *vm, Task *t);
 

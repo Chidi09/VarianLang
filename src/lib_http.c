@@ -364,7 +364,7 @@ static Value make_request(VM *vm, const char *method, const char *path,
     ObjStruct *req = new_struct(vm, REQ_FIELD_COUNT, false);
     set_static_field_names(req, REQ_FIELD_NAMES, REQ_FIELD_COUNT, vm);
 
-    req->fields[0] = val_string(allocate_string(vm, method, (int)strlen(method)));
+    req->fields[0] = val_string(intern_http_method(vm, method));
     req->fields[1] = val_string(allocate_string(vm, path, (int)strlen(path)));
     req->fields[2] = (body_val.type == VAL_STRING && body_val.as.string->length > 0) ? body_val : val_nil();
     req->fields[3] = json_val;
@@ -1117,6 +1117,15 @@ typedef struct {
 } PendingConnPool;
 
 static double now_seconds(void) {
+#if defined(CLOCK_MONOTONIC_COARSE)
+    /* Coarse monotonic clock is read from the vDSO (no syscall) and is far
+     * cheaper than gettimeofday on the per-connection idle-timeout path.
+     * We only need ~ms granularity for keep-alive timeouts. */
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC_COARSE, &ts) == 0) {
+        return (double)ts.tv_sec + (double)ts.tv_nsec / 1000000000.0;
+    }
+#endif
     struct timeval tv;
     gettimeofday(&tv, NULL);
     return (double)tv.tv_sec + (double)tv.tv_usec / 1000000.0;
@@ -1539,7 +1548,10 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
         if (tls_ctx) SSL_CTX_free(tls_ctx);
         return false;
     }
-    if (listen(fd, 128) < 0) {
+    /* Large backlog (matches nginx default): under wrk/bombardier load the
+     * io_uring multi-accept path lets the kernel queue many pending conns;
+     * a small backlog drops connections at saturation. */
+    if (listen(fd, 4096) < 0) {
         runtime_error(vm, "%s(): listen() failed", fn_name);
         close(fd);
         if (tls_ctx) SSL_CTX_free(tls_ctx);
