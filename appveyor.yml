@@ -173,6 +173,20 @@ for:
           Copy-Item "$hiredis_dir\*.h" "$deps\hiredis\include\"
           Write-Host "hiredis done."
 
+          # ── libffi ──
+          Write-Host "Building libffi..."
+          curl.exe -sL https://github.com/libffi/libffi/releases/download/v3.4.4/libffi-3.4.4.tar.gz -o "$deps\libffi.tar.gz"
+          md "$deps\libffi_tmp" -Force | Out-Null
+          tar -xzf "$deps\libffi.tar.gz" -C "$deps\libffi_tmp"
+          $libffi_dir = (Get-ChildItem "$deps\libffi_tmp" -Directory | Select-Object -First 1).FullName
+          Push-Location $libffi_dir
+          # mingw configure — build only the static lib, skip docs/tests
+          .\configure --host=x86_64-w64-mingw32 --disable-shared --enable-static --prefix="$deps\libffi" 2>&1 | Out-Null
+          mingw32-make -j$env:NUMBER_OF_PROCESSORS 2>&1 | Out-Null
+          mingw32-make install 2>&1 | Out-Null
+          Pop-Location
+          Write-Host "libffi done."
+
           # ── libpq (PostgreSQL client) ──
           Write-Host "Setting up libpq..."
           curl.exe -sL https://get.enterprisedb.com/postgresql/postgresql-16.2-1-windows-x64-binaries.zip -o "$deps\pg.zip"

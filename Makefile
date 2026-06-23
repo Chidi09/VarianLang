@@ -27,7 +27,7 @@ else
     USE_POSTGRES?= 1
     USE_SQLITE  ?= 1
     USE_REDIS   ?= 1
-    USE_FFI     ?= 0
+    USE_FFI     ?= 1
 endif
 
 CFLAGS = -Wall -Wextra -std=gnu11 -g -Iinclude -D_POSIX_C_SOURCE=200809L
@@ -60,8 +60,12 @@ ifeq ($(PLATFORM),Windows)
         LDFLAGS += -L$(DEPS_DIR)
     endif
     ifeq ($(USE_POSTGRES),1)
-        CFLAGS += -I$(DEPS_DIR)/pg/include
+        CFLAGS  += -I$(DEPS_DIR)/pg/include
         LDFLAGS += -L$(DEPS_DIR)/pg/lib
+    endif
+    ifeq ($(USE_FFI),1)
+        CFLAGS  += -I$(DEPS_DIR)/libffi/include
+        LDFLAGS += -L$(DEPS_DIR)/libffi/lib
     endif
 endif
 
