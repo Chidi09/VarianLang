@@ -186,10 +186,8 @@ for:
           Copy-Item "$pg_root\include\*.h" "$deps\pg\include\"
           Copy-Item $pg_dll.FullName "$deps\pg\lib\" -Force
           Copy-Item $pg_dll.FullName "$deps\" -Force
-          Push-Location $pg_bin
-          gendef libpq.dll 2>$null
-          dlltool -d libpq.def -l "$deps\pg\lib\libpq.a" -k 2>$null
-          Pop-Location
+          # Create mingw-compatible import library directly from the DLL
+          dlltool -l "$deps\pg\lib\libpq.a" -k "$pg_bin\libpq.dll" *>&1 | Out-Null
           Write-Host "libpq done."
 
           Write-Host "All dependencies installed to $deps"
