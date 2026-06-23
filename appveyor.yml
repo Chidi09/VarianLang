@@ -61,33 +61,30 @@ for:
           tar -czf $PKG.tar.gz -C dist $PKG
           sha256sum $PKG.tar.gz | tee $PKG.tar.gz.sha256
 
-          # Upload to GitHub Release (create if not exists)
+          # Upload to GitHub Release (must already exist — create via scripts/release.sh)
           TAG="$APPVEYOR_REPO_TAG_NAME"
           if [ -z "$TAG" ]; then echo "No tag — skipping upload"; exit 0; fi
 
-          REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
-          if echo "$REL" | python3 -c "import sys,json; d=json.load(sys.stdin); exit(0 if d.get('message')=='Not Found' else 1)" 2>/dev/null; then
-            REL=$(curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Content-Type: application/json" \
-              -d "{\"tag_name\":\"$TAG\",\"name\":\"$TAG\",\"body\":\"Varian v${TAG#v} — compiled, concurrent, batteries-included language.\\n\\nDownloads:\\n- varian-linux-x64.tar.gz — Linux binary + toolchain\\n- varian-macos-x64.tar.gz — macOS binary + toolchain\\n- varian-windows-x64.zip — Windows binary + toolchain\\n\\nSee README.md and docs/ for full reference.\"}" \
-              "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases")
-          fi
-          REL_ID=$(echo "$REL" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          API="https://api.github.com/repos/$APPVEYOR_REPO_NAME"
+          UP="https://uploads.github.com/repos/$APPVEYOR_REPO_NAME"
+
+          # Find existing release (draft or published) by listing all releases
+          ALL=$(curl -s -H "$AUTH" "$API/releases?per_page=100")
+          REL_ID=$(echo "$ALL" | python3 -c "import sys,json; rels=json.load(sys.stdin); r=[r for r in rels if r.get('tag_name')=='$TAG']; print(r[0]['id'] if r else '')" 2>/dev/null)
           if [ -z "$REL_ID" ]; then
-            echo "Failed to get release ID. API response:"
-            echo "$REL" | head -c 2000
+            echo "No release found for tag $TAG — create one via: gh release create $TAG --draft"
             exit 1
           fi
 
-          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+          curl -s -X POST -H "$AUTH" \
             -H "Content-Type: application/gzip" \
             --data-binary @"$PKG.tar.gz" \
-            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
-          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            "$UP/releases/$REL_ID/assets?name=$PKG.tar.gz"
+          curl -s -X POST -H "$AUTH" \
             -H "Content-Type: text/plain" \
             --data-binary @"$PKG.tar.gz.sha256" \
-            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
+            "$UP/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
           echo "Linux release uploaded."
 
   # ─── macOS ──────────────────────────────────────────────────────────
@@ -115,18 +112,20 @@ for:
 
           TAG="$APPVEYOR_REPO_TAG_NAME"
           [ -z "$TAG" ] && exit 0
-          REL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            "https://api.github.com/repos/$APPVEYOR_REPO_NAME/releases/tags/$TAG")
-          REL_ID=$(echo "$REL" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
-          [ -z "$REL_ID" ] && { echo "No release found"; exit 1; }
-          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          API="https://api.github.com/repos/$APPVEYOR_REPO_NAME"
+          UP="https://uploads.github.com/repos/$APPVEYOR_REPO_NAME"
+          ALL=$(curl -s -H "$AUTH" "$API/releases?per_page=100")
+          REL_ID=$(echo "$ALL" | python3 -c "import sys,json; rels=json.load(sys.stdin); r=[r for r in rels if r.get('tag_name')=='$TAG']; print(r[0]['id'] if r else '')" 2>/dev/null)
+          [ -z "$REL_ID" ] && { echo "No release found for $TAG"; exit 1; }
+          curl -s -X POST -H "$AUTH" \
             -H "Content-Type: application/gzip" \
             --data-binary @"$PKG.tar.gz" \
-            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz"
-          curl -s -X POST -H "Authorization: token $GITHUB_TOKEN" \
+            "$UP/releases/$REL_ID/assets?name=$PKG.tar.gz"
+          curl -s -X POST -H "$AUTH" \
             -H "Content-Type: text/plain" \
             --data-binary @"$PKG.tar.gz.sha256" \
-            "https://uploads.github.com/repos/$APPVEYOR_REPO_NAME/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
+            "$UP/releases/$REL_ID/assets?name=$PKG.tar.gz.sha256"
           echo "macOS release uploaded."
 
   # ─── Windows ────────────────────────────────────────────────────────
