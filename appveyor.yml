@@ -173,18 +173,26 @@ for:
           Copy-Item "$hiredis_dir\*.h" "$deps\hiredis\include\"
           Write-Host "hiredis done."
 
-          # ── libffi ──
-          Write-Host "Building libffi..."
-          curl.exe -sL https://github.com/libffi/libffi/releases/download/v3.4.4/libffi-3.4.4.tar.gz -o "$deps\libffi.tar.gz"
-          md "$deps\libffi_tmp" -Force | Out-Null
-          tar -xzf "$deps\libffi.tar.gz" -C "$deps\libffi_tmp"
-          $libffi_dir = (Get-ChildItem "$deps\libffi_tmp" -Directory | Select-Object -First 1).FullName
-          Push-Location $libffi_dir
-          # mingw configure — build only the static lib, skip docs/tests
-          .\configure --host=x86_64-w64-mingw32 --disable-shared --enable-static --prefix="$deps\libffi" 2>&1 | Out-Null
-          mingw32-make -j$env:NUMBER_OF_PROCESSORS 2>&1 | Out-Null
-          mingw32-make install 2>&1 | Out-Null
-          Pop-Location
+          # ── libffi (prebuilt from MSYS2) ──
+          # Autotools `configure` can't be built here: PowerShell won't execute the
+          # shell script, the niXman mingw ships an *unprefixed* gcc (so --host= tool
+          # detection fails), and that mingw has no sh/bash. Use MSYS2's prebuilt UCRT
+          # libffi instead — it matches the UCRT niXman toolchain's CRT, so its static
+          # libffi.a links cleanly. We copy only the static .a (not the .dll.a import
+          # lib) so -lffi resolves statically with no runtime DLL dependency.
+          Write-Host "Installing libffi from MSYS2..."
+          $msys = "C:\msys64"
+          $pacman = "$msys\usr\bin\pacman.exe"
+          & $pacman -Sy --needed --noconfirm mingw-w64-ucrt-x86_64-libffi
+          if ($LASTEXITCODE -ne 0) { throw "pacman failed to install libffi (exit $LASTEXITCODE)" }
+          md "$deps\libffi\include" -Force | Out-Null
+          md "$deps\libffi\lib" -Force | Out-Null
+          $ffi_hdrs = Get-ChildItem "$msys\ucrt64\include" -File | Where-Object { $_.Name -eq 'ffi.h' -or $_.Name -eq 'ffitarget.h' }
+          if (-not $ffi_hdrs) { throw "ffi.h not found under $msys\ucrt64\include after pacman" }
+          foreach ($h in $ffi_hdrs) { Copy-Item $h.FullName "$deps\libffi\include\" -Force }
+          $ffi_a = Get-ChildItem "$msys\ucrt64\lib" -File | Where-Object { $_.Name -eq 'libffi.a' } | Select-Object -First 1
+          if (-not $ffi_a) { throw "static libffi.a not found under $msys\ucrt64\lib after pacman" }
+          Copy-Item $ffi_a.FullName "$deps\libffi\lib\" -Force
           Write-Host "libffi done."
 
           # ── libpq (PostgreSQL client) ──
