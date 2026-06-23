@@ -14,12 +14,8 @@ cd "$(git rev-parse --show-toplevel)"
 DRY=0; [ "${2:-}" = "--dry" ] && DRY=1
 BUMP="${1:?usage: release.sh patch|minor|major|<x.y.z> [--dry]}"
 
-# read current version from Makefile or Cargo.toml-style
-CURRENT=$(grep -m1 '^version\s*=' Makefile 2>/dev/null | sed 's/.*=\s*"\(.*\)"/\1/' | sed 's/.*=\s*\(.*\)/\1/' | tr -d ' ')
-if [ -z "$CURRENT" ]; then
-    # fallback: git tag
-    CURRENT=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
-fi
+# read current version from git tag
+CURRENT=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
 IFS='.' read -r MAJ MIN PAT <<< "$CURRENT"
 
 case "$BUMP" in
@@ -47,11 +43,7 @@ if ! gh auth status &>/dev/null; then
     echo "error: gh not authenticated — run: gh auth login"; exit 1
 fi
 
-# bump version in Makefile and any other files
-sed -i "s/^version\s*=\s*\"${CURRENT}\"/version = \"${NEW}\"/" Makefile 2>/dev/null || true
-
-git add -A
-git commit -m "chore: bump version to $NEW"
+git commit --allow-empty -m "chore: bump version to $NEW"
 git tag -a "$TAG" -m "Release $TAG"
 git push origin main "$TAG"
 
