@@ -326,31 +326,64 @@ typedef struct {
     int rule_arg_count;
 } ValidationRule;
 
-/* ─── Struct field cache (Phase 3: O(1) property access) ─── */
-#define STRUCT_CACHE_SIZE 32
+/* ─── Object Shapes (Stage 1: shared, immutable struct layout descriptor) ───
+ *
+ * All instances of the same struct type share one Shape. A Shape stores the
+ * ordered field-name→index map with precomputed hashes. Field access
+ * (BC_MEMBER / BC_SET_MEMBER) looks up the shape once and then indexes
+ * directly into `fields[]`. This replaces the 256-byte per-instance
+ * FieldCacheEntry field_cache[32] with an 8-byte pointer.
+ *
+ * Shapes are allocated once at struct-creation time and stored in a small
+ * VM-level registry (shape_registry). They are NOT GC objects — they live
+ * for the lifetime of the VM and are freed in vm_free(). Per-instance ObjStruct
+ * therefore does NOT own the shape and must never free it.
+ */
+typedef struct Shape {
+    char **field_names;    /* owned: parallel arrays of field name strings */
+    uint32_t *name_hashes; /* owned: precomputed FNV-1a hash per field */
+    int field_count;
+    char *type_name;       /* owned: moved here from ObjStruct (one copy per type) */
+} Shape;
 
+/* ─── Shape Registry (per-VM, stores every Shape ever created) ─── */
+#define SHAPE_REGISTRY_SIZE 256
 typedef struct {
-    uint32_t hash;
-    int index;
-} FieldCacheEntry;
+    Shape *shapes[SHAPE_REGISTRY_SIZE];
+    int count;
+} ShapeRegistry;
 
 /* ─── Struct ─── */
 struct ObjStruct {
     Obj obj;
-    char **field_names;
-    Value *fields;
-    int field_count;
-    char *type_name;  /* for method dispatch */
-    FieldCacheEntry field_cache[STRUCT_CACHE_SIZE]; /* Phase 3: O(1) field lookup */
-    int field_cache_count;
+    Shape *shape;          /* shared layout descriptor — NOT owned, never freed here */
+    /* Convenience aliases into shape->field_names / shape->type_name.
+     * These are shallow pointers (NOT owned by the struct) set when the
+     * shape is attached.  Native code can continue using s->field_names[i]
+     * and s->type_name without any changes. */
+    char **field_names;    /* == shape->field_names, or NULL before shape attached */
+    char  *type_name;      /* == shape->type_name,   or NULL before shape attached */
+    Value *fields;         /* per-instance data: fields[i] corresponds to field_names[i] */
+    int field_count;       /* mirrors shape->field_count for convenience */
     /* Validation metadata */
-    ValidationRule **field_validations;  /* parallel to field_names, array of ValidationRule* per field */
-    int *field_validation_counts;        /* number of validation rules per field */
-    ValidationRule *struct_validations;  /* struct-level validation rules */
+    ValidationRule **field_validations;  /* parallel to fields */
+    int *field_validation_counts;
+    ValidationRule *struct_validations;
     int struct_validation_count;
 };
 
 ObjStruct *new_struct(struct VM *vm, int field_count, bool force_heap);
+
+/* Shape API (implemented in vm.c) */
+Shape *shape_get_or_create(struct VM *vm, const char *type_name,
+                           const char * const *field_names, int field_count);
+int    shape_index_of(const Shape *s, const char *name, uint32_t hash);
+
+/* Attach a shape built from a scratch name array to a native-allocated struct.
+ * After this call s->field_names and s->type_name are valid aliases into the
+ * shape.  Scratch names are copied into the shape (caller may free them). */
+void struct_attach_shape(struct VM *vm, ObjStruct *s, const char *type_name,
+                         char * const *scratch_names, int field_count);
 
 /* ─── Enum ─── */
 struct ObjEnum {
@@ -606,6 +639,8 @@ typedef struct VM {
     unsigned int loop_tick;
     /* Validation registry */
     ValidationRegistry validation_registry;
+    /* Shape registry (Stage 1: shared layout descriptors for ObjStruct instances) */
+    ShapeRegistry shape_registry;
     /* Set by a native function (e.g. http.serve()'s poll/accept loop) when
      * it did real I/O work this tick -- a native event-loop function like
      * http.serve() yields by rewinding its own bytecode IP back to the same

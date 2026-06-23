@@ -1,151 +1,97 @@
 # The Varian Programming Language Book
 
-This book is a comprehensive, chapter-by-chapter guide to the **Varian Programming Language**, a modern, fast, agentic programming language designed to bridge native performance with universal foreign function interoperability, cooperative actor-based concurrency, and high-productivity web programming.
+> **Ground truth.** Every statement in this book is backed by the Varian compiler and VM
+> source code — `src/lexer.c`, `src/parser.c`, `src/vm.c`, `include/vm.h`, and the test
+> suite under `tests/`.
 
 ---
 
 ## Table of Contents
 
-*   [Foreword](#foreword)
-*   [Introduction](#introduction)
-*   [1. Getting Started](#1-getting-started)
-    *   [1.1. Installation](#11-installation)
-    *   [1.2. Hello, World!](#12-hello-world)
-    *   [1.3. Hello, Cargo! (Equivalent: Varian Packages and Tooling)](#13-hello-cargo-equivalent-varian-packages-and-tooling)
-*   [2. Programming a Guessing Game](#2-programming-a-guessing-game)
-    *   [Setting Up a New Project](#setting-up-a-new-project)
-    *   [Processing a Guess](#processing-a-guess)
-    *   [Storing Values with Variables](#storing-values-with-variables)
-    *   [Receiving User Input](#receiving-user-input)
-    *   [Handling Potential Failure with null / catch](#handling-potential-failure-with-null--catch)
-    *   [Printing Values with print Placeholders](#printing-values-with-print-placeholders)
-    *   [Testing the First Part](#testing-the-first-part)
-    *   [Generating a Secret Number](#generating-a-secret-number)
-    *   [Increasing Functionality with a Module](#increasing-functionality-with-a-module)
-    *   [Comparing the Guess to the Secret Number](#comparing-the-guess-to-the-secret-number)
-    *   [Allowing Multiple Guesses with Looping](#allowing-multiple-guesses-with-looping)
-    *   [Quitting After a Correct Guess](#quitting-after-a-correct-guess)
-    *   [Handling Invalid Input](#handling-invalid-input)
-    *   [Summary](#summary)
-*   [3. Common Programming Concepts](#3-common-programming-concepts)
-    *   [3.1. Variables and Mutability](#31-variables-and-mutability)
-    *   [3.2. Data Types](#32-data-types)
-    *   [3.3. Functions](#33-functions)
-    *   [3.4. Comments](#34-comments)
-    *   [3.5. Control Flow](#35-control-flow)
-*   [4. Understanding Memory, Mutation, and Lifetimes](#4-understanding-memory-mutation-and-lifetimes)
-    *   [4.1. What is Memory Management? (Struct Reference Semantics vs Copy-On-Write Arrays)](#41-what-is-memory-management-struct-reference-semantics-vs-copy-on-write-arrays)
-    *   [4.2. In-Place Mutation and the self Reference](#42-in-place-mutation-and-the-self-reference)
-    *   [4.3. Slices and Indexing Semantics](#43-slices-and-indexing-semantics)
-*   [5. Using Structs to Structure Related Data](#5-using-structs-to-structure-related-data)
-    *   [5.1. Defining and Instantiating Structs](#51-defining-and-instantiating-structs)
-    *   [5.2. An Example Program Using Structs (with Validation Decorators)](#52-an-example-program-using-structs-with-validation-decorators)
-    *   [5.3. Methods and impl Blocks](#53-methods-and-impl-blocks)
-*   [6. Enums and Pattern Matching](#6-enums-and-pattern-matching)
-    *   [6.1. Defining an Enum](#61-defining-an-enum)
-    *   [6.2. The match Control Flow Construct](#62-the-match-control-flow-construct)
-    *   [6.3. Concise Control Flow with optional chaining and null coalescing](#63-concise-control-flow-with-optional-chaining-and-null-coalescing)
-*   [7. Packages, Modules, and Scoping](#7-packages-modules-and-scoping)
-    *   [7.1. Packages and the varian.pkg format](#71-packages-and-the-varianpkg-format)
-    *   [7.2. Module Loading and the Concatenation Prelude](#72-module-loading-and-the-concatenation-prelude)
-    *   [7.3. Scope Resolution](#73-scope-resolution)
-    *   [7.4. Automatic Module Inclusion](#74-automatic-module-inclusion)
-    *   [7.5. Separating Modules into Different Files](#75-separating-modules-into-different-files)
-*   [8. Common Collections](#8-common-collections)
-    *   [8.1. Storing Lists of Values with Arrays](#81-storing-lists-of-values-with-arrays)
-    *   [8.2. Storing UTF-8 Encoded Text with Strings](#82-storing-utf-8-encoded-text-with-strings)
-    *   [8.3. Storing Keys with Associated Values in Hash Maps (Dynamic Structs)](#83-storing-keys-with-associated-values-in-hash-maps-dynamic-structs)
-*   [9. Error Handling](#9-error-handling)
-    *   [9.1. Unrecoverable Errors with throw](#91-unrecoverable-errors-with-throw)
-    *   [9.2. Recoverable Errors with try/catch and ?](#92-recoverable-errors-with-trycatch-and-)
-    *   [9.3. Optional return propagation vs throw](#93-optional-return-propagation-vs-throw)
-*   [10. Generic Types, Traits, and Lifetimes](#10-generic-types-traits-and-lifetimes)
-    *   [10.1. Type-Erased Generic Syntax](#101-type-erased-generic-syntax)
-    *   [10.2. Implicit Structural Traits](#102-implicit-structural-traits)
-    *   [10.3. Memory Lifetimes: GC vs Bump Arenas](#103-memory-lifetimes-gc-vs-bump-arenas)
-*   [11. Writing Automated Tests](#11-writing-automated-tests)
-    *   [11.1. How to Write Tests](#111-how-to-write-tests)
-    *   [11.2. Controlling How Tests Are Run](#112-controlling-how-tests-are-run)
-    *   [11.3. Mocking and Intercepting Native Modules](#113-mocking-and-intercepting-native-modules)
-*   [12. Building a Command Line Program](#12-building-a-command-line-program)
-    *   [12.1. Accepting Command Line Arguments](#121-accepting-command-line-arguments)
-    *   [12.2. Reading a File](#122-reading-a-file)
-    *   [12.3. Improving Modularity and Error Isolation](#123-improving-modularity-and-error-isolation)
-    *   [12.4. Test-Driven CLI Refactoring](#124-test-driven-cli-refactoring)
-    *   [12.5. Working with Environment Variables](#125-working-with-environment-variables)
-    *   [12.6. Redirecting Errors to Standard Error](#126-redirecting-errors-to-standard-error)
-*   [13. Functional Features: Iterators and Closures](#13-functional-features-iterators-and-closures)
-    *   [13.1. Closures and Value Capture](#131-closures-and-value-capture)
-    *   [13.2. Processing Sequential Items](#132-processing-sequential-items)
-    *   [13.3. Applying Iterators to the CLI Project](#133-applying-iterators-to-the-cli-project)
-    *   [13.4. Performance in Loops vs. Map Functions](#134-performance-in-loops-vs-map-functions)
-*   [14. Varian Tooling and Ecosystem](#14-varian-tooling-and-ecosystem)
-    *   [14.1. Customizing Runtime Executable Flags](#141-customizing-runtime-executable-flags)
-    *   [14.2. Local Project Scaffolding and Publishing Scenarios](#142-local-project-scaffolding-and-publishing-scenarios)
-    *   [14.3. Multi-Module Project Workspaces](#143-multi-module-project-workspaces)
-    *   [14.4. Installing the vn CLI Globally](#144-installing-the-vn-cli-globally)
-    *   [14.5. Extending vn via Custom Wrappers](#145-extending-vn-via-custom-wrappers)
-*   [15. Allocation, Smart Pointers, and GC Internals](#15-allocation-smart-pointers-and-gc-internals)
-    *   [15.1. Heap Allocation and Sweep Cycles](#151-heap-allocation-and-sweep-cycles)
-    *   [15.2. Treating Heap Objects as References](#152-treating-heap-objects-as-references)
-    *   [15.3. GC Sweep Reclaim and Garbage Collection Details](#153-gc-sweep-reclaim-and-garbage-collection-details)
-    *   [15.4. VM Object Reference Counts](#154-vm-object-reference-counts)
-    *   [15.5. Task-Local Bump Arenas and the escape_promote Write Barrier](#155-task-local-bump-arenas-and-the-escape_promote-write-barrier)
-    *   [15.6. Reference Cycles and Cycle Collection](#156-reference-cycles-and-cycle-collection)
-*   [16. Cooperative Concurrency](#16-cooperative-concurrency)
-    *   [16.1. Green-Thread Tasks](#161-green-thread-tasks)
-    *   [16.2. Channels and Automated Backpressure](#162-channels-and-automated-backpressure)
-    *   [16.3. Stateful Actors and Isolation (Preventing Shared-State Hazards)](#163-stateful-actors-and-isolation-preventing-shared-state-hazards)
-    *   [16.4. Task Yielding Scheduling Safety](#164-task-yielding-scheduling-safety)
-*   [17. Fundamentals of Asynchronous Programming](#17-fundamentals-of-asynchronous-programming)
-    *   [17.1. Cooperative Scheduling Loop](#171-cooperative-scheduling-loop)
-    *   [17.2. Applying Concurrency with Async Tasks](#172-applying-concurrency-with-async-tasks)
-    *   [17.3. Working with Multiple Channels (Select Multiplexing)](#173-working-with-multiple-channels-select-multiplexing)
-    *   [17.4. Continuous Streams and Channels](#174-continuous-streams-and-channels)
-    *   [17.5. Structural Interfaces for Async](#175-structural-interfaces-for-async)
-    *   [17.6. Futures, Tasks, and Threads (Single-Threaded Worker Pools)](#176-futures-tasks-and-threads-single-threaded-worker-pools)
-*   [18. Object-Oriented Patterns in Varian](#18-object-oriented-patterns-in-varian)
-    *   [18.1. Characteristics of Object-Oriented Languages (Encapsulation)](#181-characteristics-of-object-oriented-languages-encapsulation)
-    *   [18.2. Trait Objects and Structural Typing Parameters](#182-trait-objects-and-structural-typing-parameters)
-    *   [18.3. Decoupling State and Behavior with impl Blocks](#183-decoupling-state-and-behavior-with-impl-blocks)
-*   [19. Pattern Matching and Guards](#19-pattern-matching-and-guards)
-    *   [19.1. Where Pattern Matching Applies](#191-where-pattern-matching-applies)
-    *   [19.2. Match Guards and Exhaustiveness Warnings](#192-match-guards-and-exhaustiveness-warnings)
-    *   [19.3. Pattern Syntax (Constants, Ranges, Wildcards, Bindings)](#193-pattern-syntax-constants-ranges-wildcards-bindings)
-*   [20. Advanced Features](#20-advanced-features)
-    *   [20.1. Direct C FFI via @ffi](#201-direct-c-ffi-via-ffi)
-    *   [20.2. Advanced Structural Traits](#202-advanced-structural-traits)
-    *   [20.3. Runtime Primitive Casting and Type Validation](#203-runtime-primitive-casting-and-type-validation)
-    *   [20.4. First-Class Functions and Closures](#204-first-class-functions-and-closures)
-    *   [20.5. Compile-Time Evaluation with comptime](#205-compile-time-evaluation-with-comptime)
-*   [21. Final Project: Web Programming with Zenith](#21-final-project-web-programming-with-zenith)
-    *   [21.1. Zenith App Routing and Tri-Tries](#211-zenith-app-routing-and-tri-tries)
-    *   [21.2. Middleware Chains](#212-middleware-chains)
-    *   [21.3. Comptime Database ORM](#213-comptime-database-orm)
-    *   [21.4. Graceful Shutdown and Cleanup](#214-graceful-shutdown-and-cleanup)
-*   [22. Appendices](#22-appendices)
-    *   [22.1. Appendix A: Keywords and Special Identifiers](#221-appendix-a-keywords-and-special-identifiers)
-    *   [22.2. Appendix B: Language Tooling (vn fmt and vn lint)](#222-appendix-b-language-tooling-vn-fmt-and-vn-lint)
-    *   [22.3. Appendix C: Field Decorators](#223-appendix-c-field-decorators)
-    *   [22.4. Appendix D: Useful Development Tools](#224-appendix-d-useful-development-tools)
-    *   [22.5. Appendix E: Editions and VM Releases](#225-appendix-e-editions-and-vm-releases)
-    *   [22.6. Appendix F: Global Documentation and Translations](#226-appendix-f-global-documentation-and-translations)
-    *   [22.7. Appendix G: The owo Syntax Color Scheme](#227-appendix-g-the-owo-syntax-color-scheme)
+- [Foreword](#foreword)
+- [Introduction](#introduction)
+- [1. Getting Started](#1-getting-started)
+- [2. Programming a Guessing Game](#2-programming-a-guessing-game)
+- [3. Common Programming Concepts](#3-common-programming-concepts)
+- [4. Understanding Memory, Mutation, and Lifetimes](#4-understanding-memory-mutation-and-lifetimes)
+- [5. Using Structs to Structure Related Data](#5-using-structs-to-structure-related-data)
+- [6. Enums and Pattern Matching](#6-enums-and-pattern-matching)
+- [7. Packages, Modules, and Scoping](#7-packages-modules-and-scoping)
+- [8. Common Collections](#8-common-collections)
+- [9. Error Handling](#9-error-handling)
+- [10. Generic Types, Traits, and Lifetimes](#10-generic-types-traits-and-lifetimes)
+- [11. Writing Automated Tests](#11-writing-automated-tests)
+- [12. Building a Command Line Program](#12-building-a-command-line-program)
+- [13. Functional Features: Iterators and Closures](#13-functional-features-iterators-and-closures)
+- [14. Varian Tooling and Ecosystem](#14-varian-tooling-and-ecosystem)
+- [15. Allocation, Smart Pointers, and GC Internals](#15-allocation-smart-pointers-and-gc-internals)
+- [16. Cooperative Concurrency](#16-cooperative-concurrency)
+- [17. Fundamentals of Asynchronous Programming](#17-fundamentals-of-asynchronous-programming)
+- [18. Object-Oriented Patterns in Varian](#18-object-oriented-patterns-in-varian)
+- [19. Pattern Matching and Guards](#19-pattern-matching-and-guards)
+- [20. Advanced Features](#20-advanced-features)
+- [21. Final Project: Web Programming with Zenith](#21-final-project-web-programming-with-zenith)
+- [22. Appendices](#22-appendices)
 
 ---
 
 ## Foreword
 
-Varian is built for high-performance network services, AI-agent integrations, and systems programming. It represents a synthesis of three core paradigms:
-1.  **Direct Native Control**: Direct shared-library bindings via libffi without wrapper code.
-2.  **Universal Foreign Bridges**: Embedded Python runtime bridge to invoke any library.
-3.  **Cooperative Green Threads**: Tasks and actor communication built on a lightweight, single-threaded VM scheduler.
+Varian is a compiled, dynamically-typed systems programming language with a custom bytecode
+VM. It targets three use cases:
+
+1. **Network services** — a non-blocking, `io_uring`-powered HTTP framework (Zenith) with
+   WebSocket, SSE, OpenAPI, and built-in SQLite/Postgres/Redis drivers.
+2. **Agentic / glue code** — an embedded Python bridge (`python.run`) lets you call any
+   Python library (boto3, numpy, etc.) without leaving Varian.
+3. **Full-stack web applications** — Lumen (server-driven frontend framework) and Aurora
+   (full-stack framework binding Lumen + Zenith) ship inside the `vn` binary.
+
+The language is **dynamically typed at runtime** but accepts optional static type annotations
+for linting and IDE support. The `vn lint` tool enforces them; the VM discards them before
+execution.
+
+The VM is a register-style stack machine with:
+- **Computed-goto bytecode dispatch** (`src/vm.c:3640-3649`) — branch-predictor friendly,
+  no central `switch` bottleneck.
+- **Per-task bump arenas** (`src/vm.c:324-342`) — short-lived allocations (HTTP requests)
+  bypass the GC entirely.
+- **Mark-and-sweep GC** (`src/vm.c:707-960`) — tri-color collection at scheduler safepoints,
+  runs between task ticks, never during allocation.
+- **Single-threaded cooperative scheduler** (`src/vm.c:3262-3317`) — round-robins green-thread
+  tasks; channels and actors provide safe, race-free communication.
 
 ---
 
 ## Introduction
 
-Varian is dynamically typed but incorporates optional static type annotations. The code compiles to custom bytecode, which executes on an optimized VM using task-local struct arenas and label-as-values computed-goto dispatches for throughput.
+### What Varian looks like
+
+```varian
+// A simple web server
+let app = new_app()
+
+app.get("/hello/:name", |req| {
+    return Response {
+        status: 200,
+        body: "Hello, " + req.params.name + "!",
+        content_type: "text/plain"
+    }
+}, "Say hello")
+
+app.listen(3000)
+```
+
+### Key design decisions
+
+| Decision | Choice | Why |
+|---|---|---|
+| **Typing** | Dynamic runtime + optional static annotations | Fast prototyping; `vn lint` provides safety |
+| **Memory** | GC heap + per-task bump arenas | No borrow checker; predictable latency for request workloads |
+| **Concurrency** | Cooperative green threads | Race-free by construction; no locks needed |
+| **FFI** | libffi + `@ffi` decorator | Call any C library without wrapper code |
+| **Stdlib** | Built into the binary | Zero `npm install`, zero supply-chain risk |
+| **Web framework** | Built-in (Zenith) | Radix trie router, io_uring I/O, OpenAPI auto-generation |
 
 ---
 
@@ -153,104 +99,144 @@ Varian is dynamically typed but incorporates optional static type annotations. T
 
 ### 1.1. Installation
 
-Build the runtime executable `vn` from source:
+Build the `vn` binary from source:
+
 ```bash
 make clean
-make -j8 CFLAGS="-Wall -Wextra -std=gnu11 -O2 -DNDEBUG -Iinclude"
+make -j$(nproc) CFLAGS="-std=gnu11 -O2 -DNDEBUG -Iinclude"
 ```
-Launch the interactive REPL:
+
+This produces a single native executable. No `node_modules`, no `pip install`, no `cargo install`.
+
 ```bash
-./vn
+./vn                    # Start the REPL
+./vn run hello.vn       # Run a script
+./vn test tests/        # Run the test suite
 ```
+
+Dependencies: `build-essential`, `libcurl4-openssl-dev`, `libssl-dev`, `libsqlite3-dev`,
+`libpq-dev`, `libhiredis-dev`, `libffi-dev`, `liburing-dev`.
 
 ### 1.2. Hello, World!
 
-Create a file named `hello.vn`:
 ```varian
 print("Hello, World!")
 ```
-Run it via the CLI:
+
 ```bash
 ./vn hello.vn
 ```
 
-### 1.3. Hello, Cargo! (Equivalent: Varian Packages and Tooling)
+`print` is a built-in global (`src/vm.c:3158`) that accepts any number of arguments,
+converts each to its string representation, and writes to stdout.
 
-Dependencies are tracked in `varian.pkg`. Varian manages local packages in the `vn_modules/` folder.
-To add a package, write:
-```bash
-vn add zenith
+### 1.3. Declaring dependencies
+
+Packages are declared in `constellation.toml`:
+
+```toml
+[package]
+name = "my-app"
+version = "0.1.0"
+
+[deps]
+zenith = "latest"
+
+[capabilities]
+ffi = false
+python = false
+net = false
+fs = false
 ```
-This updates the package manifest automatically.
+
+`vn add zenith` adds the dependency and updates the manifest. `vn install` vendors all
+dependencies into `vn_modules/`.
 
 ---
 
 ## 2. Programming a Guessing Game
 
-In this chapter, we will build an interactive guessing game to demonstrate Varian's core control flow, variable bindings, and standard input/output routines.
+Let's build a complete number-guessing game. This chapter introduces variables, input/output,
+loops, conditionals, error handling, and random numbers.
 
-### Setting Up a New Project
+### Setting up
 
-Create a directory for your project and place any needed helper modules inside the `vn_modules/` folder.
+```bash
+mkdir guessing_game
+cd guessing_game
+touch main.vn
+```
 
-### Processing a Guess
+### Skeleton
 
-We begin by reading from standard input. Create `main.vn`:
 ```varian
+// main.vn
 print("Guess the number!")
 ```
 
-### Storing Values with Variables
+### Storing values with `let`
 
-We store values using `let`:
 ```varian
-let guess = ""
+let secret = 42       // immutable by convention (let is mutable)
+let guess = ""        // string variable
 ```
 
-### Receiving User Input
+Every binding is declared with `let`. Varian has no immutable-by-default distinction —
+all `let` bindings can be reassigned. Type annotations are accepted for linting:
 
-Read lines from input using `io.read_line()`:
+```varian
+let secret: int = 42  // annotation discarded at runtime
+```
+
+### Reading user input
+
+The `io` module provides `io.read_line()`:
+
 ```varian
 print("Please input your guess.")
-let guess_str = io.read_line()
+let input = io.read_line()
 ```
 
-### Handling Potential Failure with null / catch
+`io.read_line()` returns a `string`, or `null` if stdin is closed.
 
-If the input stream ends, `io.read_line()` returns `null`. We handle this using conditional checks:
+### Handling `null` return
+
 ```varian
-if guess_str == null {
+if input == null {
     print("No input detected. Exiting.")
+    return
 }
 ```
 
-### Printing Values with print Placeholders
+### Printing variables
 
-Varian strings can be concatenated with `+`. Print variables directly:
+String concatenation uses `+`:
+
 ```varian
-print("You guessed: " + guess_str)
+print("You guessed: " + input)
 ```
 
-### Testing the First Part
+### Generating a random number
 
-Run `./vn main.vn` to test that input is successfully accepted and echoed back.
+The native `math` module has no `random_int` function. Instead, use the `time` module for
+seeding and `math` for modulo:
 
-### Generating a Secret Number
-
-Use the native `math` module to generate a random number between 1 and 100:
 ```varian
-let secret = math.random_int(1, 100)
+let seed = time.now_ms()
+let secret = seed % 100 + 1   // random number between 1 and 100
 ```
 
-### Increasing Functionality with a Module
+### Parsing input and comparing
 
-If we need more complex logic, we can write helper methods inside a `.vn` file in `vn_modules/`.
-
-### Comparing the Guess to the Secret Number
-
-We parse the input string into an integer and compare it:
 ```varian
-let guess = string_to_int(guess_str.trim())
+let guess = 0
+try {
+    guess = json_decode(input.trim())
+} catch e {
+    print("Please type a valid number!")
+    return
+}
+
 if guess < secret {
     print("Too low!")
 } else if guess > secret {
@@ -260,36 +246,74 @@ if guess < secret {
 }
 ```
 
-### Allowing Multiple Guesses with Looping
+### Looping until correct
 
-Wrap the guess processing in a `loop` block:
 ```varian
 loop {
-    let guess_str = io.read_line()
-    if guess_str == null { break }
-    // comparisons here...
+    print("Please input your guess.")
+    let input = io.read_line()
+    if input == null {
+        print("No input. Exiting.")
+        break
+    }
+
+    let guess = 0
+    try {
+        guess = json_decode(input.trim())
+    } catch e {
+        print("Please type a valid number!")
+        continue        // skip to next iteration
+    }
+
+    if guess < secret {
+        print("Too low!")
+    } else if guess > secret {
+        print("Too high!")
+    } else {
+        print("You win!")
+        break           // exit the loop
+    }
 }
 ```
 
-### Quitting After a Correct Guess
+### Complete program
 
-Use the `break` statement to exit the loop once the correct guess is entered.
-
-### Handling Invalid Input
-
-To prevent crash failures when parsing bad strings, wrap the conversion inside a `try/catch` or check for `null`:
 ```varian
-try {
-    let guess = string_to_int(guess_str.trim())
-    // process guess...
-} catch e {
-    print("Please type a valid number!")
+let seed = time.now_ms()
+let secret = seed % 100 + 1
+print("Guess the number (1-100)!")
+
+loop {
+    print("Please input your guess.")
+    let input = io.read_line()
+    if input == null { break }
+
+    let guess = 0
+    try {
+        guess = json_decode(input.trim())
+    } catch e {
+        print("Please type a valid number!")
+        continue
+    }
+
+    if guess < secret {
+        print("Too low!")
+    } else if guess > secret {
+        print("Too high!")
+    } else {
+        print("You win!")
+        break
+    }
 }
 ```
 
-### Summary
+### Testing
 
-You have built a fully interactive game demonstrating Varian variables, loops, input processing, and parsing.
+```bash
+./vn main.vn
+```
+
+For automated testing, we'd write test assertions in a `tests/` directory (see Chapter 11).
 
 ---
 
@@ -297,38 +321,96 @@ You have built a fully interactive game demonstrating Varian variables, loops, i
 
 ### 3.1. Variables and Mutability
 
-Variable bindings are declared with `let`. They can be reassigned freely:
+All variables are declared with `let` and are mutable by default:
+
 ```varian
 let x = 5
-x = 6
+x = 10              // works — can reassign
 ```
-> [!NOTE]
-> Type annotations are parsed and validated by static analysis tooling (`vn lint`), but they are discarded before runtime execution. The VM remains fully dynamically typed.
+
+Type annotations are parsed and validated by `vn lint` but discarded before execution:
+
 ```varian
-let price: float = 9.99 // Annotation discarded at execution time
+let price: float = 9.99      // annotation checked by linter, ignored by VM
+let name: string = "Alice"
+```
+
+Multiple return values can be unpacked with comma-separated `let`:
+
+```varian
+let result, err = divide(10, 0)
+```
+
+Constants declared with `const` require an initializer and cannot be reassigned:
+
+```varian
+const PI = 3.14159   // compile-time constant
+// PI = 3            // would cause a parse error
 ```
 
 ### 3.2. Data Types
 
-Varian supports the following primitive data types:
-*   `bool`: `true` or `false`
-*   `int`: Platform-native integer representation
-*   `float`: IEEE-754 floating-point representation
-*   `string`: Immutable, UTF-8 encoded sequence of bytes
-*   `null`: Representation of empty/uninitialized value
-*   Arrays: Copy-on-write dynamic slices (`[1, 2, 3]`)
-*   Tuples: Stack-allocated fixed-size values (`(1, "str")`)
-*   Structs & Enums
+The VM supports these value types (`include/vm.h:120-137`):
+
+| Type | Example | Runtime representation |
+|---|---|---|
+| `nil` | `null` | `VAL_NIL` — singleton |
+| `bool` | `true`, `false` | `VAL_BOOL` — 0 or 1 |
+| `int` | `42`, `-7` | `VAL_INT` — `int64_t` |
+| `float` | `3.14`, `1e10` | `VAL_FLOAT` — `double` |
+| `string` | `"hello"` | `VAL_STRING` — UTF-8, immutable |
+| `array` | `[1, 2, 3]` | `VAL_ARRAY` — COW dynamic slice |
+| `tuple` | `(1, "a")` | `VAL_TUPLE` — fixed-size |
+| `struct` | `User { id: 1 }` | `VAL_STRUCT` — GC-managed |
+| `enum` | `Result::Ok(200)` | `VAL_ENUM` — tag + payload |
+| `function` | `fn(x) x + 1` | `VAL_FUNCTION` / `VAL_CLOSURE` |
+| `channel` | `task.channel(10)` | `VAL_CHANNEL` — bounded buffer |
+| `task` | `task.spawn(fn)` | `VAL_TASK` — green thread |
+| `actor` | `Counter.spawn()` | `VAL_ACTOR` — isolated process |
+
+**Truthiness** (`src/vm.c:1059-1068`):
+
+| Value | Truthy? |
+|---|---|
+| `null` | No |
+| `false` | No |
+| `0`, `0.0` | Yes (non-zero integers/floats are truthy) |
+| `""` | No (empty string) |
+| Everything else | Yes |
+
+**Equality** (`src/vm.c:1070-1092`):
+- Same-type comparison: `==` and `!=` compare values.
+- Structs are **not** value-equal by default (comparison returns `false` for same-type
+  structs with different fields).
+- Enums: tag and payload values are compared recursively.
+- Closures: compared by pointer identity (same closure object).
 
 ### 3.3. Functions
 
-Declared using `fn`. Functions support optional parameter and return type signatures:
+Declared with `fn`:
+
+```varian
+fn add(a, b) {
+    return a + b
+}
+```
+
+Type annotations are accepted by the parser and checked by `vn lint`:
+
 ```varian
 fn add(a: int, b: int) -> int {
     return a + b
 }
 ```
-Multiple return values are supported via comma separation:
+
+Arrow shorthand for single-expression bodies:
+
+```varian
+fn add(a, b) => a + b
+```
+
+Multiple return values:
+
 ```varian
 fn divide(a, b) {
     if b == 0 {
@@ -336,31 +418,71 @@ fn divide(a, b) {
     }
     return a / b, null
 }
+
+let result, err = divide(10, 3)
+if err != null {
+    print("Error: " + err)
+} else {
+    print("Result: " + result)
+}
 ```
+
+Default argument values and rest parameters are not supported in the parser.
 
 ### 3.4. Comments
 
-Line comments begin with `//`:
 ```varian
-// This is a line comment.
+// Line comment
+
+/*
+ * Block comment
+ */
 ```
+
+Comments are preserved by `vn fmt` (`docs/TOOLING.md`).
 
 ### 3.5. Control Flow
 
-Varian supports conventional blocks and exclusive ranges:
+**if / else if / else**:
+
 ```varian
 if x > 10 {
     print("Big")
+} else if x > 5 {
+    print("Medium")
 } else {
     print("Small")
 }
+```
 
-for i in 0..10 {
-    print(i) // Outputs 0 through 9
-}
+**while**:
 
+```varian
 while x < 100 {
     x = x + 10
+}
+```
+
+**for** (range iteration):
+
+```varian
+for i in 0..10 {
+    print(i)     // 0, 1, 2, ..., 9
+}
+
+for item in items {
+    print(item)
+}
+```
+
+**loop** (infinite, with `break`/`continue`):
+
+```varian
+loop {
+    let input = io.read_line()
+    if input == null { break }
+    if input == "" { continue }
+    print(input)
 }
 ```
 
@@ -368,36 +490,97 @@ while x < 100 {
 
 ## 4. Understanding Memory, Mutation, and Lifetimes
 
-### 4.1. What is Memory Management? (Struct Reference Semantics vs Copy-On-Write Arrays)
+Varian uses a hybrid memory model: **structs are reference-typed** (GC-managed), while
+**arrays use copy-on-write**. This is the single most important concept to understand
+before writing Varian programs.
 
-Instead of Rust's ownership system, Varian employs a hybrid approach:
-*   **Structs** are passed by reference and managed by a garbage collector.
-*   **Arrays** utilize copy-on-write (COW) semantics when mutated via methods (like `.push()`).
+### 4.1. Struct reference semantics
 
-### 4.2. In-Place Mutation and the self Reference
+Structs are **passed by reference**. When you assign a struct to a new variable or pass it
+to a function, you share the same underlying object:
 
-Inside struct `impl` blocks, methods take an explicit `self` reference. Mutating fields on `self` edits the struct in place:
 ```varian
 struct Point { x: int, y: int }
-impl Point {
-    fn move_to(self, new_x, new_y) {
-        self.x = new_x
-        self.y = new_y
-    }
-}
+let a = Point { x: 1, y: 2 }
+let b = a               // b references the SAME struct
+b.x = 10                // modifies a.x as well!
+print(a.x)              // 10 — mutation is visible through both references
 ```
 
-### 4.3. Slices and Indexing Semantics
+This is identical to how JavaScript objects or Python dicts behave. The struct lives on
+the GC heap (or, for short-lived requests, in a per-task bump arena).
 
-Arrays and strings can be sliced and indexed. While array indexing is mutable in-place (`arr[0] = x`), methods that append or resize copy the underlying array buffer.
+### 4.2. Array copy-on-write semantics
+
+Arrays use **copy-on-write (COW)**. Reading is shared; writing (via methods like `.push()`)
+creates a new array:
+
+```varian
+let a = [1, 2, 3]
+let b = a               // b shares the same buffer
+let c = b.push(4)       // push CREATES a new array — b is unchanged
+print(b)                // [1, 2, 3]
+print(c)                // [1, 2, 3, 4]
+```
+
+For **in-place mutation**, use `.append()` instead:
+
+```varian
+let items = [1, 2, 3]
+items.append(4)         // mutates the array in place (geometric growth)
+print(items)            // [1, 2, 3, 4]
+```
+
+`.push()` → returns new array (COW). `.append()` → mutates in place.
+
+### 4.3. In-place mutation and `self`
+
+Inside `impl` blocks, methods take an explicit `self` parameter. Mutating fields on `self`
+modifies the struct in place:
+
+```varian
+struct Counter { val: int }
+impl Counter {
+    fn increment(self) {
+        self.val = self.val + 1   // in-place mutation of the struct
+    }
+}
+
+let c = Counter { val: 0 }
+c.increment()
+print(c.val)            // 1 — the original struct was mutated
+```
+
+### 4.4. Per-task bump arenas
+
+For high-throughput workloads (e.g., each HTTP request), Varian allocates a **64 KB bump
+arena** per task (`src/vm.c:324-342`, `TASK_ARENA_SIZE = 64 * 1024`). New structs created
+in a request handler are bump-allocated inside this arena — they never touch the GC heap.
+
+When a struct **escapes** the arena (assigned to a global, sent through a channel, or
+captured by a spawned task), the `escape_promote` write barrier (`src/vm.c:659`) deep-copies
+it to the GC heap. This is automatic and invisible to the programmer.
+
+### 4.5. Slicing
+
+Arrays and strings support indexed access and slicing:
+
+```varian
+let arr = [10, 20, 30, 40]
+print(arr[0])           // 10
+print(arr[1..3])        // [20, 30]
+
+let s = "hello"
+print(s[0])             // "h" (string indexing returns a string)
+print(s.substring(1, 4)) // "ell"
+```
 
 ---
 
 ## 5. Using Structs to Structure Related Data
 
-### 5.1. Defining and Instantiating Structs
+### 5.1. Defining and instantiating structs
 
-Structs group related fields:
 ```varian
 struct User {
     id: int,
@@ -406,482 +589,1281 @@ struct User {
 }
 
 let user = User { id: 42, name: "Alice", email: "alice@example.com" }
+
+// Field access
+print(user.name)         // "Alice"
+
+// Mutation
+user.name = "Bob"
 ```
 
-### 5.2. An Example Program Using Structs (with Validation Decorators)
+### 5.2. Structs with validation decorators
 
-Validation decorators on struct fields enforce conditions at construction time:
+Decorators on struct fields register validation rules that run at construction:
+
 ```varian
 struct SignupForm {
     @is_email email: string,
     @min_len(3) name: string,
+    @max_len(100) name: string,
 }
 ```
 
-### 5.3. Methods and impl Blocks
+Supported decorators (`lib_validate.c`): `@is_email`, `@is_url`, `@is_alphanumeric`,
+`@is_uuid`, `@min_len(n)`, `@max_len(n)`.
 
-Behavior is attached to structs using `impl` blocks:
+Validation is triggered by `vn lint` at development time, or by explicit calls to
+`_validate.get_field()` and friends at runtime.
+
+### 5.3. Anonymous / dynamic structs
+
+For ad-hoc structs without a type declaration, use `http.create_struct`:
+
+```varian
+let obj = http.create_struct(
+    ["name", "age", "email"],
+    ["Alice", 30, "alice@example.com"]
+)
+print(obj.name)          // "Alice"
+```
+
+This is how Lumen and Aurora build data objects internally.
+
+### 5.4. Methods and `impl` blocks
+
+Behavior is attached to structs using `impl`:
+
 ```varian
 impl User {
     fn display(self) {
         print(self.name + " <" + self.email + ">")
     }
+
+    fn is_valid(self) -> bool {
+        return self.name != "" and self.email != ""
+    }
 }
+
+let user = User { id: 1, name: "Alice", email: "alice@example.com" }
+user.display()           // "Alice <alice@example.com>"
 ```
+
+Methods are dispatched via `BC_DISPATCH` / `BC_REGISTER_METHOD` at runtime
+(`src/vm.c`). Unlike most OO languages, Varian resolves methods by **symbol name** at
+runtime — there is no vtable.
 
 ---
 
 ## 6. Enums and Pattern Matching
 
-### 6.1. Defining an Enum
+### 6.1. Defining enums
 
-Enums represent sum types that can contain payload data:
+Enums are sum types with optional payloads:
+
 ```varian
 enum WebResult<T> {
     Success(T),
     Failure(string),
 }
+
+enum Color {
+    Red,
+    Green,
+    Blue,
+}
 ```
 
-### 6.2. The match Control Flow Construct
+Generic type parameters (`<T>`) are accepted by the parser and discarded at runtime (no
+monomorphization).
 
-Use the `match` block to inspect enums and unpack payload bindings:
+### 6.2. The `match` construct
+
+`match` inspects an enum value and dispatches on the tag:
+
 ```varian
 let res = WebResult::Success(200)
 
 match res {
-    WebResult::Success(status) => print("Success: " + status),
-    WebResult::Failure(err) => print("Failed: " + err)
+    WebResult::Success(code) => print("OK: " + code),
+    WebResult::Failure(msg)  => print("Error: " + msg)
 }
 ```
 
-### 6.3. Concise Control Flow with optional chaining and null coalescing
+`match` also works on plain values:
 
-Null-coalescing (`??`) and optional chaining (`?.`) permit concise, nil-safe expressions:
 ```varian
-let role = user?.profile?.role ?? "guest"
+match x {
+    1 => print("one"),
+    2 => print("two"),
+    _ => print("other")
+}
+```
+
+### 6.3. Concise control flow
+
+**Null-coalescing** `??` — returns the left value if it's not null, otherwise the right:
+
+```varian
+let name = user?.name ?? "guest"
+```
+
+**Optional chaining** `?.` — safe member access:
+
+```varian
+let role = user?.profile?.role     // null if any intermediate is null
+```
+
+**Propagation** `expr?` — evaluates `expr`; if `null`, propagates `null` as the enclosing
+function's return value:
+
+```varian
+fn get_admin_email(users, admin_id) {
+    let user = users[admin_id]?       // returns null early if not found
+    return user.email?                // returns null early if no email
+}
 ```
 
 ---
 
 ## 7. Packages, Modules, and Scoping
 
-### 7.1. Packages and the varian.pkg format
+### 7.1. The package manifest
 
-Packages declare metadata and target dependencies:
+Dependencies are declared in `constellation.toml`:
+
 ```toml
-name = "web-service"
-version = "1.0.0"
+[package]
+name = "my-service"
+version = "0.1.0"
+kind = "aurora"           # or omit for plain scripts
 
 [deps]
 zenith = "latest"
+lumen-ui = "^1.2.0"
+
+[capabilities]
+ffi = false
+python = false
+net = true
+fs = true
 ```
 
-### 7.2. Module Loading and the Concatenation Prelude
+### 7.2. The `use` keyword
 
-Varian has no `import` keyword in its syntax. The CLI runner automatically concatenates all `.vn` files inside the `vn_modules/` folder as a prelude compiled in-scope above your entry file.
+Modules are loaded with `use` (`src/parser.c:2538-2766`):
 
-### 7.3. Scope Resolution
+```varian
+use "lib/helpers.vn"        // relative file path
+use "auth"                   // vn_modules/auth/ directory
+use "zenith" as zt          // namespaced import
+```
 
-Names inside the prelude are loaded at global scope, while closures and inner scopes resolve locally.
+Resolution order: literal file path → `vn_modules/<name>/` → `$VARIAN_HOME/vn_modules/<name>/`.
 
-### 7.4. Automatic Module Inclusion
+### 7.3. Namespaced imports
 
-By placing libraries under `vn_modules/`, they are automatically imported into scope across all project script files.
+When `use "pkg" as alias` is used, the package is loaded into a namespaced struct:
 
-### 7.5. Separating Modules into Different Files
+```varian
+use "db" as database
+database.select("users").where("id", "=").build()
+```
 
-Larger applications separate concerns by writing distinct `.vn` files inside the `vn_modules/` directory.
+Functions starting with `_` are private and excluded from the export struct.
+
+### 7.4. The concatenation prelude
+
+All `.vn` files in `vn_modules/` are automatically concatenated as a prelude before your
+entry file. This means `new_app()`, `lumen_mount()`, etc. are always in scope with no
+imports needed.
+
+### 7.5. Scope resolution
+
+- **Globals**: declared with `let` at the top level. Visible everywhere after declaration.
+- **Locals**: declared inside functions, visible only in their scope.
+- **Upvalues**: captured by closures — see Chapter 13.
 
 ---
 
 ## 8. Common Collections
 
-### 8.1. Storing Lists of Values with Arrays
+### 8.1. Arrays
 
-Arrays are dynamic, type-erased lists of elements:
+Arrays are dynamic, type-erased lists:
+
 ```varian
 let list = [1, 2, "three", true]
+list.append(4)           // in-place mutation
+let copy = list.push(5)  // returns new array (COW)
+
+print(list.len())        // 5
+print(list[0])           // index access
 ```
-Adding to an array returns a new copy:
+
+Array methods (from `src/lib_string.c`):
+- `arr.len()` — element count
+- `arr.push(x)` — returns new array with `x` appended (COW)
+- `arr.append(x)` — mutates in place, geometric growth
+- `arr.join(sep)` — concatenates string elements with separator
+
+### 8.2. Strings
+
+Strings are immutable UTF-8 sequences:
+
 ```varian
-let updated = list.push("four")
+let s = "Hello, World!"
+print(s.len())              // 13
+print(s.upper())            // "HELLO, WORLD!"
+print(s.lower())            // "hello, world!"
+print(s.substring(0, 5))    // "Hello"
+print(s.contains("World"))  // true
+print(s.split(","))         // ["Hello", " World!"]
 ```
 
-### 8.2. Storing UTF-8 Encoded Text with Strings
+String methods:
+- `s.len()`, `s.upper()`, `s.lower()`
+- `s.substring(start)`, `s.substring(start, end)`
+- `s.trim()`, `s.split(delimiter)`
+- `s.starts_with(prefix)`, `s.ends_with(suffix)`
+- `s.index_of(needle)`, `s.last_index_of(needle)`
+- `s.contains(needle)`, `s.replace(old, new)`
+- `s.code_at(index)`, `string.from_codes(array)`
 
-Strings are immutable sequences of UTF-8 text. String manipulation methods return new string values:
+String interpolation (lexer `TOKEN_INTERPOLATED_STRING`):
+
 ```varian
-let text = "Hello"
-let upper = text.upper()
+let name = "Alice"
+let msg = "Hello, {name}!"       // "Hello, Alice!"
 ```
 
-### 8.3. Storing Keys with Associated Values in Hash Maps (Dynamic Structs)
+### 8.3. Dynamic structs as maps
 
-Varian uses structs to map keys to values, or builds them dynamically via `http.create_struct(keys, values)`.
+Varian has no dedicated hash map type. Use `http.create_struct` for key-value mappings:
+
+```varian
+let config = http.create_struct(
+    ["host", "port", "ssl"],
+    ["localhost", 5432, true]
+)
+print(config.host)       // "localhost"
+print(config.port)       // 5432
+
+// Dynamic field access at runtime
+let key = "host"
+let val = _validate.get_field(config, key)
+```
+
+The `_validate` module provides `get_field`, `set_field`, `has_field`, and `get_keys` for
+dynamic struct access.
 
 ---
 
 ## 9. Error Handling
 
-### 9.1. Unrecoverable Errors with throw
+### 9.1. `throw` — unrecoverable errors
 
-Throwing directly aborts execution if not handled in a try/catch:
 ```varian
-throw("unrecoverable error")
+throw("something went wrong")
+throw(errors.make("ConfigError", "Missing API key", "Set the API_KEY env variable"))
 ```
 
-### 9.2. Recoverable Errors with try/catch and ?
+A thrown value propagates up the call stack until caught or until it reaches the top level
+(which aborts the program).
 
-For standard error recovery, Varian provides `try/catch` blocks:
+### 9.2. `try` / `catch` — recoverable errors
+
 ```varian
 try {
-    throw("something went wrong")
+    let val = risky_operation()
+    print(val)
 } catch e {
-    print("Caught error: " + e)
+    print("Caught: " + e)
 }
 ```
-The `?` operator evaluates an expression. If it is `null`, it immediately propagates `null` as the return value of the enclosing function:
+
+The `catch` variable receives the thrown value. Without a `catch` variable:
+
 ```varian
-fn try_operation(a, b) {
-    let val = safe_div(a, b)? // returns null early if division fails
-    return val + 10
+try {
+    risky_operation()
+} catch {
+    print("Something went wrong")
 }
 ```
 
-### 9.3. Optional return propagation vs throw
+### 9.3. The `?` operator — early propagation
 
-Throwing errors is reserved for unexpected failures, while `null` and `?` are preferred for expected failures like missing keys.
+`expr?` evaluates `expr`. If it's `null`, the operator **returns `null` immediately** from
+the enclosing function:
+
+```varian
+fn lookup_user(id) {
+    let row = db_query("SELECT * FROM users WHERE id = ?", [id])?
+    return row
+}
+// If db_query returns null, lookup_user immediately returns null
+```
+
+### 9.4. The `errors` module
+
+The native `errors` module (`src/lib_errors.c:52-110`) provides structured error handling:
+
+```varian
+// Create an error struct
+let err = errors.make("ValidationError", "Email is invalid", "Use a valid email format")
+
+// Inspect errors
+print(errors.kind(err))          // "ValidationError"
+print(errors.explain(err))       // "Email is invalid — Use a valid email format"
+
+// Check error category
+if errors.is(err, "ValidationError") {
+    print("This is a validation error")
+}
+```
+
+The VM produces errors with these categories: `UndefinedName`, `NoSuchField`,
+`NoSuchMember`, `NoSuchMethod`, `DivByZero`, `IndexOutOfBounds`, `TypeMismatch`,
+`WrongArgCount`, `InfiniteRecursion`, `ClosedChannel`, `UncaughtError`.
+
+### 9.5. Catchable errors
+
+These runtime errors are catchable with `try`/`catch` (`tests/error_catch_test.vn`):
+
+```varian
+try {
+    let x = 1 / 0               // Division by zero
+} catch e {
+    print(errors.kind(e))       // "DivByZero"
+}
+
+try {
+    let arr = [1, 2, 3]
+    let x = arr[100]            // Index out of bounds
+} catch e {
+    print(errors.kind(e))       // "IndexOutOfBounds"
+}
+
+try {
+    let s = Point { x: 1 }
+    let y = s.z                  // No such field
+} catch e {
+    print(errors.kind(e))       // "NoSuchField"
+}
+```
+
+### 9.6. Best practices
+
+| Scenario | Mechanism |
+|---|---|
+| Expected absence (key not found, no input) | Return `null`, use `?.` and `??` |
+| Expected failure with reason | Return `(result, error_string)` tuple |
+| Unexpected / unrecoverable | `throw()` |
+| Any of the above at system boundary | `try/catch` |
 
 ---
 
 ## 10. Generic Types, Traits, and Lifetimes
 
-### 10.1. Type-Erased Generic Syntax
+### 10.1. Type-erased generics
 
-Generics are supported syntactically for static type checks and IDE diagnostics:
+Generics are accepted by the parser but **fully erased at compile time** — there is zero
+runtime overhead. They exist for `vn lint` and IDE support:
+
 ```varian
-struct Holder<T> { val: T }
+struct Holder<T> {
+    val: T
+}
+
+fn identity<T>(x: T) -> T {
+    return x
+}
 ```
-They are fully type-erased at compile-time and have no runtime speed penalties.
 
-### 10.2. Implicit Structural Traits
+### 10.2. Implicit structural traits
 
-Varian implements implicit structural typing. If a struct exposes the methods defined on a trait, it implicitly implements that trait without declaration:
+Traits define a set of methods. Any struct that implements those methods implicitly
+satisfies the trait — no explicit `impl Trait for Type` declaration needed:
+
 ```varian
 trait Greeter {
-    fn greet(self)
+    fn greet(self) -> string
 }
 
 struct Robot {}
 impl Robot {
-    fn greet(self) { print("Beep Boop") }
+    fn greet(self) -> string {
+        return "Beep boop"
+    }
 }
 
-fn do_greet(g: Greeter) {
-    g.greet()
+struct Human {}
+impl Human {
+    fn greet(self) -> string {
+        return "Hello!"
+    }
 }
-// Robot is accepted by do_greet automatically
+
+fn announce(g: Greeter) {
+    print(g.greet())
+}
+
+let r = Robot {}
+let h = Human {}
+announce(r)             // "Beep boop"
+announce(h)             // "Hello!"
 ```
 
-### 10.3. Memory Lifetimes: GC vs Bump Arenas
+### 10.3. Memory lifetimes
 
-Unlike Rust, lifetimes are handled dynamically by the VM's garbage collector or reclaimed in bulk within per-task bump arenas.
+Varian has no borrow checker. Lifetimes are managed by the GC and per-task bump arenas:
+
+- **GC heap** — structs live until the next mark-and-sweep cycle finds them unreachable.
+- **Per-task bump arena** — structs allocated during a request handler live until the task
+  finishes, then the arena is bulk-reclaimed (`arena_offset = 0`). If a struct escapes the
+  task (assigned to a global or sent via channel), `escape_promote` copies it to the GC heap.
+
+There is no way to manually free memory. The GC runs at safepoints between task ticks
+(`src/vm.c:3255`), never during allocation.
 
 ---
 
 ## 11. Writing Automated Tests
 
-### 11.1. How to Write Tests
+### 11.1. Test syntax
 
-Run `vn test` to walk files inside a `tests/` directory. Tests are declared via `test` blocks:
+Tests are declared with `test` blocks (`src/parser.c:1717-1749`):
+
 ```varian
 test "math square root" {
     assert_eq(math.sqrt(16.0), 4.0)
 }
+
+test "string upper" {
+    assert_eq("hello".upper(), "HELLO")
+}
+
+test "division by zero is catchable" {
+    assert_throws(|| {
+        let x = 1 / 0
+    })
+}
 ```
-Available assertion globals include: `assert_eq(a, b)`, `assert_ne(a, b)`, and `assert_throws(fn)`.
 
-### 11.2. Controlling How Tests Are Run
+Assertion globals:
+- `assert_eq(a, b)` — passes if `a == b`
+- `assert_ne(a, b)` — passes if `a != b`
+- `assert_throws(fn)` — passes if the zero-arg closure throws
 
-Run specific files or pass test paths to `vn test <path>` to narrow scope.
+### 11.2. Running tests
 
-### 11.3. Mocking and Intercepting Native Modules
+```bash
+./vn test                     # Run all tests in tests/
+./vn test tests/math_test.vn  # Run a specific file
+./vn test --filter "square"   # Run only tests matching the substring
+./vn test --timeout 30        # Set per-test timeout (default: 10s)
+```
 
-Tests can intercept and mock methods belonging to native modules:
+Each test runs in its own `Task` within a mini-scheduler. A passing test prints
+`✅ PASS: "description"`. A failing test prints `❌ FAIL: "description"` plus the error.
+
+### 11.3. Mocking native modules
+
+Mock any native module function with `mock.intercept` (`src/lib_mock.c`):
+
 ```varian
-let original = mock.intercept("sqlite", "query", |conn, sql, params| {
-    return [Row { id: 1, name: "Mock User" }]
+// Replace math.sqrt with a fake
+let original = mock.intercept("math", "sqrt", |x| {
+    return 42.0
 })
 
-// Run tests using mock behavior...
+assert_eq(math.sqrt(16.0), 42.0)   // uses the fake
 
-mock.restore("sqlite", "query", original)
+// Restore the original
+mock.restore("math", "sqrt", original)
+assert_eq(math.sqrt(16.0), 4.0)    // real implementation again
+```
+
+Useful for mocking database calls, HTTP requests, and time in tests:
+
+```varian
+test "database query with mock" {
+    let original = mock.intercept("sqlite", "query", |conn, sql, params| {
+        return [http.create_struct(["id", "name"], [1, "Mock User"])]
+    })
+
+    let rows = sqlite.query(null, "SELECT * FROM users", [])
+    assert_eq(rows[0].name, "Mock User")
+
+    mock.restore("sqlite", "query", original)
+}
 ```
 
 ---
 
 ## 12. Building a Command Line Program
 
-### 12.1. Accepting Command Line Arguments
+### 12.1. Accepting command line arguments
 
-Arguments are passed directly to script execution and are readable via system bindings.
+Command-line arguments are passed to the script after the script path:
 
-### 12.2. Reading a File
-
-Varian CLI inputs can be read from files using the `io` module:
 ```varian
-let contents = io.read_text("input.txt")
+// args.vn
+print("Arguments: " + json_encode(_args))
 ```
 
-### 12.3. Improving Modularity and Error Isolation
+```bash
+./vn args.vn --input file.txt --verbose
+```
 
-Break code into functional components and catch file access errors gracefully using `try/catch`.
+The `_args` global (registered by the VM) is an array of strings.
 
-### 12.4. Test-Driven CLI Refactoring
+### 12.2. Reading a file
 
-Write test blocks in the test folder to assert that CLI outputs are correctly processed.
+```varian
+let contents = io.read_text("input.txt")
+if contents == null {
+    print("File not found")
+    return
+}
+print(contents)
+```
 
-### 12.5. Working with Environment Variables
+Binary files:
 
-Varian queries the system environment using built-in config wrappers or via Python bridge.
+```varian
+let data = io.read_bytes("image.png")
+io.write_bytes("copy.png", data)
+```
 
-### 12.6. Redirecting Errors to Standard Error
+### 12.3. File system operations
 
-Errors in standard routines can be targeted specifically to standard error flows.
+```varian
+if io.exists("data/") {
+    let files = io.list_dir("data/")
+    for f in files {
+        print(f)
+    }
+}
+
+io.mkdir("output/")
+io.write_text("output/result.txt", "Hello, file!")
+io.delete("output/result.txt")
+```
+
+### 12.4. Environment variables
+
+```varian
+let host = env.get("HOST", "localhost")     // default if missing
+let port_str = env.get("PORT", "8080")
+
+// Crashes if missing:
+let api_key = env.require("API_KEY")
+
+// Load .env file:
+env.load()
+env.load("/etc/app/.env")
+```
+
+### 12.5. A complete CLI program
+
+```varian
+use "lib/config.vn"
+
+fn main() {
+    let args = _args
+    if args.len() == 0 {
+        print("Usage: app <file>")
+        return
+    }
+
+    let path = args[0]
+    let contents = io.read_text(path)
+    if contents == null {
+        print("Error: file not found: " + path)
+        return
+    }
+
+    let lines = contents.split("\n")
+    print("File: " + path + " (" + lines.len() + " lines)")
+    for i in 0..lines.len() {
+        print((i + 1) + ": " + lines[i])
+    }
+}
+
+main()
+```
 
 ---
 
 ## 13. Functional Features: Iterators and Closures
 
-### 13.1. Closures and Value Capture
+### 13.1. Closures
 
-Closures are created via pipe syntax `|args| { body }`. They capture scope variables **by value**:
+Closures are created with the pipe syntax `|params| body`:
+
 ```varian
 let factor = 2
 let double = |x| { return x * factor }
-print(double(10)) // 20
+print(double(10))           // 20
 ```
 
-### 13.2. Processing Sequential Items
+Arrow-style single-expression body:
 
-Loop constructs and range expressions iterate through arrays efficiently.
-
-### 13.3. Applying Iterators to the CLI Project
-
-Process file lines sequentially inside iterator-like ranges:
 ```varian
-let lines = contents.split("\n")
-for i in 0..lines.len() {
-    print("Line " + i + ": " + lines[i])
-}
+let triple = |x| x * 3
 ```
 
-### 13.4. Performance in Loops vs. Map Functions
+**Closures capture by value** (`tests/closure_capture_test.vn`). Each closure gets its own
+copy of the captured variable:
 
-Simple loop ranges execute at native VM speed via computed-goto, bypassing overhead from closure call allocations.
+```varian
+let fns = []
+for i in 0..5 {
+    fns = fns.push(|| { return i })
+}
+print(fns[0]())             // 0 — each closure captures its own i
+print(fns[1]())             // 1
+```
+
+### 13.2. Passing closures to functions
+
+```varian
+fn apply(f, x) {
+    return f(x)
+}
+
+let result = apply(|x| { return x * 2 }, 10)
+print(result)               // 20
+```
+
+### 13.3. Processing arrays
+
+```varian
+let nums = [1, 2, 3, 4, 5]
+let doubled = []
+for i in 0..nums.len() {
+    doubled = doubled.push(nums[i] * 2)
+}
+
+// Or with a helper:
+fn map(arr, f) {
+    let result = []
+    for i in 0..arr.len() {
+        result = result.push(f(arr[i]))
+    }
+    return result
+}
+let tripled = map(nums, |x| x * 3)
+```
+
+### 13.4. Performance considerations
+
+Simple `for` loops run at native VM speed via computed-goto dispatch
+(`src/vm.c:3640-3649`). Closure-based iteration adds call overhead. For hot paths, prefer
+direct loops.
 
 ---
 
 ## 14. Varian Tooling and Ecosystem
 
-### 14.1. Customizing Runtime Executable Flags
+### 14.1. The `vn` CLI
 
-Set environment variables to debug or optimize performance:
-*   `VN_DEBUG_AST=1`: Outputs AST.
-*   `VN_DEBUG_BYTECODE=1`: Outputs bytecode disassembly.
+| Command | Description |
+|---|---|
+| `vn` | Start interactive REPL |
+| `vn run <file>` | Execute a script |
+| `vn test [path]` | Run tests |
+| `vn fmt [path]` | Format code (comment-preserving) |
+| `vn lint [path]` | Static analysis (security, correctness, performance) |
+| `vn build [file]` | Bundle → `.vnb` or native binary with `--release` |
+| `vn lsp` | Start LSP server (VS Code, Neovim, Zed) |
+| `vn new <name>` | Scaffold an Aurora full-stack project |
+| `vn dev [dir] [port]` | Lumen dev server with live reload |
+| `vn add <pkg>` | Add a package dependency |
+| `vn install` | Install dependencies |
+| `vn doctor` | Check project health |
 
-### 14.2. Local Project Scaffolding and Publishing Scenarios
+### 14.2. Debug flags
 
-Scaffold new projects with `vn add` to declare local package dependencies.
-
-### 14.3. Multi-Module Project Workspaces
-
-Track dependencies across nested workspaces using the `varian.pkg` format.
-
-### 14.4. Installing the vn CLI Globally
-
-Compile and copy the `vn` executable to system paths (e.g. `/usr/local/bin`).
-
-### 14.5. Extending vn via Custom Wrappers
-
-Auto-generate Varian modules for foreign code:
 ```bash
-vn wrap python:numpy
+VN_DEBUG_AST=1 ./vn run script.vn       # Print AST
+VN_DEBUG_BYTECODE=1 ./vn run script.vn  # Print bytecode
+```
+
+### 14.3. Linting
+
+`vn lint` walks the AST and flags:
+
+- Unused variables
+- Type annotation mismatches
+- Concatenated SQL in strings (SQL injection risk)
+- Hardcoded secrets
+- N+1 query patterns (in Lumen templates)
+- Missing error handling
+
+### 14.4. The REPL
+
+```bash
+./vn
+> let x = 5
+> x * 10
+50
+> fn square(n) { return n * n }
+> square(7)
+49
 ```
 
 ---
 
 ## 15. Allocation, Smart Pointers, and GC Internals
 
-### 15.1. Heap Allocation and Sweep Cycles
+This chapter describes how Varian manages memory at the VM level. Understanding this helps
+you write predictable, high-performance code.
 
-Varian manages dynamic memory on the heap. Allocation triggers are periodically swept by a Mark-and-Sweep GC.
+### 15.1. The mark-and-sweep GC
 
-### 15.2. Treating Heap Objects as References
+The VM uses a **tri-color mark-and-sweep** collector (`src/vm.c:707-960`):
 
-Passing a struct into functions shares its memory address. Changes made within functions mutate the caller's struct value in-place.
+1. **Mark roots**: globals, main function, all task stacks + frame functions, dispatch table
+   entries (`gc_mark_roots`, `vm.c:740`).
+2. **Trace gray set**: walk into struct fields, array elements, tuples, enums, function
+   constants, closure captured values, actor state/inbox, channel buffers (`gc_trace`,
+   `vm.c:807`).
+3. **Sweep unmarked**: free all unmarked objects, remove unmarked strings from intern table
+   (`gc_sweep`, `vm.c:908`).
+4. **Resize**: `next_gc_size` doubles after each collection.
 
-### 15.3. GC Sweep Reclaim and Garbage Collection Details
+The GC runs **only at safepoints** — between ticks of the round-robin scheduler
+(`src/vm.c:3255`), never during an allocation. This eliminates "stop-the-world" latency at
+unpredictable moments.
 
-Object reference counters identify roots. Unreferenced items are recycled to prevent leaks.
+### 15.2. Heap object reference counts
 
-### 15.4. VM Object Reference Counts
+Every heap object (`ObjHeader`, `include/vm.h`) has an `obj_refs` field used by the GC
+for reachability analysis. The collector counts references from roots and traces
+transitive references — this is not a reference-counting collector, but the counter helps
+determine reachability during sweep.
 
-Every heap object tracking header contains a reference counter to assist GC reachability determinations.
+### 15.3. Per-task bump arenas
 
-### 15.5. Task-Local Bump Arenas and the escape_promote Write Barrier
+For short-lived allocations (typical in HTTP request handlers), Varian uses a **64 KB
+bump arena** per task (`src/vm.c:324-342`):
 
-To achieve high throughput (e.g. in HTTP request routing), Varian spawns request tasks with per-task bump arenas. If an arena object escapes to a channel, actor, or global binding, the `escape_promote` write barrier copies it to the GC heap.
+```c
+// src/vm.c — per-task bump arena
+void *task_arena_alloc(Task *t, size_t size) {
+    if (t && t->use_arena && t->arena_base) {
+        size_t aligned = (size + 7) & ~7;          // 8-byte align
+        if (t->arena_offset + aligned <= TASK_ARENA_SIZE) {
+            void *ptr = t->arena_base + t->arena_offset;
+            t->arena_offset += aligned;
+            memset(ptr, 0, size);
+            return ptr;
+        }
+    }
+    return malloc(size);                           // fallback to heap
+}
+```
 
-### 15.6. Reference Cycles and Cycle Collection
+- Arena is enabled per-task via `task_arena_enable(t)`.
+- Structs allocated in the arena are **not** linked into `vm->objects` — they bypass the GC
+  entirely.
+- On task completion, `arena_offset` is reset to 0 — bulk reclamation with zero cost.
 
-The Mark-and-Sweep garbage collector resolves circular references that cannot be collected by pure reference counting.
+### 15.4. The `escape_promote` write barrier
+
+When an arena-backed struct escapes the task (assigned to a global, sent through a channel,
+or captured by a spawned task), the `escape_promote` function (`src/vm.c:659`) deep-copies
+it to the GC heap:
+
+```c
+// src/vm.c — escape_promote deep-copies arena structs to GC heap
+Value escape_promote(VM *vm, Value val) {
+    if (!is_in_arena(vm, val)) return val;   // not in arena, no copy needed
+    // Deep copy the struct and all its references to the GC heap
+    ...
+}
+```
+
+This is automatic and invisible. The only observable effect: after escaping, the struct is
+now GC-managed instead of arena-managed.
+
+### 15.5. Object pooling (task free-list)
+
+Dead tasks are not freed — they're pushed to a **free-list** (`src/vm.c:2435-2467`) and
+recycled on the next `task.spawn()`:
+
+```c
+Task *task_new(VM *vm) {
+    Task *t = vm->free_tasks;
+    if (t) {
+        vm->free_tasks = (Task *)t->http_response_ssl;  // pop from free list
+        memset(t, 0, sizeof(Task));
+        return t;
+    }
+    return (Task *)calloc(1, sizeof(Task));
+}
+```
+
+### 15.6. Reference cycles
+
+The mark-and-sweep collector handles reference cycles that pure reference counting cannot.
+If struct A references struct B and B references A, and both are unreachable from roots,
+both will be freed in the sweep phase.
 
 ---
 
 ## 16. Cooperative Concurrency
 
-### 16.1. Green-Thread Tasks
+### 16.1. Green-thread tasks
 
-Varian runs cooperative green threads scheduled in a single-threaded round-robin loop:
+Tasks are cooperatively scheduled green threads (`src/vm.c:3262-3317`). Spawn a task with
+`task.spawn`:
+
 ```varian
-fn run_worker(id) {
-    print("Task " + id + " running")
+fn worker(id) {
+    print("Task " + id + " starting")
     task.yield()
-    print("Task " + id + " completed")
+    print("Task " + id + " resuming")
 }
 
-task.spawn(run_worker, [1])
+let t = task.spawn(worker, [1])
+let t2 = task.spawn(worker, [2])
+
+await t     // wait for task to complete
+await t2
 ```
 
-### 16.2. Channels and Automated Backpressure
+The scheduler round-robins tasks sequentially. Only **one task runs at a time** — there
+is no parallelism, which means **no race conditions on shared state**.
 
-Channels enable safe data transfer between tasks:
+### 16.2. Yielding
+
+A task yields the scheduler voluntarily:
+- Explicitly: `task.yield()`
+- On channel operations: `ch <- val` (send), `<- ch` (receive)
+- On `task.sleep(ms)`: non-blocking sleep
+- On `await`: wait for another task to complete
+
 ```varian
-let ch = task.channel(2) // buffer capacity of 2
+loop {
+    let msg = <- ch
+    if msg == null { break }
+    process(msg)
+    task.yield()    // let other tasks run
+}
 ```
-*   `ch <- value` yields the sending task if the buffer is full.
-*   `<- ch` yields the receiving task if the buffer is empty.
 
-### 16.3. Stateful Actors and Isolation (Preventing Shared-State Hazards)
+### 16.3. Channels
 
-Actors isolate state. Calling an actor method yields the caller and schedules message execution within the actor's thread loop:
+Channels are bounded, circular buffers for task communication:
+
+```varian
+let ch = task.channel(10)       // capacity 10
+
+// Send (yields if full)
+ch <- "hello"
+let result = 42
+ch <- result
+
+// Receive (yields if empty)
+let val = <- ch
+
+// Try receive (non-blocking)
+let val = task.try_receive(ch)
+
+// Close
+task.close(ch)
+```
+
+**Automated backpressure**: If the channel is full, the sender yields until space is
+available. If the channel is empty, the receiver yields until data arrives.
+
+```varian
+fn producer(ch) {
+    for i in 0..100 {
+        ch <- i             // yields if buffer full
+    }
+    task.close(ch)
+}
+
+fn consumer(ch) {
+    loop {
+        let val = <- ch     // yields if buffer empty
+        if val == null { break }
+        print("Got: " + val)
+    }
+}
+
+let ch = task.channel(10)
+task.spawn(producer, [ch])
+task.spawn(consumer, [ch])
+```
+
+### 16.4. Stateful actors
+
+Actors isolate state behind a message-passing interface. An actor has internal fields and
+methods — calling a method sends a message to the actor's mailbox:
+
 ```varian
 actor Counter {
     val: int = 0,
+
     fn increment(self) {
         self.val = self.val + 1
     }
+
+    fn get(self) -> int {
+        return self.val
+    }
 }
+
 let c = Counter.spawn()
 c.increment()
+c.increment()
+print(c.get())              // 2
 ```
 
-### 16.4. Task Yielding Scheduling Safety
+**How actors work internally** (`src/vm.c:2936-3051`):
 
-Because Varian schedules cooperatively, tasks must call `task.yield()` or perform I/O to share scheduler threads.
+1. `Counter.spawn()` creates an `ObjActor` with an inbox channel (capacity 64).
+2. A background `loop_task` (with `is_actor_loop = true`) polls the inbox.
+3. `c.increment()` sends a `(method_name, args, reply_ch)` tuple to the inbox.
+4. The loop task runs the method, sends the result back via `reply_ch`.
+5. The calling task yields until the result arrives.
+
+Actors provide **deterministic isolation** — state is never shared, only messages. Since
+the VM is single-threaded, actor messages are processed atomically: one message per
+scheduler tick.
 
 ---
 
 ## 17. Fundamentals of Asynchronous Programming
 
-### 17.1. Cooperative Scheduling Loop
+### 17.1. The cooperative scheduling loop
 
-The core scheduler loops over active tasks, yielding execution contexts cleanly.
+The core scheduler (`src/vm.c:3248-3360`) iterates over all tasks:
 
-### 17.2. Applying Concurrency with Async Tasks
+```
+while tasks remain:
+    for each task t:
+        if t is dead: continue
+        t.yielded = false
+        task_run(vm, t)             // runs until yield or completion
+        if all tasks idle:
+            nanosleep(1ms)          // idle backoff
+    gc_collect()                     // safepoint
+```
 
-Spawn concurrent async functions and interact with channels to manage background data flow.
+Because scheduling is cooperative, a tight loop that never yields will block all other
+tasks. Always include a `task.yield()` or channel operation in long-running loops.
 
-### 17.3. Working with Multiple Channels (Select Multiplexing)
+### 17.2. Spawning concurrent tasks
 
-Read from channels sequentially or implement polling constructs to prevent task blockages.
-
-### 17.4. Continuous Streams and Channels
-
-Read stream chunks off persistent channels continuously to process data fragments.
-
-### 17.5. Structural Interfaces for Async
-
-Tasks utilize implicit structural typing to resolve stream and channel types.
-
-### 17.6. Futures, Tasks, and Threads (Single-Threaded Worker Pools)
-
-Background workers utilize channels to process task jobs asynchronously:
 ```varian
-let pool = WorkerPool { ch: task.channel(100), count: 0, workers: 0 }
+fn fetch_url(url, ch) {
+    let resp = http.get(url)
+    ch <- resp
+}
+
+let ch = task.channel(10)
+task.spawn(fetch_url, ["https://api.example.com/data", ch])
+task.spawn(fetch_url, ["https://api.example.com/other", ch])
+
+let result1 = <- ch
+let result2 = <- ch
+```
+
+### 17.3. Worker pools
+
+The `queue.vn` module provides a built-in `WorkerPool`:
+
+```varian
+// Spawn a pool of 4 workers
+let pool = WorkerPool { ch: task.channel(100), count: 0, workers: 0, stopped: false }
 pool.spawn(4)
+
+// Submit work
+pool.submit(|| {
+    print("Working...")
+    return 42
+})
+
+// Stop the pool
+pool.stop()
+```
+
+### 17.4. Cron jobs
+
+```varian
+cron(5000, || {                // every 5 seconds
+    print("Tick")
+})
+```
+
+The `cron` function spawns a task that sleeps for `interval_ms`, runs the handler, and
+loops.
+
+### 17.5. Channels for streaming
+
+```varian
+fn stream_lines(path, ch) {
+    let contents = io.read_text(path)
+    if contents == null {
+        task.close(ch)
+        return
+    }
+    let lines = contents.split("\n")
+    for i in 0..lines.len() {
+        ch <- lines[i]          // stream one line at a time
+    }
+    task.close(ch)
+}
+
+let ch = task.channel(10)
+task.spawn(stream_lines, ["large_file.txt", ch])
+
+loop {
+    let line = <- ch
+    if line == null { break }
+    process_line(line)
+}
 ```
 
 ---
 
 ## 18. Object-Oriented Patterns in Varian
 
-### 18.1. Characteristics of Object-Oriented Languages (Encapsulation)
+### 18.1. Encapsulation with structs + impl
 
-Varian encapsulates data in structs and behavior in `impl` blocks.
+Varian has no access modifiers (no `private`/`public`). Encapsulation is achieved by
+convention: internal helper functions are prefixed with `_`:
 
-### 18.2. Trait Objects and Structural Typing Parameters
+```varian
+fn _validate_email(email) {
+    return email.contains("@")
+}
 
-Implicit traits function as trait objects, enabling polymorphic method dispatching.
+struct User {
+    name: string,
+    email: string,
+}
 
-### 18.3. Decoupling State and Behavior with impl Blocks
+impl User {
+    fn is_valid(self) -> bool {
+        return _validate_email(self.email)
+    }
+}
+```
 
-Keep structs clean by isolating their algorithms inside decoupled implementation blocks.
+### 18.2. Polymorphism via structural traits
+
+Trait objects enable polymorphic dispatch without inheritance:
+
+```varian
+trait Formatter {
+    fn format(self, val) -> string
+}
+
+struct JsonFormatter {}
+impl Formatter {
+    fn format(self, val) -> string {
+        return json_encode(val)
+    }
+}
+
+struct PlainFormatter {}
+impl Formatter {
+    fn format(self, val) -> string {
+        return "" + val
+    }
+}
+
+fn print_formatted(f: Formatter, val) {
+    print(f.format(val))
+}
+
+let json_f = JsonFormatter {}
+let plain_f = PlainFormatter {}
+print_formatted(json_f, [1, 2, 3])   // "[1,2,3]"
+print_formatted(plain_f, [1, 2, 3])  // "1,2,3"
+```
+
+### 18.3. State and behavior separation
+
+Structs hold data; `impl` blocks define behavior. Multiple `impl` blocks for the same
+struct are allowed:
+
+```varian
+struct Point { x: int, y: int }
+
+impl Point {
+    fn distance_from_origin(self) -> float {
+        return math.sqrt(self.x * self.x + self.y * self.y)
+    }
+}
+
+impl Point {
+    fn to_string(self) -> string {
+        return "(" + self.x + ", " + self.y + ")"
+    }
+}
+```
 
 ---
 
 ## 19. Pattern Matching and Guards
 
-### 19.1. Where Pattern Matching Applies
+### 19.1. Where `match` applies
 
-Pattern matching is supported inside `match` blocks for structs, enums, values, and range checks.
+`match` works on:
+- Enum variants (with payload unpacking)
+- Integer constants
+- String constants
+- Ranges
+- Wildcards (`_`)
 
-### 19.2. Match Guards and Exhaustiveness Warnings
-
-Apply `if` conditions as guards on match arms:
 ```varian
-match status_code {
-    500 if server_active == false => print("Fatal Error"),
-    _ => print("Default case")
+enum HttpStatus {
+    Ok(int),
+    NotFound,
+    Error(string),
+}
+
+fn describe(status) -> string {
+    return match status {
+        HttpStatus::Ok(code) if code < 300 => "Success",
+        HttpStatus::NotFound => "Not Found",
+        HttpStatus::Error(msg) => "Error: " + msg,
+        _ => "Unknown"
+    }
 }
 ```
 
-### 19.3. Pattern Syntax (Constants, Ranges, Wildcards, Bindings)
+### 19.2. Match guards
 
-Varian matches integers, strings, enum constructors, and wildcards (`_`).
+Guards are `if` conditions attached to match arms:
+
+```varian
+match x {
+    n if n < 10 => print("small"),
+    n if n < 100 => print("medium"),
+    _ => print("large")
+}
+```
+
+### 19.3. Pattern syntax
+
+| Pattern | Example | Matches |
+|---|---|---|
+| Constant | `42` | The integer 42 |
+| String | `"hello"` | The string "hello" |
+| Range | `0..10` | Integers 0 through 9 |
+| Wildcard | `_` | Any value |
+| Binding | `x` | Any value, bound to name |
+| Enum | `Result::Ok(v)` | Enum variant with payload bound to `v` |
+| Guard | `x if x > 0` | Binding with condition |
 
 ---
 
 ## 20. Advanced Features
 
-### 20.1. Direct C FFI via @ffi
+### 20.1. Direct C FFI via `@ffi`
 
-Bind C shared libraries directly without wrapper scripts:
+Call any C shared library function without wrapper code:
+
 ```varian
 @ffi("libm.so.6", "sqrt")
 fn c_sqrt(x: c_double) -> c_double
+
+@ffi("libpthread.so.0", "pthread_self")
+fn pthread_self() -> ptr
+
+let result = c_sqrt(16.0)   // 4.0
 ```
 
-### 20.2. Advanced Structural Traits
+The `@ffi` decorator (`src/vm.c:2546-2586`) registers the library + symbol in `ffi_decls[]`.
+At VM init, the library is loaded with `dlopen` and the symbol resolved with `dlsym`. At
+runtime, `BC_FFI_CALL` invokes the function via libffi.
 
-Traits are resolved during static linting to ensure method compliance across inputs.
+FFI parameter types: `c_int`, `c_double`, `c_float`, `c_char`, `ptr`.
 
-### 20.3. Runtime Primitive Casting and Type Validation
+### 20.2. The `@cache` decorator
 
-Cast strings to numbers using native parsing libraries, or check type fields dynamically.
+Caches the return value of a function based on its arguments:
 
-### 20.4. First-Class Functions and Closures
-
-Pass functions and closures as variables, capturing environmental scope parameters by value.
-
-### 20.5. Compile-Time Evaluation with comptime
-
-Bake query values or math constants during compilation:
 ```varian
-let val = comptime {
-    return 100 * 200
+@cache
+fn expensive_calc(n) {
+    // ... expensive computation ...
+    return result
+}
+
+expensive_calc(42)   // computes and caches
+expensive_calc(42)   // returns cached result
+```
+
+The cache uses `cache_key_hash(fn, args)` and `cache_map` (`src/vm.c:4196-4209`).
+
+### 20.3. The `@retry` decorator
+
+Retries a function up to N times on failure:
+
+```varian
+@retry(3)
+fn fetch_data(url) {
+    let resp = http.get(url)
+    if resp == null { throw("network error") }
+    return resp
+}
+
+fetch_data("https://example.com/api")   // retries up to 3 times
+```
+
+`@retry(n)`: on `throw` or native error, decrements the retry counter and restarts the
+function from the beginning (`src/vm.c:4151-4177`).
+
+### 20.4. Compile-time evaluation with `comptime`
+
+`comptime { ... }` executes the block at compile time and inlines the result:
+
+```varian
+let sql = comptime {
+    select("users")
+        .fields(["id", "name", "email"])
+        .where("id", "=")
+        .build()
+}
+// sql.sql == "SELECT id, name, email FROM users WHERE id = ?"
+// sql.param_count == 1
+```
+
+How it works (`src/vm.c:2316-2366`):
+1. The body is compiled into a temporary `ObjFunction`.
+2. It's executed immediately in a synchronous `task_run()`.
+3. The result value is stored back into the outer function's constant table.
+4. The body runs at **lexical position** — it can see previously defined globals but not
+   local variables.
+
+### 20.5. The Python bridge
+
+Call any Python library via `python.run`:
+
+```varian
+python.run("import json")
+let data = python.run("json.dumps({'hello': 'world'})")
+```
+
+For external SDK access (S3, etc.):
+
+```varian
+fn upload_to_s3(bucket, key, data) {
+    python.run("
+import boto3
+s3 = boto3.client('s3')
+s3.put_object(Bucket='" + bucket + "', Key='" + key + "', Body=" + json_encode(data) + ")
+    ")
 }
 ```
 
@@ -889,82 +1871,342 @@ let val = comptime {
 
 ## 21. Final Project: Web Programming with Zenith
 
-### 21.1. Zenith App Routing and Tri-Tries
+This chapter builds a complete web application using Zenith (HTTP framework) and Lumen
+(frontend framework) within an Aurora project structure.
 
-Zenith registers route paths using segment-based radix tries:
-```varian
-let app = new_app()
-app.get("/welcome", |req| {
-    return Response { status: 200, body: "Welcome!", content_type: "text/plain" }
-}, "Welcome Route")
+### 21.1. Scaffolding
+
+```bash
+vn new task-tracker
+cd task-tracker
 ```
 
-### 21.2. Middleware Chains
+This creates:
+```
+task-tracker/
+  main.vn                    # Zenith API server
+  pages/                     # Lumen frontend
+    index.lumen
+    components/
+  lib/                       # Shared modules
+    config.vn
+  public/                    # Static assets (favicons, manifest)
+  constellation.toml         # kind = "aurora"
+```
 
-Middlewares intercept and process requests sequentially:
+### 21.2. The API server
+
 ```varian
-app.add_middleware(|req, next| {
-    print("Path: " + req.path)
-    return next(req)
+// main.vn — Zenith HTTP server
+let app = new_app()
+app.title = "Task Tracker"
+
+// Middleware
+app.add_middleware(logging_middleware)
+
+// Routes
+app.get("/api/tasks", |req| {
+    let rows = sqlite.query(conn, "SELECT * FROM tasks ORDER BY id DESC", [])
+    return json_response(rows, 200)
+}, "List all tasks", null)
+
+app.post("/api/tasks", |req| {
+    let title = req.json.title
+    if title == null { return json_response({ error: "Title required" }, 400) }
+    sqlite.query(conn, "INSERT INTO tasks (title) VALUES (?)", [title])
+    return json_response({ ok: true }, 201)
+}, "Create a task", null)
+
+app.delete("/api/tasks/:id", |req| {
+    sqlite.query(conn, "DELETE FROM tasks WHERE id = ?", [req.params.id])
+    return json_response({ ok: true }, 200)
+}, "Delete a task", null)
+
+// OpenAPI docs
+app.enable_docs("/docs")
+
+app.listen(8080)
+```
+
+### 21.3. Middleware
+
+```varian
+fn logging_middleware(req, next) {
+    let start = time.now_ms()
+    let resp = next(req)
+    let elapsed = time.now_ms() - start
+    print(req.method + " " + req.path + " → " + resp.status + " (" + elapsed + "ms)")
+    return resp
+}
+
+// Security middleware from shield.vn
+app.add_middleware(cors(["*"], ["GET", "POST", "PUT", "DELETE"], ["*"]))
+app.add_middleware(rate_limit(100, 60000))
+```
+
+### 21.4. Database with comptime ORM
+
+```varian
+let conn = sqlite.connect("tasks.db")
+
+// Compile query at build time — zero runtime SQL construction
+let select_all = comptime {
+    select("tasks")
+        .fields(["id", "title", "done", "created_at"])
+        .build()
+}
+// select_all.sql == "SELECT id, title, done, created_at FROM tasks"
+// select_all.param_count == 0
+
+let insert_task = comptime {
+    select("tasks")          // insert uses select builder for parameter shape
+        .fields(["title"])
+        .build()
+}
+
+// Bind and execute
+let rows = run_sqlite(bind(select_all, []), conn)
+sqlite.query(conn, "INSERT INTO tasks (title) VALUES (?)", ["Buy groceries"])
+```
+
+### 21.5. Lumen frontend
+
+```html
+<!-- pages/index.lumen -->
+<template>
+<Page>
+  <Container size="md">
+    <Stack gap="4">
+      <Heading size="3xl">Task Tracker</Heading>
+
+      <Row gap="2">
+        <input class="input" id="new-task" placeholder="Add a task..." />
+        <Button @click="addTask">Add</Button>
+      </Row>
+
+      <Stack gap="2">
+        <Card @for="task in tasks">
+          <Row justify="space-between" align="center">
+            <Text>{{ task.title }}</Text>
+            <Button variant="ghost" @click="deleteTask" data-id="{{ task.id }}">✕</Button>
+          </Row>
+        </Card>
+      </Stack>
+
+      <Text muted>You have {{ tasks.len() }} tasks.</Text>
+    </Stack>
+  </Container>
+</Page>
+</template>
+
+<script>
+fn state() {
+    return { tasks: [], input: "" }
+}
+
+fn addTask(s, v) {
+    let title = _validate.get_field(document, "getElementById")("new-task").value
+    http.post("/api/tasks", json_encode({ title: title }), "")
+    let rows = http.get("/api/tasks")
+    return s.set("tasks", json_decode(rows))
+}
+
+fn deleteTask(s, v) {
+    let id = v.getAttribute("data-id")
+    http.delete("/api/tasks/" + id)
+    let rows = http.get("/api/tasks")
+    return s.set("tasks", json_decode(rows))
+}
+</script>
+```
+
+### 21.6. Sessions (stateless JWT)
+
+```varian
+let secret = "change-me-in-production"
+
+// Set session data
+let resp = session_set(
+    json_response({ ok: true }, 200),
+    http.create_struct(["uid", "role"], [1, "admin"]),
+    secret,
+    null
+)
+
+// Read session data
+let session = session_get(req, secret)
+if session == null {
+    return json_response({ error: "Not authenticated" }, 401)
+}
+print(session.uid)      // 1
+
+// Clear session
+let resp = session_clear(json_response({ ok: true }, 200))
+```
+
+### 21.7. File storage
+
+```varian
+let store = new_storage("uploads/")
+
+// Write
+store.put("avatar-1.png", io.read_bytes("local-avatar.png"))
+
+// Read
+let bytes = store.get("avatar-1.png")
+
+// List
+store.list()
+
+// Delete
+store.delete("avatar-1.png")
+```
+
+### 21.8. Background jobs
+
+```varian
+// Worker pool for email
+let pool = WorkerPool { ch: task.channel(100), count: 0, workers: 0, stopped: false }
+pool.spawn(4)
+
+pool.submit(|| {
+    send_smtp("localhost", 1025, "noreply@example.com",
+              "user@example.com", "Welcome!", "Thanks for signing up!")
+})
+
+// Cron job for maintenance
+cron(3600000, || {          // every hour
+    sqlite.query(conn, "DELETE FROM tasks WHERE done = 1 AND created_at < ?",
+                 [time.now_ms() - 86400000])
 })
 ```
 
-### 21.3. Comptime Database ORM
+### 21.9. Testing
 
-Bake query statements at compile time to eliminate string-concatenation SQL overhead:
 ```varian
-let select_user = comptime {
-    select("users")
-        .fields(["id", "name"])
-        .where("id", "=")
-        .build()
+test "GET /api/tasks returns array" {
+    let req = http.test_request("GET", "/api/tasks", "")
+    let resp = app.handle(req)
+    assert_eq(resp.status, 200)
+    let body = json_decode(resp.body)
+    assert_ne(body, null)
 }
 ```
-
-### 21.4. Graceful Shutdown and Cleanup
-
-Close listening server sockets and finish active worker channel jobs prior to exiting.
 
 ---
 
 ## 22. Appendices
 
-### 22.1. Appendix A: Keywords and Special Identifiers
+### 22.1. Appendix A: Keywords
 
-`let`, `fn`, `struct`, `impl`, `actor`, `enum`, `trait`, `match`, `try`, `catch`, `throw`, `loop`, `break`, `continue`, `while`, `for`, `in`, `null`.
+```
+let, const, fn, return, if, else, while, for, in, loop,
+match, case, struct, enum, actor, impl, trait, type, use,
+pub, mut, async, await, break, continue, try, catch,
+assert, test, comptime, true, false, null, as,
+bool, int, float, string, byte, void,
+and, or, not           (word-form logical operators)
+```
 
-### 22.2. Appendix B: Language Tooling (vn fmt and vn lint)
+### 22.2. Appendix B: Operators (by precedence)
 
-*   `vn fmt`: Comment-preserving re-lexer.
-*   `vn lint`: AST-walking lint rules (detects correctness, security, performance).
+Precedence from lowest to highest (`src/parser.c`):
 
-### 22.3. Appendix C: Field Decorators
+| Level | Operators | Associativity |
+|---|---|---|
+| Range | `..` | Left |
+| Assignment | `=`, `+=`, `-=`, `*=`, `/=`, `<-` | Right |
+| Nil coalesce | `??` | Left |
+| Logical OR | `\|\|`, `or` | Left |
+| Logical AND | `&&`, `and` | Left |
+| Equality | `==`, `!=` | Left |
+| Comparison | `<`, `>`, `<=`, `>=` | Left |
+| Bit OR | `\|` | Left |
+| Bit XOR | `^` | Left |
+| Bit AND | `&` | Left |
+| Term | `+`, `-` | Left |
+| Factor | `*`, `/`, `%` | Left |
+| Unary | `-`, `!`, `not`, `~`, `await`, `<-` (receive) | Right |
+| Call | `()`, `[]`, `.`, `?.`, `expr?`, `Type{}` | Left |
 
-Supported rules: `@is_email`, `@is_url`, `@is_alphanumeric`, `@min_len(n)`, `@max_len(n)`, `@is_uuid`.
+### 22.3. Appendix C: Field decorators
 
-### 22.4. Appendix D: Useful Development Tools
+| Decorator | Description |
+|---|---|
+| `@is_email` | Validates email format |
+| `@is_url` | Validates URL format |
+| `@is_alphanumeric` | Validates alphanumeric only |
+| `@is_uuid` | Validates UUID format |
+| `@min_len(n)` | Minimum string length |
+| `@max_len(n)` | Maximum string length |
 
-Use `vn doctor` to check DB states, env variables, N+1 loops, and project code hygiene.
+### 22.4. Appendix D: Native modules
 
-### 22.5. Appendix E: Editions and VM Releases
+| Module | Functions |
+|---|---|
+| `math` | `sin`, `cos`, `sqrt`, `abs`, `floor`, `ceil`, `bit_and`, `bit_or`, `bit_xor` |
+| `io` | `read_text`, `write_text`, `read_bytes`, `write_bytes`, `exists`, `mkdir`, `delete`, `list_dir` |
+| `task` | `spawn`, `yield`, `sleep`, `channel`, `close`, `try_receive`, `id` |
+| `time` | `now_ms`, `now_iso8601` |
+| `env` | `get`, `require`, `load` |
+| `errors` | `make`, `kind`, `is`, `explain` |
+| `http` | `get`, `post`, `serve`, `serve_tls`, `create_struct`, `write_socket`, `read_socket`, `close_socket`, `test_request` |
+| `auth` | `hash_sha256`, `sign_jwt`, `verify_jwt`, `hash_password`, `verify_password`, `generate_token`, `constant_time_eq`, `sha1_base64` |
+| `sqlite` | `connect`, `query`, `close` |
+| `postgres` | `connect`, `query`, `close` |
+| `redis` | `connect`, `cmd`, `close` |
+| `smtp` | `send` |
+| `regex` | `test`, `match`, `groups`, `find_all`, `replace` |
+| `validate` | `is_email`, `is_url`, `is_alphanumeric`, `is_uuid`, `min_len`, `max_len` |
+| `mock` | `intercept`, `restore` |
+| `python` | `run` |
 
-Varian follows semantic version releases tracked under the language specification roadmap.
+### 22.5. Appendix E: Varian modules (`.vn` prelude)
 
-### 22.6. Appendix F: Global Documentation and Translations
+All files in `vn_modules/` are auto-loaded at global scope:
 
-Varian documentation supports internationalization standards to localize compiler warnings and specs.
+| Module | Provides |
+|---|---|
+| `zenith.vn` | `new_app()`, routing, middleware, WebSocket, SSE, OpenAPI, sessions, templates |
+| `lumen.vn` | `lumen_component`, `lumen_mount`, `lumen_store`, `lumen_resource`, `lumen_form`, 28 UI components |
+| `db.vn` | `select()`, `bind()`, `run_sqlite()`, `run_postgres()`, `QueryBuilder` |
+| `auth.vn` | `zenith_auth.jwt()`, `zenith_auth.session_store()`, `zenith_auth.session()` |
+| `shield.vn` | `cors()`, `csrf()`, `rate_limit()`, `rate_limit_redis()` |
+| `queue.vn` | `WorkerPool`, `cron()` |
+| `mail.vn` | `send_smtp()`, `send_resend()` |
+| `storage.vn` | `new_storage()`, `.put()`, `.get()`, `.delete()`, `.list()` |
+| `observe.vn` | `Logger.info()`, `.warn()`, `.error()`, `.info_with()`, `metrics_handler()` |
+| `validate.vn` | `Validator`, `ObjectValidator` — chained validation |
 
-### 22.7. Appendix G: The owo Syntax Color Scheme
+### 22.6. Appendix F: Error categories
 
-Varian editor extensions utilize the **owo color scheme**, designed to present a high-contrast, playful syntax layout distinct from standard language themes:
+Errors thrown by the VM have these `kind` values (from `src/lib_errors.c`):
 
-| Element | Color Type | Hex Code | Description |
-| :--- | :--- | :--- | :--- |
-| **Keywords** | Pastel Pink | `#ff9ebb` | Used for `let`, `fn`, `struct`, `impl`, `match`, `loop`, etc. |
-| **Operators** | Warm Coral | `#ff6f69` | Highlight for `<-`, `?.`, `??`, `+`, `-`, `=`, and comparative tokens. |
-| **Functions** | Soft Lavender | `#d0bdf4` | Applied to function declarations and method call identifiers. |
-| **Types** | Mint Green | `#a8e6cf` | Used for type annotations (`int`, `float`, `string`, `c_double`). |
-| **Strings** | Creamy Peach | `#ffd3b6` | Represents string literals and character data. |
-| **Numbers** | Butter Yellow | `#fffaaa` | Highlights constant integer and float values. |
-| **Comments** | Slate Gray | `#8892b0` | Demarcates line comments and documentation text. |
-| **Decorators** | Neon Purple | `#b388ff` | Identifies field constraints and macros like `@ffi` or `@is_email`. |
+| Category | Trigger |
+|---|---|
+| `UndefinedName` | Reference to an undefined variable |
+| `NoSuchField` | Struct field access on missing field |
+| `NoSuchMember` | Method call on non-existent method |
+| `NoSuchMethod` | Dispatch to unimplemented method |
+| `DivByZero` | Integer division by zero |
+| `IndexOutOfBounds` | Array index outside valid range |
+| `TypeMismatch` | Operation on incompatible types |
+| `WrongArgCount` | Function call with wrong argument count |
+| `InfiniteRecursion` | Stack overflow detected |
+| `ClosedChannel` | Send on closed channel |
+| `UncaughtError` | Error reached top level |
+
+### 22.7. Appendix G: The `owo` syntax color scheme
+
+The VS Code extension applies the `owo` color scheme:
+
+| Element | Color | Hex |
+|---|---|---|
+| Keywords | Pastel Pink | `#ff9ebb` |
+| Operators | Warm Coral | `#ff6f69` |
+| Functions | Soft Lavender | `#d0bdf4` |
+| Types | Mint Green | `#a8e6cf` |
+| Strings | Creamy Peach | `#ffd3b6` |
+| Numbers | Butter Yellow | `#fffaaa` |
+| Comments | Slate Gray | `#8892b0` |
+| Decorators | Neon Purple | `#b388ff` |

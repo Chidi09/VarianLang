@@ -103,11 +103,11 @@ static Value lib_auth_sign_jwt(VM *vm, int arg_count, Value *args) {
 
     /* Encode header */
     ObjStruct *header = new_struct(vm, 2, false);
-    header->field_names[0] = strdup("alg");
+    free(header->field_names);
+    static const char *names[] = { "alg", "typ" };
+    struct_attach_shape(vm, header, NULL, (char *const *)names, 2);
     header->fields[0] = val_string(copy_string("HS256", 5));
-    header->field_names[1] = strdup("typ");
     header->fields[1] = val_string(copy_string("JWT", 3));
-    header->type_name = NULL;
     int header_json_len;
     char *header_json = json_encode(vm, val_struct(header), &header_json_len);
     /* Encode payload */

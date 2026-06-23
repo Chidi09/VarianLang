@@ -89,10 +89,12 @@ static Value lib_errors_make(VM *vm, int argc, Value *args) {
         return val_nil();
     }
     ObjStruct *s = new_struct(vm, 3, false);
-    s->type_name = strdup("Error");
-    s->field_names[0] = strdup("kind");    s->fields[0] = args[b];
-    s->field_names[1] = strdup("message"); s->fields[1] = args[b + 1];
-    s->field_names[2] = strdup("hint");    s->fields[2] = args[b + 2];
+    free(s->field_names);
+    static const char *names[] = { "kind", "message", "hint" };
+    struct_attach_shape(vm, s, "Error", (char *const *)names, 3);
+    s->fields[0] = args[b];
+    s->fields[1] = args[b + 1];
+    s->fields[2] = args[b + 2];
     return val_struct(s);
 }
 

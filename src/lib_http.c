@@ -344,17 +344,16 @@ static const char *REQ_FIELD_NAMES[] = {
 };
 #define REQ_FIELD_COUNT 9
 
-/* Point field_names at static strings when the struct is arena-backed
- * (the hot path — GC never sweeps arena structs individually). For
- * heap-backed structs we must still strdup so the GC can free them. */
-static void set_static_field_names(ObjStruct *s, const char **names, int count, VM *vm) {
-    Task *t = vm->current_task;
-    bool in_arena = t && t->use_arena && t->arena_base &&
-                    (char*)s >= t->arena_base &&
-                    (char*)s < t->arena_base + TASK_ARENA_SIZE;
-    for (int i = 0; i < count; i++) {
-        s->field_names[i] = in_arena ? (char *)names[i] : strdup(names[i]);
-    }
+/* Shared shape for the internal {status, body} structs built on parse-error
+ * / unhandled-error paths below — same fixed schema every time. */
+static Value make_status_body_response(VM *vm, int status, ObjString *body) {
+    ObjStruct *rs = new_struct(vm, 2, false);
+    if (rs->field_names) free(rs->field_names);
+    static const char *names[] = { "status", "body" };
+    struct_attach_shape(vm, rs, "Response", (char *const *)names, 2);
+    rs->fields[0] = val_int(status);
+    rs->fields[1] = val_string(body);
+    return val_struct(rs);
 }
 
 static Value make_request(VM *vm, const char *method, const char *path,
@@ -362,7 +361,8 @@ static Value make_request(VM *vm, const char *method, const char *path,
                            Value params_val, Value headers_val,
                            const char *ip_str, int client_fd) {
     ObjStruct *req = new_struct(vm, REQ_FIELD_COUNT, false);
-    set_static_field_names(req, REQ_FIELD_NAMES, REQ_FIELD_COUNT, vm);
+    if (req->field_names) free(req->field_names);
+    struct_attach_shape(vm, req, "Request", (char *const *)REQ_FIELD_NAMES, REQ_FIELD_COUNT);
 
     req->fields[0] = val_string(intern_http_method(vm, method));
     req->fields[1] = val_string(allocate_string(vm, path, (int)strlen(path)));
@@ -613,12 +613,8 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
          * struct's fields alive, and the result struct built below could
          * still be in use when the next GC cycle runs. */
         tmp->dead = true;
-        ObjStruct *rs = new_struct(vm, 2, false);
-        rs->field_names[0] = strdup("status");
-        rs->fields[0] = val_int(500);
-        rs->field_names[1] = strdup("body");
-        rs->fields[1] = val_string(allocate_string(vm, "Internal Server Error", 22));
-        return val_struct(rs);
+        return make_status_body_response(vm, 500,
+            allocate_string(vm, "Internal Server Error", 22));
     }
 
     if (!tmp->dead) {
@@ -651,12 +647,9 @@ void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
     t->http_response_ssl = NULL;
     if (had_error) {
         fprintf(stderr, "Unhandled error in long-lived request handler\n");
-        ObjStruct *rs = new_struct(vm, 2, false);
-        rs->field_names[0] = strdup("status");
-        rs->fields[0] = val_int(500);
-        rs->field_names[1] = strdup("body");
-        rs->fields[1] = val_string(copy_string("Internal Server Error", 22));
-        send_http_response(fd, ssl, val_struct(rs), false);
+        Value rv = make_status_body_response(vm, 500,
+            copy_string("Internal Server Error", 22));
+        send_http_response(fd, ssl, rv, false);
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         close(fd);
         return;
@@ -901,14 +894,10 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
                                       &minor_version,
                                       phr_headers, &num_phr_headers, 0);
     if (consumed < 0) {
-        ObjStruct *rs = new_struct(vm, 2, false);
-        rs->field_names[0] = strdup("status");
-        rs->fields[0] = val_int(400);
-        rs->field_names[1] = strdup("body");
-        rs->fields[1] = val_string(copy_string("Bad Request", 11));
-        send_http_response(client_fd, ssl, val_struct(rs), false);
-                        return false;
-                    }
+        Value rv = make_status_body_response(vm, 400, copy_string("Bad Request", 11));
+        send_http_response(client_fd, ssl, rv, false);
+        return false;
+    }
     char method[64], path[2048];
     if (method_len >= sizeof(method)) method_len = sizeof(method) - 1;
     memcpy(method, method_ptr, method_len); method[method_len] = '\0';
@@ -1028,12 +1017,8 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
             free_request(vm, req_val);
         } else {
             result = val_nil();
-            ObjStruct *rs = new_struct(vm, 2, false);
-            rs->field_names[0] = strdup("status");
-            rs->fields[0] = val_int(404);
-            rs->field_names[1] = strdup("body");
-            rs->fields[1] = val_string(allocate_string(vm, "Not Found", 9));
-            Value not_found = val_struct(rs);
+            Value not_found = make_status_body_response(vm, 404,
+                allocate_string(vm, "Not Found", 9));
             send_http_response(client_fd, ssl, not_found, keep_alive);
             free_request(vm, not_found);
             return keep_alive;

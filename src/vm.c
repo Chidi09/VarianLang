@@ -392,6 +392,77 @@ uint32_t hash_string(const char *chars, int length) {
     return hash;
 }
 
+/* ─── Shape API ──────────────────────────────────────────────────────────────────────────
+ *
+ * shape_get_or_create: find or build a shared Shape for (type_name, field_names).
+ * shape_index_of: hash-filtered O(n) scan; Stage 2 (PICs) will make this O(1).
+ */
+Shape *shape_get_or_create(VM *vm, const char *type_name,
+                           const char * const *field_names, int field_count) {
+    ShapeRegistry *reg = &vm->shape_registry;
+
+    /* Search registry for a matching existing shape. Anonymous (NULL
+     * type_name) shapes are matched by field-name set too, so dynamic
+     * structs (HTTP headers, sqlite rows, struct.set) that happen to
+     * repeat the same field set still get to share a Shape instead of
+     * growing the registry once per call. */
+    for (int i = 0; i < reg->count; i++) {
+        Shape *s = reg->shapes[i];
+        if ((s->type_name != NULL) != (type_name != NULL)) continue;
+        if (type_name && strcmp(s->type_name, type_name) != 0) continue;
+        if (s->field_count != field_count) continue;
+        bool match = true;
+        for (int j = 0; j < field_count; j++) {
+            const char *fn = (field_names && field_names[j]) ? field_names[j] : "";
+            if (strcmp(s->field_names[j], fn) != 0) { match = false; break; }
+        }
+        if (match) return s;
+    }
+
+    /* Build a new Shape */
+    Shape *shape = (Shape *)calloc(1, sizeof(Shape));
+    shape->field_count = field_count;
+    shape->type_name   = type_name ? strdup(type_name) : NULL;
+
+    if (field_count > 0) {
+        shape->field_names  = (char **)malloc((size_t)field_count * sizeof(char *));
+        shape->name_hashes  = (uint32_t *)malloc((size_t)field_count * sizeof(uint32_t));
+        for (int i = 0; i < field_count; i++) {
+            const char *fn = (field_names && field_names[i]) ? field_names[i] : "";
+            shape->field_names[i]  = strdup(fn);
+            shape->name_hashes[i]  = hash_string(fn, (int)strlen(fn));
+        }
+    }
+
+    if (reg->count < SHAPE_REGISTRY_SIZE) {
+        reg->shapes[reg->count++] = shape;
+    } else {
+        fprintf(stderr, "warn: shape registry full for '%s'\n",
+                type_name ? type_name : "(anon)");
+    }
+    return shape;
+}
+
+int shape_index_of(const Shape *s, const char *name, uint32_t hash) {
+    for (int i = 0; i < s->field_count; i++) {
+        if (s->name_hashes[i] == hash && strcmp(s->field_names[i], name) == 0)
+            return i;
+    }
+    return -1;
+}
+
+/* struct_attach_shape: build/find the shared Shape for (type_name, names[]),
+ * attach it to s, and set the backward-compat alias pointers.  Native code
+ * that still calls s->field_names[i] will see the shape's copies. */
+void struct_attach_shape(VM *vm, ObjStruct *s, const char *type_name,
+                         char * const *scratch_names, int field_count) {
+    s->shape       = shape_get_or_create(vm, type_name,
+                                          (const char * const *)scratch_names,
+                                          field_count);
+    s->field_names = s->shape ? s->shape->field_names : NULL;
+    s->type_name   = s->shape ? s->shape->type_name   : NULL;
+}
+
 ObjString *copy_string(const char *chars, int length) {
     ObjString *s = (ObjString *)calloc(1, sizeof(ObjString));
     if (!s) return NULL;
@@ -477,13 +548,16 @@ static ObjTuple *allocate_tuple(VM *vm, int count) {
 ObjStruct *new_struct(VM *vm, int field_count, bool force_heap) {
     Task *t = vm->current_task;
 
+    /* Stage 1: Arena structs get no field_names scratch array — they are
+     * always created via BC_STRUCT which sets field_names to shape->field_names.
+     * Heap structs (native code, escape_promote) still get a scratch
+     * field_names array so s->field_names[i] = strdup(...) works unchanged. */
     size_t hsize  = (sizeof(ObjStruct) + 7) & ~(size_t)7;
     size_t fc     = (size_t)(field_count > 0 ? field_count : 0);
-    size_t nsize  = (fc * sizeof(char *) + 7) & ~(size_t)7;
     size_t vsize  = (fc * sizeof(Value) + 7) & ~(size_t)7;
     size_t avsize = (fc * sizeof(ValidationRule *) + 7) & ~(size_t)7;
     size_t acsize = (fc * sizeof(int) + 7) & ~(size_t)7;
-    size_t total  = hsize + nsize + vsize + avsize + acsize;
+    size_t total  = hsize + vsize + avsize + acsize;
 
     bool use_arena = !force_heap && t && t->use_arena && t->arena_base &&
                       (t->arena_offset + total <= TASK_ARENA_SIZE);
@@ -494,29 +568,28 @@ ObjStruct *new_struct(VM *vm, int field_count, bool force_heap) {
         t->arena_offset += total;
         memset(base, 0, total);
         s = (ObjStruct *)base;
-        s->field_names = (char **)(base + hsize);
-        s->fields = (Value *)(base + hsize + nsize);
-        s->field_validations = (ValidationRule **)(base + hsize + nsize + vsize);
-        s->field_validation_counts = (int *)(base + hsize + nsize + vsize + avsize);
-        /* Deliberately NOT linked into vm->objects: arena structs are bulk-
-         * reclaimed when this task's arena resets on recycle, not GC-swept
-         * individually. See escape_promote() for how references that must
-         * outlive this request get safely copied out before that happens. */
+        s->fields              = (Value *)(base + hsize);
+        s->field_validations   = (ValidationRule **)(base + hsize + vsize);
+        s->field_validation_counts = (int *)(base + hsize + vsize + avsize);
+        /* field_names stays NULL — set from shape by BC_STRUCT */
+        /* NOT linked into vm->objects: bulk-reclaimed on task recycle */
     } else {
         s = (ObjStruct *)calloc(1, sizeof(ObjStruct));
-        s->field_names = (char **)calloc(fc, sizeof(char *));
-        s->fields = (Value *)calloc(fc, sizeof(Value));
-        s->field_validations = (ValidationRule **)calloc(fc, sizeof(ValidationRule *));
+        /* Allocate a scratch field_names array for native code */
+        s->field_names         = (fc > 0) ? (char **)calloc(fc, sizeof(char *)) : NULL;
+        s->fields              = (Value *)calloc(fc, sizeof(Value));
+        s->field_validations   = (ValidationRule **)calloc(fc, sizeof(ValidationRule *));
         s->field_validation_counts = (int *)calloc(fc, sizeof(int));
-        if (!s || !s->field_names || !s->fields || !s->field_validations || !s->field_validation_counts) {
+        if (!s || !s->fields || !s->field_validations || !s->field_validation_counts) {
             fprintf(stderr, "fatal: out of memory in new_struct (%zu fields)\n", fc);
             exit(1);
         }
         s->obj.next = vm->objects;
         vm->objects = (Obj *)s;
     }
-    s->obj.type = VAL_STRUCT;
+    s->obj.type  = VAL_STRUCT;
     s->field_count = field_count;
+    s->shape = NULL;
     return s;
 }
 
@@ -534,11 +607,9 @@ static bool struct_is_arena_backed(Task *t, ObjStruct *s) {
  * BC_DEFINE_GLOBAL (both via define_global/set_global), and BC_CHAN_SEND
  * (channels double as actor mailboxes in this codebase, so this single
  * call site covers both). Cheap fast path: anything that isn't a
- * VAL_STRUCT/VAL_ARRAY/VAL_CLOSURE/VAL_ENUM returns immediately unchanged (ints,
- * floats, strings, bools, nil, functions -- strings are NEVER arena-backed
- * in this design, see "Why this design" above, so they need no check
- * here at all). Arrays, closures and enums are never themselves arena-backed
- * either (only ObjStruct is) -- they're walked in place (not copied) only
+ * VAL_STRUCT/VAL_ARRAY/VAL_CLOSURE/VAL_ENUM returns immediately unchanged.
+ * Arrays, closures and enums are never themselves arena-backed
+ * (only ObjStruct is) -- they're walked in place (not copied) only
  * to find and promote any arena-backed struct nested inside them. */
 static Value escape_promote(VM *vm, Value v) {
     Task *t = vm->current_task;
@@ -548,23 +619,19 @@ static Value escape_promote(VM *vm, Value v) {
             ObjStruct *s = v.as.structure;
             if (!struct_is_arena_backed(t, s)) return v;
             ObjStruct *copy = new_struct(vm, s->field_count, true /* force_heap */);
-            /* type_name and field_names[i] are heap-owned (strdup'd) and are
-             * free()'d per-struct by free_object(). The promoted copy is linked
-             * into vm->objects and WILL be swept, so it must own its OWN copies
-             * of them -- aliasing the arena original's pointers double-frees
-             * them (the same arena struct can be promoted more than once, e.g.
-             * a child state reached repeatedly through _lumen_active_child_states
-             * during a {{#each}} live render) and dangles the arena original.
-             * Only the validation-rule pointers are genuinely shared, because
-             * free_object() never frees those individually. */
-            copy->type_name = s->type_name ? strdup(s->type_name) : NULL;
+            /* Stage 1: Shape is shared — promoted copy just aliases the shape.
+             * new_struct allocated a scratch field_names array; free it before
+             * overwriting with the shape alias to avoid a leak. */
+            if (copy->field_names) { free(copy->field_names); }
+            copy->shape      = s->shape;
+            copy->field_names = s->shape ? s->shape->field_names : NULL;
+            copy->type_name   = s->shape ? s->shape->type_name   : NULL;
             copy->struct_validations = s->struct_validations;
             copy->struct_validation_count = s->struct_validation_count;
             for (int i = 0; i < s->field_count; i++) {
-                copy->field_names[i] = s->field_names[i] ? strdup(s->field_names[i]) : NULL;
                 copy->field_validations[i] = s->field_validations[i];
                 copy->field_validation_counts[i] = s->field_validation_counts[i];
-                copy->fields[i] = escape_promote(vm, s->fields[i]); /* recurse: a field can itself be an arena struct */
+                copy->fields[i] = escape_promote(vm, s->fields[i]);
             }
             return val_struct(copy);
         }
@@ -768,11 +835,20 @@ static size_t gc_sweep(VM *vm) {
                     obj_size = sizeof(ObjEnum); break;
                 case VAL_STRUCT: {
                     ObjStruct *s = (ObjStruct *)obj;
-                    for (int i = 0; i < s->field_count; i++)
-                        free(s->field_names[i]);
-                    free(s->field_names);
+                    /* Stage 1: field_names may be either:
+                     *   (a) A shape alias (s->field_names == s->shape->field_names)
+                     *       — owned by the Shape, do NOT free.
+                     *   (b) A native-code scratch array
+                     *       (s->shape is NULL, or names differ from shape)
+                     *       — owned by this struct, free entries + array.
+                     * type_name is always a shape alias or NULL; never freed here. */
+                    bool is_shape_alias = s->shape && s->field_names == s->shape->field_names;
+                    if (!is_shape_alias && s->field_names) {
+                        for (int i = 0; i < s->field_count; i++)
+                            free(s->field_names[i]);
+                        free(s->field_names);
+                    }
                     free(s->fields);
-                    free(s->type_name);
                     free(s->field_validations);
                     free(s->field_validation_counts);
                     obj_size = sizeof(ObjStruct);
@@ -2455,6 +2531,8 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->test_count = 0;
     memset(vm->tests, 0, sizeof(vm->tests));
     vm->validation_registry.count = 0;
+    vm->shape_registry.count = 0;
+    memset(vm->shape_registry.shapes, 0, sizeof(vm->shape_registry.shapes));
     vm->test_filter = NULL;
     vm->test_skip_count = 0;
     vm->test_timeout_ms = 0;
@@ -2932,13 +3010,13 @@ Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
         return val_nil();
     }
 
-    /* 1. Create inner state struct */
+    /* 1. Create inner state struct. Every actor.spawn() of the same actor
+     * type shares one Shape -- fixed field set per type_name. */
     ObjStruct *state = new_struct(vm, info->field_count, false);
-    state->type_name = (char *)malloc(strlen(type_name) + 1);
-    strcpy(state->type_name, type_name);
+    if (state->field_names) free(state->field_names);
+    struct_attach_shape(vm, state, type_name,
+                         (char *const *)info->field_names, info->field_count);
     for (int i = 0; i < info->field_count; i++) {
-        state->field_names[i] = (char *)malloc(strlen(info->field_names[i]) + 1);
-        strcpy(state->field_names[i], info->field_names[i]);
         state->fields[i] = val_nil();
     }
 
@@ -4332,31 +4410,50 @@ L_BC_LOOP_TOP:
                 uint8_t field_count = READ_BYTE();
                 ObjString *type_name_str = READ_CONSTANT().as.string;
                 ObjStruct *s = new_struct(vm, field_count, false);
-                s->type_name = (char *)malloc(type_name_str->length + 1);
-                memcpy(s->type_name, type_name_str->chars, type_name_str->length);
-                s->type_name[type_name_str->length] = '\0';
+
+                /* Pop field values from the stack before collecting names
+                 * (names come after the values in the bytecode stream). */
                 for (int i = field_count - 1; i >= 0; i--)
                     s->fields[i] = POP();
-                for (int i = 0; i < field_count; i++) {
-                    ObjString *name = READ_CONSTANT().as.string;
-                    s->field_names[i] = (char *)malloc(name->length + 1);
-                    memcpy(s->field_names[i], name->chars, name->length);
-                    s->field_names[i][name->length] = '\0';
-                }
 
-                /* Look up and attach validation rules, matching by field name —
-                 * a struct literal's field order need not match the decl order. */
+                /* Stage 1: collect field names from the bytecode stream, then
+                 * look up / build the shared Shape. This gives us the shape
+                 * pointer to store on the instance, and the Shape owns the names.
+                 * Use a VLA on the stack to avoid a heap alloc for the temp array. */
+                const char *tmp_names[64];  /* 64 fields max for VLA safety */
+                int safe_fc = field_count < 64 ? field_count : 64;
+                for (int i = 0; i < safe_fc; i++) {
+                    ObjString *name = READ_CONSTANT().as.string;
+                    tmp_names[i] = name->chars;
+                }
+                /* Consume any extra names beyond VLA limit (shouldn't happen) */
+                for (int i = safe_fc; i < field_count; i++)
+                    READ_CONSTANT();  /* discard */
+
+                const char *tn = (type_name_str->length > 0) ? type_name_str->chars : NULL;
+                s->shape = shape_get_or_create(vm, tn, tmp_names, field_count);
+                /* Free the scratch field_names array new_struct allocated for
+                 * native-code compatibility; BC_STRUCT uses shape->field_names. */
+                if (s->field_names) { free(s->field_names); }
+                /* Set the backward-compat alias pointers into the shared Shape */
+                s->field_names = s->shape ? s->shape->field_names : NULL;
+                s->type_name   = s->shape ? s->shape->type_name   : NULL;
+
+                /* Look up and attach validation rules */
                 bool has_validations = false;
                 ValidationRegistry *reg = &vm->validation_registry;
                 for (int r = 0; r < reg->count; r++) {
-                    if (strcmp(reg->validations[r].type_name, s->type_name) == 0) {
+                    const char *shape_tn = s->shape ? s->shape->type_name : NULL;
+                    if (!shape_tn) continue;
+                    if (strcmp(reg->validations[r].type_name, shape_tn) == 0) {
                         StructValidationInfo *info = &reg->validations[r];
                         s->struct_validations = info->struct_validations;
                         s->struct_validation_count = info->struct_validation_count;
                         if (info->struct_validation_count > 0) has_validations = true;
                         for (int i = 0; i < field_count; i++) {
+                            const char *fname = s->shape->field_names[i];
                             for (int j = 0; j < info->field_count; j++) {
-                                if (strcmp(s->field_names[i], info->field_names[j]) == 0) {
+                                if (strcmp(fname, info->field_names[j]) == 0) {
                                     s->field_validations[i] = info->field_validations[j];
                                     s->field_validation_counts[i] = info->field_validation_counts[j];
                                     if (info->field_validation_counts[j] > 0) has_validations = true;
@@ -4368,11 +4465,8 @@ L_BC_LOOP_TOP:
                     }
                 }
 
-                /* Run validations */
                 if (has_validations) {
-                    if (!run_struct_validations(vm, s)) {
-                        return false;
-                    }
+                    if (!run_struct_validations(vm, s)) return false;
                 }
 
                 PUSH(val_struct(s));
@@ -4554,7 +4648,7 @@ L_BC_LOOP_TOP:
                 /* ─── Normal dispatch for structs, modules, strings, arrays ─── */
                 const char *type_name = NULL;
                 if (obj.type == VAL_STRUCT) {
-                    type_name = obj.as.structure->type_name;
+                    type_name = obj.as.structure->shape ? obj.as.structure->shape->type_name : NULL;
                 } else if (obj.type == VAL_MODULE) {
                     type_name = obj.as.module->name;
                 } else if (obj.type == VAL_STRING) {
@@ -4834,25 +4928,17 @@ L_BC_LOOP_TOP:
                 if (obj.type == VAL_STRUCT) {
                     ObjStruct *s = obj.as.structure;
                     int found = -1;
-                    /* Phase 3: check field cache first */
-                    uint32_t name_hash = hash_string(name->chars, name->length);
-                    for (int ci = 0; ci < s->field_cache_count; ci++) {
-                        if (s->field_cache[ci].hash == name_hash) {
-                            found = s->field_cache[ci].index;
-                            break;
-                        }
-                    }
-                    if (found < 0) {
-                        for (int i = 0; i < s->field_count; i++) {
-                            if (strcmp(s->field_names[i], name->chars) == 0) {
-                                found = i;
-                                /* Cache it */
-                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
-                                    s->field_cache[s->field_cache_count].hash = name_hash;
-                                    s->field_cache[s->field_cache_count].index = i;
-                                    s->field_cache_count++;
+                    if (s->shape) {
+                        uint32_t name_hash = hash_string(name->chars, name->length);
+                        found = shape_index_of(s->shape, name->chars, name_hash);
+                    } else {
+                        /* Fallback: native-built struct without shape, scan field_names scratch */
+                        if (s->field_names) {
+                            for (int i = 0; i < s->field_count; i++) {
+                                if (s->field_names[i] &&
+                                    strcmp(s->field_names[i], name->chars) == 0) {
+                                    found = i; break;
                                 }
-                                break;
                             }
                         }
                     }
@@ -4862,7 +4948,6 @@ L_BC_LOOP_TOP:
                         RAISE("Struct has no field '%s'", name->chars);
                     }
                 } else if (obj.type == VAL_MODULE) {
-                    /* Module member access: look up in dispatch table */
                     Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);
                     if (func_val) {
                         PUSH(*func_val);
@@ -4871,7 +4956,6 @@ L_BC_LOOP_TOP:
                                      obj.as.module->name, name->chars);
                     }
                 } else if (obj.type == VAL_STRING) {
-                    /* String method access: look up in dispatch table */
                     Value *func_val = vm_find_dispatch(vm, "string", name->chars);
                     if (func_val) {
                         PUSH(*func_val);
@@ -4879,7 +4963,6 @@ L_BC_LOOP_TOP:
                         RAISE("String has no method '%s'", name->chars);
                     }
                 } else if (obj.type == VAL_ARRAY) {
-                    /* Array method access: look up in dispatch table */
                     Value *func_val = vm_find_dispatch(vm, "array", name->chars);
                     if (func_val) {
                         PUSH(*func_val);
@@ -4894,43 +4977,23 @@ L_BC_LOOP_TOP:
 
             L_BC_MEMBER_SAFE:
             {
-                /* expr?.member -- BC_JUMP_IF_NIL already short-circuited the
-                 * case where expr itself is nil; this handles the other half
-                 * of "safe navigation": expr is a real, valid value, it
-                 * just doesn't have this particular field/method. Every
-                 * branch below mirrors L_BC_MEMBER exactly except pushing
-                 * nil instead of calling runtime_error() -- that's the
-                 * entire difference. Keep the two in sync if either changes. */
+                /* expr?.member: push nil instead of erroring when field absent. */
                 ObjString *name = READ_CONSTANT().as.string;
                 Value obj = POP();
                 if (obj.type == VAL_STRUCT) {
                     ObjStruct *s = obj.as.structure;
                     int found = -1;
-                    uint32_t name_hash = hash_string(name->chars, name->length);
-                    for (int ci = 0; ci < s->field_cache_count; ci++) {
-                        if (s->field_cache[ci].hash == name_hash) {
-                            found = s->field_cache[ci].index;
-                            break;
-                        }
-                    }
-                    if (found < 0) {
+                    if (s->shape) {
+                        uint32_t name_hash = hash_string(name->chars, name->length);
+                        found = shape_index_of(s->shape, name->chars, name_hash);
+                    } else if (s->field_names) {
                         for (int i = 0; i < s->field_count; i++) {
-                            if (strcmp(s->field_names[i], name->chars) == 0) {
-                                found = i;
-                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
-                                    s->field_cache[s->field_cache_count].hash = name_hash;
-                                    s->field_cache[s->field_cache_count].index = i;
-                                    s->field_cache_count++;
-                                }
-                                break;
+                            if (s->field_names[i] && strcmp(s->field_names[i], name->chars) == 0) {
+                                found = i; break;
                             }
                         }
                     }
-                    if (found >= 0) {
-                        PUSH(s->fields[found]);
-                    } else {
-                        PUSH(val_nil());
-                    }
+                    PUSH(found >= 0 ? s->fields[found] : val_nil());
                 } else if (obj.type == VAL_MODULE) {
                     Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);
                     PUSH(func_val ? *func_val : val_nil());
@@ -4941,9 +5004,6 @@ L_BC_LOOP_TOP:
                     Value *func_val = vm_find_dispatch(vm, "array", name->chars);
                     PUSH(func_val ? *func_val : val_nil());
                 } else {
-                    /* A genuinely unsupported type for member access at all
-                     * (e.g. ?. on an int) is still a real bug worth
-                     * surfacing, not a "maybe absent" case -- not silenced. */
                     RAISE("Cannot access field on non-struct value");
                 }
                 DISPATCH();
@@ -4957,24 +5017,13 @@ L_BC_LOOP_TOP:
                 if (obj.type == VAL_STRUCT) {
                     ObjStruct *s = obj.as.structure;
                     int found = -1;
-                    /* Phase 3: check field cache first */
-                    uint32_t name_hash = hash_string(name->chars, name->length);
-                    for (int ci = 0; ci < s->field_cache_count; ci++) {
-                        if (s->field_cache[ci].hash == name_hash) {
-                            found = s->field_cache[ci].index;
-                            break;
-                        }
-                    }
-                    if (found < 0) {
+                    if (s->shape) {
+                        uint32_t name_hash = hash_string(name->chars, name->length);
+                        found = shape_index_of(s->shape, name->chars, name_hash);
+                    } else if (s->field_names) {
                         for (int i = 0; i < s->field_count; i++) {
-                            if (strcmp(s->field_names[i], name->chars) == 0) {
-                                found = i;
-                                if (s->field_cache_count < STRUCT_CACHE_SIZE) {
-                                    s->field_cache[s->field_cache_count].hash = name_hash;
-                                    s->field_cache[s->field_cache_count].index = i;
-                                    s->field_cache_count++;
-                                }
-                                break;
+                            if (s->field_names[i] && strcmp(s->field_names[i], name->chars) == 0) {
+                                found = i; break;
                             }
                         }
                     }
@@ -5238,11 +5287,16 @@ void vm_free(VM *vm) {
             }
             case VAL_STRUCT: {
                 ObjStruct *s = (ObjStruct *)obj;
-                for (int i = 0; i < s->field_count; i++) {
-                    free(s->field_names[i]);
+                /* Same as gc_sweep: free field_names only if NOT a shape alias */
+                bool is_shape_alias = s->shape && s->field_names == s->shape->field_names;
+                if (!is_shape_alias && s->field_names) {
+                    for (int i = 0; i < s->field_count; i++)
+                        free(s->field_names[i]);
+                    free(s->field_names);
                 }
-                free(s->field_names);
                 free(s->fields);
+                free(s->field_validations);
+                free(s->field_validation_counts);
                 break;
             }
             case VAL_FUNCTION: {
@@ -5314,6 +5368,22 @@ void vm_free(VM *vm) {
     vm->tasks = NULL;
     vm->task_count = 0;
     vm->task_capacity = 0;
+
+    /* Stage 1: free all Shapes in the shape registry */
+    ShapeRegistry *sreg = &vm->shape_registry;
+    for (int i = 0; i < sreg->count; i++) {
+        Shape *sh = sreg->shapes[i];
+        if (!sh) continue;
+        free(sh->type_name);
+        if (sh->field_names) {
+            for (int j = 0; j < sh->field_count; j++)
+                free(sh->field_names[j]);
+            free(sh->field_names);
+        }
+        free(sh->name_hashes);
+        free(sh);
+    }
+    sreg->count = 0;
 }
 
 const unsigned char *vm_lookup_asset(VM *vm, const char *path, int *out_size) {
