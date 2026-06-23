@@ -337,42 +337,41 @@ static ReqFrameStatus try_frame_request(ConnBuffer *cb, int *out_total_len) {
     return REQ_READY;
 }
 
-/* ═══════════════════════════════════════════
- *  Struct Creation Helpers
- * ═══════════════════════════════════════════ */
+/* ─── Request field names are static: avoid strdup per request ─── */
+static const char *REQ_FIELD_NAMES[] = {
+    "method", "path", "body", "json", "params",
+    "headers", "ip", "socket_fd", "query"
+};
+#define REQ_FIELD_COUNT 9
+
+/* Point field_names at static strings when the struct is arena-backed
+ * (the hot path — GC never sweeps arena structs individually). For
+ * heap-backed structs we must still strdup so the GC can free them. */
+static void set_static_field_names(ObjStruct *s, const char **names, int count, VM *vm) {
+    Task *t = vm->current_task;
+    bool in_arena = t && t->use_arena && t->arena_base &&
+                    (char*)s >= t->arena_base &&
+                    (char*)s < t->arena_base + TASK_ARENA_SIZE;
+    for (int i = 0; i < count; i++) {
+        s->field_names[i] = in_arena ? (char *)names[i] : strdup(names[i]);
+    }
+}
 
 static Value make_request(VM *vm, const char *method, const char *path,
                            const char *query, Value body_val, Value json_val,
                            Value params_val, Value headers_val,
                            const char *ip_str, int client_fd) {
-    int total = 9;
-    ObjStruct *req = new_struct(vm, total, false);
+    ObjStruct *req = new_struct(vm, REQ_FIELD_COUNT, false);
+    set_static_field_names(req, REQ_FIELD_NAMES, REQ_FIELD_COUNT, vm);
 
-    req->field_names[0] = strdup("method");
     req->fields[0] = val_string(allocate_string(vm, method, (int)strlen(method)));
-
-    req->field_names[1] = strdup("path");
     req->fields[1] = val_string(allocate_string(vm, path, (int)strlen(path)));
-
-    req->field_names[2] = strdup("body");
     req->fields[2] = (body_val.type == VAL_STRING && body_val.as.string->length > 0) ? body_val : val_nil();
-
-    req->field_names[3] = strdup("json");
     req->fields[3] = json_val;
-
-    req->field_names[4] = strdup("params");
     req->fields[4] = params_val;
-
-    req->field_names[5] = strdup("headers");
     req->fields[5] = headers_val;
-
-    req->field_names[6] = strdup("ip");
     req->fields[6] = val_string(allocate_string(vm, ip_str, (int)strlen(ip_str)));
-
-    req->field_names[7] = strdup("socket_fd");
     req->fields[7] = val_int(client_fd);
-
-    req->field_names[8] = strdup("query");
     req->fields[8] = val_string(allocate_string(vm, query ? query : "", query ? (int)strlen(query) : 0));
 
     return val_struct(req);

@@ -60,3 +60,8 @@ docs/PROBLEMS.md
 debug_source.vn
 output*.txt
 PLAN.md
+
+# Benchmark / AOT scratch artifacts
+aot_bench.c
+zenith_bench.vn
+constellation.toml

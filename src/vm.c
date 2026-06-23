@@ -2334,15 +2334,32 @@ Task *task_new(VM *vm) {
     if (t) {
         vm->free_tasks = (Task *)t->http_response_ssl;
         char *saved_arena = t->arena_base;
-        memset(t, 0, sizeof(Task));
-        t->arena_base = saved_arena;
-        t->arena_offset = 0;
+        /* Avoid memset of the entire 65KB+ Task struct — reset only the
+         * fields that must be clean. The stack, frames, and try_stack are
+         * governed by stack_top/frame_count/try_count so stale data below
+         * those markers is never read. */
+        t->stack_top = 0;
+        t->frame_count = 0;
+        t->try_count = 0;
+        t->throw_value = val_nil();
+        t->is_throwing = false;
+        t->result = val_nil();
         t->dead = false;
+        t->yielded = false;
+        t->waiting_actor_reply = false;
+        t->actor_reply_ch = val_nil();
+        t->is_actor_loop = false;
+        t->actor_ref = NULL;
+        t->cache_on_return = false;
+        t->cache_result_key = 0;
         t->http_listen_fd = -1;
+        t->wakeup_time = 0.0;
         t->http_response_fd = -1;
         t->http_response_ssl = NULL;
         t->http_pending_conns = NULL;
-        t->wakeup_time = 0.0;
+        t->arena_base = saved_arena;
+        t->arena_offset = 0;
+        t->use_arena = false;
         return t;
     }
     t = (Task *)calloc(1, sizeof(Task));

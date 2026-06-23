@@ -1729,7 +1729,6 @@ fn _lumen_live_loop(ws, component, provider, req) {
     let alive = true
     while alive {
         let msg = ws.read()
-        if msg != null and msg != "" { print("[WSDEBUG]", msg) }
         if msg == null {
             alive = false
         } else if msg != "" {
