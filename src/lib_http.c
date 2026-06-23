@@ -1107,6 +1107,7 @@ typedef struct {
     PendingConn *conns;
     int count;
     int capacity;
+    pthread_mutex_t lock;  /* guards count/conns from concurrent access */
     int epoll_fd;          /* epoll instance fd for TLS; -1 if not initialized */
     SSL_CTX *tls_ctx;      /* NULL for a plain (non-TLS) listener */
     RadixNode *route_trie; /* Phase 3: radix trie for fast route matching */
@@ -1126,6 +1127,7 @@ static PendingConnPool *get_pending_pool(Task *t) {
     if (!t->http_pending_conns) {
         t->http_pending_conns = calloc(1, sizeof(PendingConnPool));
         PendingConnPool *pool = (PendingConnPool *)t->http_pending_conns;
+        pthread_mutex_init(&pool->lock, NULL);
         pool->epoll_fd = epoll_create1(0);
         if (pool->epoll_fd < 0) {
             fprintf(stderr, "  http: epoll_create1() failed: %s\n", strerror(errno));
@@ -1141,8 +1143,10 @@ static PendingConnPool *get_pending_pool(Task *t) {
 }
 
 static void pending_pool_add(PendingConnPool *pool, int fd, const char *ip) {
+    pthread_mutex_lock(&pool->lock);
     if (pool->count >= MAX_PENDING_CONNS) {
-        close(fd); /* hard cap reached -- drop rather than grow unbounded */
+        close(fd);
+        pthread_mutex_unlock(&pool->lock);
         return;
     }
     if (pool->count >= pool->capacity) {
@@ -1175,6 +1179,7 @@ static void pending_pool_add(PendingConnPool *pool, int fd, const char *ip) {
         ev.data.fd = fd;
         epoll_ctl(pool->epoll_fd, EPOLL_CTL_ADD, fd, &ev);
     }
+    pthread_mutex_unlock(&pool->lock);
 }
 
 /* transferred=true means a handler took ownership of the raw fd (WebSocket/
@@ -1182,6 +1187,7 @@ static void pending_pool_add(PendingConnPool *pool, int fd, const char *ip) {
  * here. Swap-with-last, so callers must iterate the pool backwards while
  * removing. */
 static void pending_pool_remove(PendingConnPool *pool, int i, bool transferred) {
+    pthread_mutex_lock(&pool->lock);
     PendingConn *pc = &pool->conns[i];
     if (!transferred) {
         if (pc->ssl) { SSL_shutdown(pc->ssl); SSL_free(pc->ssl); }
@@ -1193,6 +1199,7 @@ static void pending_pool_remove(PendingConnPool *pool, int i, bool transferred) 
     conn_buffer_free(&pc->buf);
     pool->conns[i] = pool->conns[pool->count - 1];
     pool->count--;
+    pthread_mutex_unlock(&pool->lock);
 }
 
 void http_cleanup_pending_conns(Task *t) {
@@ -1208,6 +1215,7 @@ void http_cleanup_pending_conns(Task *t) {
     }
     if (pool->route_trie) radix_node_free(pool->route_trie);
     if (pool->tls_ctx) SSL_CTX_free(pool->tls_ctx);
+    pthread_mutex_destroy(&pool->lock);
     free(pool->conns);
     free(pool);
     t->http_pending_conns = NULL;
