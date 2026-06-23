@@ -2550,6 +2550,9 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->last_error[0] = '\0';
     vm->main_fn = NULL;
     vm->io_activity_this_tick = false;
+    memset(vm->dispatch_pic_keys, 0, sizeof(vm->dispatch_pic_keys));
+    for (int i = 0; i < VM_DISPATCH_PIC_SIZE; i++)
+        vm->dispatch_pic_idxs[i] = -1;
     vm->free_tasks = NULL;
     vm->source = NULL;
     vm->source_name = NULL;
@@ -3108,8 +3111,17 @@ static uint32_t fnv1a_hash_two(const char *a, const char *b) {
 void vm_register_dispatch(VM *vm, const char *type_name, const char *method_name, Value func) {
     uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
+    /* Invalidate any cached PIC entry for this (type, method) so
+     * mock.intercept/mock.restore take effect immediately. */
+    int pic_slot = hash & (VM_DISPATCH_PIC_SIZE - 1);
+    if (vm->dispatch_pic_keys[pic_slot] == hash) {
+        vm->dispatch_pic_keys[pic_slot] = 0;
+        vm->dispatch_pic_idxs[pic_slot] = -1;
+    }
+
+    int mask = DISPATCH_TABLE_SIZE - 1;
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
-        int idx = (hash + i) % DISPATCH_TABLE_SIZE;
+        int idx = (hash + i) & mask;
         if (vm->dispatch_occupied[idx]) {
             if (strcmp(vm->dispatch_type_names[idx], type_name) == 0 &&
                 strcmp(vm->dispatch_method_names[idx], method_name) == 0) {
@@ -3135,15 +3147,34 @@ Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name) 
     if (!type_name) return NULL;
     uint32_t hash = fnv1a_hash_two(type_name, method_name);
 
+    /* Stage 2: check per-VM direct-mapped PIC cache first. Stores the table
+     * index so the returned pointer always points into the real dispatch
+     * table (safe across mock.intercept/mock.restore, which update entries
+     * in place via vm_register_dispatch). */
+    int pic_slot = hash & (VM_DISPATCH_PIC_SIZE - 1);
+    if (vm->dispatch_pic_keys[pic_slot] == hash) {
+        int16_t idx = vm->dispatch_pic_idxs[pic_slot];
+        if (idx >= 0) return &vm->dispatch_functions[idx];
+        return NULL;  /* cached miss */
+    }
+
+    int mask = DISPATCH_TABLE_SIZE - 1;
     for (int i = 0; i < DISPATCH_TABLE_SIZE; i++) {
-        int idx = (hash + i) % DISPATCH_TABLE_SIZE;
-        if (!vm->dispatch_occupied[idx])
+        int idx = (hash + i) & mask;
+        if (!vm->dispatch_occupied[idx]) {
+            vm->dispatch_pic_keys[pic_slot] = hash;
+            vm->dispatch_pic_idxs[pic_slot] = -1;  /* cache the miss */
             return NULL;
+        }
         if (strcmp(vm->dispatch_type_names[idx], type_name) == 0 &&
             strcmp(vm->dispatch_method_names[idx], method_name) == 0) {
+            vm->dispatch_pic_keys[pic_slot] = hash;
+            vm->dispatch_pic_idxs[pic_slot] = (int16_t)idx;
             return &vm->dispatch_functions[idx];
         }
     }
+    vm->dispatch_pic_keys[pic_slot] = hash;
+    vm->dispatch_pic_idxs[pic_slot] = -1;
     return NULL;
 }
 

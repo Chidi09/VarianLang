@@ -657,6 +657,13 @@ typedef struct VM {
     ValidationRegistry validation_registry;
     /* Shape registry (Stage 1: shared layout descriptors for ObjStruct instances) */
     ShapeRegistry shape_registry;
+    /* Stage 2: dispatch PIC — direct-mapped cache for string/array/struct
+     * method lookups (.len(), .push(), etc.).  Stores the table index so the
+     * returned pointer always points into the real dispatch table (safe even
+     * across mock.intercept/mock.restore which update the table in place). */
+    #define VM_DISPATCH_PIC_SIZE 16
+    uint32_t dispatch_pic_keys[VM_DISPATCH_PIC_SIZE];   /* fnv1a hash, 0 = empty */
+    int16_t  dispatch_pic_idxs[VM_DISPATCH_PIC_SIZE];   /* table index, -1 = cached miss */
     /* Set by a native function (e.g. http.serve()'s poll/accept loop) when
      * it did real I/O work this tick -- a native event-loop function like
      * http.serve() yields by rewinding its own bytecode IP back to the same
