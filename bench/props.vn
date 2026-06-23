@@ -1,0 +1,47 @@
+// Stage 0 — Property-heavy polymorphic benchmark
+// Measures: reads/writes across structs of different shapes (polymorphic sites).
+// Run with: time ./vn bench/props.vn
+// Record wall-time best-of-5.
+
+struct Point {
+    x: int,
+    y: int
+}
+
+struct Rect {
+    x: int,
+    y: int,
+    width: int,
+    height: int
+}
+
+struct Circle {
+    cx: int,
+    cy: int,
+    radius: int
+}
+
+let ITERS = 1000000
+
+// ── Monomorphic site: always a Point ─────────────────────────────────────
+let p = Point { x: 0, y: 0 }
+let i = 0
+while i < ITERS {
+    p.x = p.x + 1
+    p.y = p.y + 2
+    i = i + 1
+}
+print("mono point: " + p.x + "," + p.y)
+
+// ── Polymorphic site: Rect + Circle interleaved ───────────────────────────
+let r = Rect { x: 0, y: 0, width: 10, height: 20 }
+let c = Circle { cx: 0, cy: 0, radius: 5 }
+let j = 0
+while j < ITERS {
+    r.x = r.x + 1
+    r.width = r.width + 1
+    c.cx = c.cx + 1
+    c.radius = c.radius + 1
+    j = j + 1
+}
+print("poly rect x: " + r.x + " circle cx: " + c.cx)

@@ -1,0 +1,38 @@
+// Stage 0 — Dispatch benchmark
+// Measures: struct property access + method dispatch in a tight loop.
+// Run with: time ./vn bench/dispatch.vn
+// Record wall-time best-of-5.
+
+struct Counter {
+    value: int
+}
+
+impl Counter {
+    fn increment(self) {
+        self.value = self.value + 1
+    }
+
+    fn get(self) -> int {
+        return self.value
+    }
+}
+
+let ITERS = 2000000
+
+// ── 1. Property read/write in a tight loop ────────────────────────────────
+let c = Counter { value: 0 }
+let i = 0
+while i < ITERS {
+    c.value = c.value + 1
+    i = i + 1
+}
+print("prop rw result: " + c.value)
+
+// ── 2. Method dispatch (increment + get) in a tight loop ──────────────────
+let c2 = Counter { value: 0 }
+let j = 0
+while j < ITERS {
+    c2.increment()
+    j = j + 1
+}
+print("method dispatch result: " + c2.get())
