@@ -81,18 +81,37 @@ cd myapp
 
 <p align="center"><i>Server-driven. Live by default. Zero config, zero <code>node_modules</code>, zero hydration mismatch.</i></p>
 
-Lumen is a full-stack UI framework that ships *inside the `vn` binary* — Varian's answer to
-Next.js and Nuxt. You write `.lumen` components, run `vn dev`, and you have a live,
-reactive app.
+Lumen is a server-driven frontend framework that ships *inside the `vn` binary* — the
+`React` to Aurora's `Next.js`. You write `.lumen` components, run `vn dev`, and you have a
+live, reactive app.
+
+Use Lumen standalone (`vn lumen new myapp`) for a frontend-only project, or as part of
+**Aurora** (`vn new myapp`) for the full-stack framework with Zenith and batteries.
 
 > **Lumen : Varian :: JSX : TypeScript.** A `.lumen` file is markup + bindings; the logic
 > underneath is plain Varian (`.vn`).
 
+### Lumen vs React / Vue / Svelte
+
+| Concern | React / Vue / Svelte | Lumen |
+|---|---|---|
+| **Rendering model** | Client VDOM + hydration — 50–400 KB framework | Server-driven HTML over WebSocket — ~2 KB inline script **Lumen JS** |
+| **Hydration mismatch** | Common bug | Impossible — server owns all state and rendering |
+| **UI components** | None built-in (need MUI, Chakra, Shadcn) | 28 components — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, etc., zero imports |
+| **State management** | External library (Zustand, Pinia, stores) | `lumen_store()` built in |
+| **Async data** | External (React Query, TanStack Query, RTK Query) | `lumen_resource()`, `lumen_async_resource()` built in |
+| **Form validation** | External (Zod, VeeValidate, yup) | `lumen_form()` — Zod-style, built in |
+| **Pub-sub / broadcast** | External library or manual WebSocket | `lumen_publish()`, `lumen_subscribe()`, `lumen_broadcast_store()` |
+| **CSS scoping** | Compiler plugin or CSS modules | `data-lumen-css` attribute rewrite, built in |
+| **Routing** | External (React Router, Vue Router, svelte-spa-router) | File-based routing, `pages/index.lumen` → `/` |
+| **SSG** | Framework-specific plugin | `lumen_build_static_dir()` — built in |
+| **Scaffold** | `create-react-app`, `npm create vue`, etc. | `vn lumen new myapp` — one command, no deps |
+
 ### The core idea: server-driven live
 
-In Lumen, **the server owns all state and does all rendering.** The browser runs a tiny
-runtime whose only jobs are: forward DOM events over a WebSocket, and patch the DOM with
-whatever HTML the server sends back. State lives in plain Varian on the server — no
+In Lumen, **the server owns all state and does all rendering.** The browser runs **Lumen JS**
+— a tiny (~5 KB) runtime whose only jobs are: forward DOM events over a WebSocket, and
+patch the DOM with whatever HTML the server sends back. State lives in plain Varian on the server — no
 `useState`, no `useEffect` dependency arrays, no stale closures, no `useMemo` ceremony.
 
 ```
@@ -191,15 +210,24 @@ vn lumen build pages app.vn 8090   # Compile pages/ into one runnable app
 
 ---
 
-## Aurora — the fullstack framework
+## Aurora — the full-stack framework
 
 <p align="center">
   <img src="docs/assets/aurora-logo.png" alt="Aurora Logo" width="150" />
 </p>
 
-Aurora combines Zenith (server) and Lumen (frontend) into one unified project
-structure — Varian's answer to Next.js / Nuxt / Rails. A `constellation.toml` with
-`kind = "aurora"` tells the toolchain to bundle both frameworks.
+Aurora is Varian's **full-stack framework** — the layer that binds **Zenith** (HTTP server)
+and **Lumen** (frontend) into a single, unified platform. It is Varian's answer to Next.js,
+Nuxt, and Rails. Think of it like Next.js: Next.js bundles React with its own Node server;
+Aurora bundles Lumen with Zenith under one convention, one project structure, and one build
+pipeline.
+
+A `constellation.toml` with `kind = "aurora"` tells the toolchain you're in Aurora mode.
+The dev server banner reads **"Aurora — fullstack Varian platform"**, and the scaffold
+(`vn new myapp`) creates a complete project with `main.vn` (Zenith backend + API),
+`pages/` (Lumen frontend), and `lib/` (shared modules).
+
+See [`docs/AURORA.md`](docs/AURORA.md) for the full reference storefront documentation.
 
 ```sh
 vn new myapp          # Scaffold a full Aurora project
@@ -207,6 +235,21 @@ cd myapp
 vn dev                # http://localhost:8090 — live reload
 vn build --release    # Compile to a native binary
 ```
+
+### Aurora vs Next.js / Nuxt
+
+| Concern | Next.js / Nuxt | Aurora (Zenith + Lumen) |
+|---|---|---|
+| **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere** — same language, same runtime, same binary |
+| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Zero client JS** by default — ~2 KB inline **Lumen JS** script |
+| **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step for the frontend |
+| **Data loading** | `getServerSideProps` / `loader` / server actions | `lumen_mount_data()` — data provider runs on GET + WS reconnect |
+| **API + pages** | Separate `app/api/` and `app/` directories | Same `main.vn`, same `ZenithApp` instance |
+| **Background jobs** | External workers (Bull, Sidekiq) | `WorkerPool.spawn()` + `cron()` — built in |
+| **Swagger docs** | Manual setup or `next-swagger-doc` plugin | Automatic — `app.enable_docs("/docs")` |
+| **Security middleware** | Manual — helmet, cors, csurf, express-rate-limit | `cors()`, `rate_limit()`, `csrf()` from `shield.vn` — built in |
+| **Deploy** | Node.js runtime + `node_modules` required | **Single native binary** — no runtime, no deps |
+| **BFF** | Manual BFF service or Next.js API routes (separate deploy) | **BFF by default** — data providers in `lumen_mount_data()` shape DB data per-component, same process, no network hop |
 
 ---
 
@@ -229,6 +272,23 @@ app.get("/users/:id", |req| {
 
 app.listen(3000)
 ```
+
+### Zenith vs FastAPI / Go / Express
+
+| Concern | FastAPI / Go / Express | Zenith |
+|---|---|---|
+| **Router** | O(n) linear scan or external trie package | **Radix trie** — O(depth) lookup, built in |
+| **WebSocket** | External library (`ws`, `gorilla/websocket`, `websockets`) | **Built-in** — full RFC 6455, ~125 lines |
+| **SSE** | Manual or library | **Built-in** — `SseSender.send(data)` |
+| **OpenAPI / Swagger** | FastAPI native; Express needs `swagger-jsdoc`; Go needs `swaggo` | **Auto-generated** — `app.enable_docs("/docs")` |
+| **Sessions** | External middleware (express-session, gorilla/sessions) | **Stateless JWT-signed cookies** — `session_get`/`set`/`clear` |
+| **Templating** | External (Jinja2, Pug, EJS, html/template) | **Built-in** `<%= %>` engine — HTML-escaped by default |
+| **Security middleware** | Manual install + wire (helmet, cors, csurf, ratelimit) | `shield.vn` — **CORS, CSRF, rate-limit** all built in |
+| **Background jobs** | External (Celery, Bull, machina) | **Built-in** — `WorkerPool` + `cron()` |
+| **ORM / query builder** | External (Prisma, SQLAlchemy, Knex, sqlx) | **Comptime ORM** — SQL compiled at compile time, zero runtime cost |
+| **Multi-core** | Node: single-threaded → PM2/cluster; Python: GIL → gunicorn | `listen_cluster()` — OS fork with shared listen socket |
+| **Deploy** | Runtime + `node_modules` / go toolchain / Python venv | **Single native binary** — `vn build --release` |
+| **Multi-app per process** | Express: one shared app; FastAPI: one app | `ZenithApp` is a struct — many independent apps in one process |
 
 **Features:**
 
@@ -389,7 +449,8 @@ GC; short-lived request allocations use task-local bump arenas.
 | [`docs/CONCURRENCY.md`](docs/CONCURRENCY.md) | Tasks, channels, actors |
 | [`docs/STDLIB.md`](docs/STDLIB.md) | Native modules — math, string, regex, SQLite, Postgres, Redis, HTTP, auth, validate, SMTP, JSON, Python bridge, FFI |
 | [`docs/ZENITH.md`](docs/ZENITH.md) | The Zenith web framework |
-| [`docs/LUMEN.md`](docs/LUMEN.md) | The Lumen frontend framework — components, events, slots, islands |
+| [`docs/LUMEN.md`](docs/LUMEN.md) | The Lumen frontend framework — components, events, slots, islands, Lumen JS |
+| [`docs/AURORA.md`](docs/AURORA.md) | The Aurora full-stack project template & reference storefront |
 | [`docs/KILN.md`](docs/KILN.md) | Kiln build tool — bundling, AOT, asset embedding |
 | [`docs/CONSTELLATION.md`](docs/CONSTELLATION.md) | Constellation package manager — registry, vendoring, publishing |
 | [`docs/TOOLING.md`](docs/TOOLING.md) | `vn` CLI reference — all commands, environment variables, module loading |

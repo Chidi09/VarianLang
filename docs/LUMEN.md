@@ -4,11 +4,32 @@
 
 # Lumen — server-driven live components
 
-Lumen is the Varian frontend framework — Varian's answer to Next.js / Nuxt. Components
-render to HTML **on the server** (on top of Zenith WebSocket routes). A tiny (~5 KB)
-client runtime forwards events over a WebSocket; the server re-renders and morphs the new
-HTML into the live DOM. No page reload, no client state, no Varian in the browser, and —
-because the server is the only place state lives and renders — **no hydration mismatch**.
+Lumen is Varian's server-driven **frontend** framework — the `React` to Aurora's `Next.js`.
+Components render to HTML **on the server** (on top of Zenith WebSocket routes). **Lumen JS**
+— a tiny (~2 KB) client runtime — forwards events over a WebSocket; the server re-renders
+and morphs the new HTML into the live DOM. No page reload, no client state, no Varian in
+the browser, and — because the server is the only place state lives and renders — **no
+hydration mismatch**.
+
+You can use Lumen standalone (`vn lumen new myapp` → a Lumen-only frontend served by any
+backend) or as the frontend half of **Aurora** (`vn new myapp` → full-stack with Zenith +
+Lumen + batteries).
+
+### Why Lumen over React / Vue / Svelte
+
+| Concern | React / Vue / Svelte | Lumen |
+|---|---|---|
+| **Rendering model** | Client VDOM + hydration — 50–400 KB framework | Server-driven HTML over WebSocket — **~2 KB inline Lumen JS** |
+| **Hydration mismatch** | Common bug | **Impossible** — server owns all state and rendering |
+| **UI components** | None built-in (need MUI, Chakra, Shadcn) | **28 built-in** — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, etc. |
+| **State management** | External (Zustand, Pinia, stores) | **Built-in** `lumen_store()` |
+| **Async data** | External (React Query, TanStack Query) | **Built-in** `lumen_resource()`, `lumen_async_resource()` |
+| **Form validation** | External (Zod, VeeValidate, yup) | **Built-in** `lumen_form()` — Zod-style |
+| **Pub-sub / broadcast** | External library or manual WebSocket | **Built-in** `lumen_publish()`, `lumen_subscribe()`, `lumen_broadcast_store()` |
+| **CSS scoping** | Compiler plugin or CSS modules | **Built-in** `data-lumen-css` attribute rewrite |
+| **Routing** | External (React Router, Vue Router, svelte-spa-router) | **File-based routing** — `pages/index.lumen` → `/` |
+| **SSG** | Framework-specific plugin | **Built-in** `lumen_build_static_dir()` |
+| **Scaffold** | `create-react-app`, `npm create vue`, etc. | **One command** — `vn lumen new myapp` |
 
 This page has two halves:
 
@@ -281,3 +302,53 @@ app.listen(8090)
 ```
 
 Run it: `./vn run examples/lumen_counter.vn`, open `http://localhost:8090`.
+
+---
+
+## What Lumen ships at once
+
+A typical React or Vue project needs a scaffold tool, a router, a state library, a
+data-fetching lib, a form validator, a component library, a CSS scoping solution, an SSG
+plugin, and an SEO plugin — 9+ separate packages, each with its own version, changelog,
+and CVE surface.
+
+Lumen ships all of this in one runtime, zero `npm install`:
+
+| Capability | React / Vue / Svelte | Lumen |
+|---|---|---|
+| UI components | None (MUI, Chakra, Shadcn) | **28** — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, `<Button>`, etc. |
+| Server-driven DOM engine | None (VDOM + hydration) | **Built-in** — splice-patch protocol, ~2 KB Lumen JS inline |
+| File-based routing | React Router, Vue Router | **Built-in** — `pages/index.lumen` → `/` |
+| Dynamic route params | External lib feature | **Built-in** — `[id].lumen` → `/:id` |
+| Scoped CSS | CSS modules, styled-components | **Built-in** — `data-lumen-css` attribute rewrite |
+| Reactive store | Zustand, Pinia | **Built-in** — `lumen_store()`, `lumen_broadcast_store()` |
+| Async data fetching | React Query, TanStack Query | **Built-in** — `lumen_resource()`, `lumen_async_resource()` |
+| Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
+| Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
+| SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
+| SEO metadata | next/head, react-helmet | **Built-in** — `lumen_meta()` |
+| Client islands | None / manual | **Built-in** — `<client>` blocks |
+| Inline SVG icons | CDN or bundler | **Built-in** — Lucide icons, zero CDN |
+| Dark mode | Manual CSS | **Built-in** — CSS variable tokens |
+| Live reload | HMR plugin | **Built-in** — `vn dev` |
+| Error overlay | Custom setup | **Built-in** — branded in-browser overlay |
+| Test helpers | Testing Library, Enzyme | **Built-in** — `lumen_test_render()`, `lumen_test_event()` |
+| Favicon + manifest | Manual setup | **Built-in** — scaffolded by `vn lumen new` |
+| **Total packages needed** | **9+** (router, state, fetch, forms, UI, CSS, SSG, SEO, icons) | **0** (one binary) |
+
+### Engineering patterns Lumen proves
+
+- **Stateless execution by default** — Every handler receives state and returns new state
+  (`vn_modules/lumen.vn:1497-1513`). The server owns all rendering; there is no client-side
+  `useState`. Each WebSocket connection holds its own `state` variable in a local
+  `_lumen_live_loop` scope — no global mutable state.
+- **Guard clauses** — Every handler starts with null checks before business logic
+  (`aurora/lib/api_cart.vn:5-7: if session == null { return [] }`).
+- **Event-driven decoupling** — `lumen_publish`/`lumen_subscribe`
+  (`vn_modules/lumen.vn:1326-1345`) uses a channel-backed notification bus
+  (`_lumen_async_updates`, line 191) to decouple producers from all live-loop consumers.
+- **Cooperative concurrency** — The live loop calls `task.yield()` when idle
+  (`lumen.vn:1790`); the single-threaded scheduler (`src/vm.c:3262-3317`) round-robins
+  between connections with zero race conditions.
+- **Parse, don't validate** — `lumen_form()` parses raw form input into `{ok, values, errors}`
+  at the boundary; inside the system the type guarantees validity.

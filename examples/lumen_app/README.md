@@ -30,6 +30,6 @@ vn dev pages
 - `{{ }}` interpolates (HTML-escaped by default); `@click="inc"` binds an event.
 - `vn dev` compiles every page, maps file names to routes, and serves them with
   the **server-driven live** model: the server owns state and renders HTML, a
-  tiny client forwards events over a WebSocket, and the server pushes back a
+  tiny client runtime (**Lumen JS**) forwards events over a WebSocket, and the server pushes back a
   minimal DOM patch. No build config, no `node_modules`, no hydration mismatch.
 - Handler errors surface as a branded in-browser error overlay during dev.

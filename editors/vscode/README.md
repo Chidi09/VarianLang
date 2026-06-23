@@ -1,7 +1,7 @@
 # Varian — VS Code
 
 Syntax highlighting and full LSP for the Varian language and its frameworks
-(Zenith backend, Lumen frontend, Aurora fullstack).
+(Zenith HTTP, Lumen frontend, Aurora full-stack template).
 
 ## Features
 

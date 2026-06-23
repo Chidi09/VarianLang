@@ -300,3 +300,68 @@ Cloud SDKs (S3/R2/GCS, etc.) are not getting dedicated native modules — the ex
 `python.run(module, fn, args)` bridge (see `docs/STDLIB.md`) already lets you call
 `boto3` or any other Python package directly, which is far less maintenance than
 hand-rolling AWS auth/signing in C for a feature most programs won't use.
+
+---
+
+## What Zenith ships at once
+
+A comparable Express/Fastify/Go application pulls in 16+ packages: a router, cookie parser,
+body parser, CORS middleware, helmet, session middleware, rate limiter, a template engine,
+an ORM, a WebSocket library, OpenAPI generator, validator, logger, cluster manager, test
+runner, and linter — each its own version, changelog, and supply-chain risk.
+
+Zenith ships all of this in one binary, zero `node_modules`:
+
+| Capability | Express / FastAPI / Go | Zenith |
+|---|---|---|
+| Router | `express.Router()`, external trie | **Built-in** — radix trie, O(depth) lookup, `src/lib_http.c:885-895` SIMD-parsed |
+| WebSocket | `ws`, `gorilla/websocket`, `websockets` | **Built-in** — full RFC 6455, ~125 lines Varian, `zenith.vn:33-161` |
+| SSE | Manual or library | **Built-in** — `SseSender.send(data)`, `zenith.vn:163-176` |
+| OpenAPI / Swagger | `swagger-jsdoc`, `swaggo` | **Built-in** — auto-generated from route metadata, `zenith.vn:471-482` |
+| Sessions | `express-session`, `gorilla/sessions` | **Built-in** — stateless JWT-signed cookies, `zenith.vn:1098-1121` |
+| Templating | Pug, EJS, Jinja2, html/template | **Built-in** — `<%= %>` escaped by default, `zenith.vn:1126-1137` |
+| CORS | `cors` package | **Built-in** — `shield.vn:15`, auto-loaded |
+| CSRF | `csurf`, manual | **Built-in** — double-submit cookie, `shield.vn:182` |
+| Rate limiting | `express-rate-limit`, manual | **Built-in** — in-memory + Redis, `shield.vn:121-170` |
+| ORM / query builder | Prisma, Knex, SQLAlchemy, sqlx | **Built-in** — comptime SQL builder, `db.vn:16-52`, zero runtime cost |
+| Static serving | `serve-static`, `express.static` | **Built-in** — with path-traversal protection, `zenith.vn:379-387` |
+| Cluster / multi-core | PM2, gunicorn | **Built-in** — `listen_cluster(port, workers)`, `zenith.vn:542` |
+| TLS | Reverse proxy or manual | **Built-in** — `listen_tls()`, `listen_tls_cluster()`, `zenith.vn:560-575` |
+| JSON response helpers | Manual | **Built-in** — `json_response()`, `zenith.vn:1080` |
+| Request helpers | `body-parser`, manual | **Built-in** — `query()`, `form()`, `cookie()`, `zenith.vn:922-948` |
+| Error handler | Manual try/catch in middleware | **Built-in** — `on_error()`, `zenith.vn:484` |
+| Structured logging | `winston`, `pino`, `logrus` | **Built-in** — JSON-line `Logger`, `observe.vn:7-24` |
+| Prometheus metrics | `prom-client`, manual | **Built-in** — `metrics_handler()`, `observe.vn:53` |
+| Background jobs | Bull, Celery, machina | **Built-in** — `WorkerPool` + `cron()`, `queue.vn:17-42` |
+| Email (SMTP) | `nodemailer`, `smtplib` | **Built-in** — `send_smtp()`, `send_resend()`, `mail.vn:12-20` |
+| Input validation | Joi, Zod, pydantic | **Built-in** — `validate.str().is_email().parse(v)`, `validate.vn:13-206` |
+| Auth / JWT | `jsonwebtoken`, `pyjwt` | **Built-in** — `auth.sign_jwt()`, `auth.verify_jwt()`, `auth.vn` |
+| SQLite / Postgres / Redis | driver per DB | **Built-in** — native C modules, `src/lib_sqlite.c`, `lib_postgres.c`, `lib_redis.c` |
+| **Total packages needed** | **16+** | **0** (one binary) |
+
+### Engineering patterns Zenith proves
+
+- **Hexagonal Architecture** — The VM speaks only `CompiledQuery`/`BoundQuery` through
+  `db.vn:16-60`. SQLite, Postgres, Redis, SMTP are hot-swappable adapters plugged via FFI
+  through one interface (`src/ffi.c:28-59`). The core router (`zenith.vn:217-310`) knows
+  nothing about the database adapters.
+- **Mechanical Sympathy** — The HTTP server uses `io_uring` for kernel-bypass async I/O
+  (`src/lib_http.c:1098-1342`), SIMD request parsing via picohttpparser
+  (`src/lib_http.c:885-895`), `writev` scatter/gather for single-syscall response sends
+  (`src/lib_http.c:484-538`), and computed-goto bytecode dispatch
+  (`src/vm.c:3640-3649`).
+- **Arena allocation** — Every HTTP request gets a per-task bump arena
+  (`src/lib_http.c:573: task_arena_enable(tmp)`) so short-lived allocations never reach the
+  GC. Dead tasks are recycled via a free-list (`src/vm.c:2435-2467`).
+- **Errors as values** — Varian has no exception type. `errors.make()` creates an `Error`
+  struct with `kind`/`message`/`hint` fields (`src/lib_errors.c:52-110`). The `Validator`
+  returns `{success, data}` or `{success, error}` structs rather than throwing
+  (`validate.vn:109-151`).
+- **Parse, don't validate** — The comptime ORM (`db.vn:16-52`) parses SQL shapes at
+  compile time via `comptime { }` — the SQL string and parameter count are baked into the
+  binary. `bind()` enforces the parameter count before execution reaches the driver.
+- **Structured logging** — `observe.vn:7-24` always emits JSON lines with `level`,
+  `logger`, `msg`, `ts` and supports arbitrary key/value context — no plain-text log
+  statements anywhere in the framework.
+- **Feature flags** — `LUMEN_DEV` (`lumen.vn:1708`) gates the dev tools overlay and error
+  overlay. All `aurora/lib/config.vn` values are env-driven toggles.
