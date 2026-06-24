@@ -1,0 +1,109 @@
+// config.vn — Environment-based configuration with .env loading and typed coercion
+// Self-contained: does not require zenith.vn.
+
+// Shallow-copy a struct and override/add one key.
+fn _cfg_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+//
+// Usage:
+//   let cfg = load_config()                    // loads .env from cwd
+//   let cfg = load_config("/etc/app/.env")     // custom path
+//   let port = cfg.int("PORT", 8080)           // typed with default
+//   let host = cfg.str("HOST", "localhost")
+//   let debug = cfg.bool("DEBUG", false)
+//   let secret = cfg.require("API_SECRET")     // crashes with useful error
+//                                              // if missing
+//   cfg.set("computed", "value")               // runtime override
+
+struct Config {
+    _vals: any,
+}
+
+fn load_config() {
+    return load_config_path(".env")
+}
+
+fn load_config_path(path) {
+    env.load(path)
+    return Config { _vals: http.create_struct([], []) }
+}
+
+impl Config {
+    // Read a string value. Checks runtime overrides first, then env.
+    fn str(self, key, default) {
+        let v = _validate.get_field(self._vals, key)
+        if v != null { return "" + v }
+        let ev = env.get(key)
+        if ev != null { return ev }
+        return default
+    }
+
+    // Read an integer value. Tries json_decode for the string -> int
+    // conversion so "8080" becomes 8080.
+    fn get_int(self, key, default) {
+        let v = self.str(key, null)
+        if v == null { return default }
+        try { return json_decode(v) } catch e { return default }
+    }
+
+    // Read a float value.
+    fn get_float(self, key, default) {
+        let v = self.str(key, null)
+        if v == null { return default }
+        try { return json_decode(v) } catch e { return default }
+    }
+
+    // Read a boolean value. Accepts "true"/"false"/"1"/"0" (case-insensitive).
+    fn get_bool(self, key, default) {
+        let v = self.str(key, null)
+        if v == null { return default }
+        let lower = v.lower()
+        if lower == "true" or lower == "1" or lower == "yes" { return true }
+        if lower == "false" or lower == "0" or lower == "no" { return false }
+        return default
+    }
+
+    // Read an array value. Environment variable is JSON-decoded.
+    fn array(self, key, default) {
+        let v = self.str(key, null)
+        if v == null { return default }
+        try { return json_decode(v) } catch e { return default }
+    }
+
+    // Read a JSON value (object, array, or scalar).
+    fn json(self, key, default) {
+        let v = self.str(key, null)
+        if v == null { return default }
+        try { return json_decode(v) } catch e { return default }
+    }
+
+    // Require a key — crashes with a descriptive error if missing.
+    fn require(self, key) {
+        let v = self.str(key, null)
+        if v == null {
+            throw(errors.make(
+                "MissingConfig",
+                "Required configuration key '" + key + "' is not set",
+                "Set the " + key + " environment variable or add it to your .env file"
+            ))
+        }
+        return v
+    }
+
+    // Set a runtime override (takes precedence over env).
+    fn set(self, key, value) {
+        self._vals = _cfg_bind(self._vals, key, value)
+    }
+}

@@ -1,0 +1,180 @@
+// csv.vn — Pure Varian CSV parser and serializer
+// Self-contained: does not require zenith.vn.
+
+// Shallow-copy a struct and override/add one key.
+fn _csv_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+//
+// No native dependencies — works entirely with Varian strings and arrays.
+// Handles quoted fields, escaped quotes, and mixed types.
+//
+// Usage:
+//   let rows = csv_parse("name,age\nAlice,30\nBob,25")
+//   // rows = [["name","age"], ["Alice","30"], ["Bob","25"]]
+//
+//   let text = csv_serialize([["name","age"], ["Alice","30"]])
+//   // text = "name,age\nAlice,30\n"
+
+// Parse a CSV string into an array of string arrays.
+// Handles:
+//   - Quoted fields with embedded commas and newlines
+//   - Escaped quotes ("") inside quoted fields
+//   - Leading/trailing whitespace (not trimmed by default)
+fn csv_parse(text) {
+    let rows = []
+    let current_row = []
+    let current_field = ""
+    let in_quotes = false
+    let i = 0
+    let len = text.len()
+
+    while i < len {
+        let c = text.substring(i, i + 1)
+
+        if in_quotes {
+            if c == "\"" {
+                // Check for escaped quote ""
+                if i + 1 < len and text.substring(i + 1, i + 2) == "\"" {
+                    current_field = current_field + "\""
+                    i = i + 2
+                    continue
+                }
+                // End of quoted field
+                in_quotes = false
+                i = i + 1
+                continue
+            }
+            current_field = current_field + c
+        } else {
+            if c == "\"" {
+                in_quotes = true
+            } else if c == "," {
+                current_row = current_row.push(current_field)
+                current_field = ""
+            } else if c == "\n" {
+                current_row = current_row.push(current_field)
+                current_field = ""
+                rows = rows.push(current_row)
+                current_row = []
+            } else if c == "\r" {
+                // Skip \r, handle \r\n
+            } else {
+                current_field = current_field + c
+            }
+        }
+        i = i + 1
+    }
+
+    // Handle last field/row
+    if current_field != "" or current_row.len() > 0 {
+        current_row = current_row.push(current_field)
+        rows = rows.push(current_row)
+    }
+
+    return rows
+}
+
+// Serialize an array of arrays into a CSV string.
+// Fields containing commas, quotes, or newlines are quoted.
+// Embedded quotes are escaped as "".
+fn csv_serialize(rows) {
+    let result = ""
+    for ri in 0..rows.len() {
+        let row = rows[ri]
+        for ci in 0..row.len() {
+            if ci > 0 { result = result + "," }
+            result = result + _csv_escape_field("" + row[ci])
+        }
+        if ri < rows.len() - 1 {
+            result = result + "\n"
+        }
+    }
+    return result
+}
+
+// Escape a single CSV field, quoting if necessary.
+fn _csv_escape_field(field) {
+    // Check if quoting is needed
+    let needs_quote = false
+    for i in 0..field.len() {
+        let c = field.substring(i, i + 1)
+        if c == "," or c == "\"" or c == "\n" or c == "\r" {
+            needs_quote = true
+            break
+        }
+    }
+
+    if !needs_quote {
+        return field
+    }
+
+    // Escape embedded quotes
+    let escaped = ""
+    for i in 0..field.len() {
+        let c = field.substring(i, i + 1)
+        if c == "\"" {
+            escaped = escaped + "\"\""
+        } else {
+            escaped = escaped + c
+        }
+    }
+
+    return "\"" + escaped + "\""
+}
+
+// Parse CSV with header row into an array of structs.
+// The first row becomes field names.
+fn csv_parse_with_headers(text) {
+    let rows = csv_parse(text)
+    if rows.len() == 0 { return [], [] }
+
+    let headers = rows[0]
+    let result = []
+
+    for ri in 1..rows.len() {
+        let row = rows[ri]
+        let obj = http.create_struct([], [])
+        for ci in 0..headers.len() {
+            if ci < row.len() {
+                obj = _csv_bind(obj, headers[ci], row[ci])
+            } else {
+                obj = _csv_bind(obj, headers[ci], "")
+            }
+        }
+        result = result.push(obj)
+    }
+
+    return result, headers
+}
+
+// Serialize an array of structs to CSV using the given header order.
+// Fields not in the header list are omitted.
+fn csv_serialize_from_structs(structs, header_order) {
+    if structs.len() == 0 { return "" }
+
+    let result = csv_serialize([header_order])
+
+    for si in 0..structs.len() {
+        let s = structs[si]
+        let row = []
+        for hi in 0..header_order.len() {
+            let val = _validate.get_field(s, header_order[hi])
+            row = row.push(val ?? "")
+        }
+        result = result + "\n" + csv_serialize([row])
+    }
+
+    return result
+}

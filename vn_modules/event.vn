@@ -1,0 +1,182 @@
+// event.vn — In-process typed pub/sub event bus
+// Self-contained: does not require zenith.vn.
+
+// Shallow-copy a struct and override/add one key.
+fn _event_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+//
+// Provides named event channels with fan-out to multiple subscribers.
+// Built on task.channel — no external dependencies.
+//
+// Usage:
+//   let bus = new_event_bus()
+//
+//   // Subscribe
+//   let unsub = bus.on("user.signup", |event| {
+//       print("User signed up: " + event.email)
+//   })
+//
+//   // Emit
+//   bus.emit("user.signup", { email: "alice@example.com", name: "Alice" })
+//
+//   // Unsubscribe
+//   unsub()
+//
+//   // One-shot listen
+//   bus.once("db.connected", |event| {
+//       print("Database connected: " + event.name)
+//   })
+
+struct EventBus {
+    _listeners: any,    // topic -> array of {fn, once}
+    _chan: any,         // background notification channel
+}
+
+struct _Subscription {
+    topic: string,
+    idx: int,
+    bus: any,
+}
+
+fn new_event_bus() {
+    return EventBus {
+        _listeners: http.create_struct([], []),
+        _chan: task.channel(64),
+    }
+}
+
+fn _event_unsub(bus, topic, idx) {
+    let subs = _validate.get_field(bus._listeners, topic)
+    if subs == null { return }
+    let new_subs = []
+    for i in 0..subs.len() {
+        if i != idx {
+            new_subs = new_subs.push(subs[i])
+        }
+    }
+    bus._listeners = _event_bind(bus._listeners, topic, new_subs)
+}
+
+impl EventBus {
+    // Subscribe to a topic. Returns an unsubscribe closure.
+    fn on(self, topic, handler) {
+        let subs = _validate.get_field(self._listeners, topic)
+        if subs == null { subs = [] }
+        let idx = subs.len()
+        subs = subs.push(http.create_struct(["fn", "once"], [handler, false]))
+        self._listeners = _event_bind(self._listeners, topic, subs)
+
+        let _t = topic
+        let _i = idx
+        let _b = self
+        return |_| {
+            _event_unsub(_b, _t, _i)
+        }
+    }
+
+    // Subscribe to a topic for exactly one event, then auto-unsubscribe.
+    fn once(self, topic, handler) {
+        let subs = _validate.get_field(self._listeners, topic)
+        if subs == null { subs = [] }
+        let idx = subs.len()
+        subs = subs.push(http.create_struct(["fn", "once"], [handler, true]))
+        self._listeners = _event_bind(self._listeners, topic, subs)
+    }
+
+    // Emit an event to all subscribers of the topic.
+    // Runs handlers synchronously in the emitter's task (no yield between
+    // handlers within one emit). Each handler receives the event data.
+    fn emit(self, topic, data) {
+        let subs = _validate.get_field(self._listeners, topic)
+        if subs == null { return }
+
+        let to_remove = []
+        for i in 0..subs.len() {
+            let sub = subs[i]
+            let handler = _validate.get_field(sub, "fn")
+            let once = _validate.get_field(sub, "once")
+            try {
+                handler(data)
+            } catch e {
+                // Swallow handler errors so one bad listener
+                // doesn't break the bus
+            }
+            if once {
+                to_remove = to_remove.push(i)
+            }
+        }
+
+        // Remove one-shot listeners in reverse order
+        for i in 0..to_remove.len() {
+            self.off(topic, to_remove[to_remove.len() - 1 - i])
+        }
+    }
+
+    // Emit to a wildcard pattern ("user.*" matches "user.signup",
+    // "user.login"). Uses prefix matching on the segment boundary.
+    fn emit_wildcard(self, pattern, data) {
+        let all_keys = _validate.get_keys(self._listeners)
+        for ki in 0..all_keys.len() {
+            let topic = all_keys[ki]
+            if _topic_matches(topic, pattern) {
+                self.emit(topic, data)
+            }
+        }
+    }
+
+    // Remove all listeners for a topic.
+    fn clear(self, topic) {
+        let keys = _validate.get_keys(self._listeners)
+        let new_listeners = http.create_struct([], [])
+        for ki in 0..keys.len() {
+            if keys[ki] != topic {
+                new_listeners = _event_bind(new_listeners, keys[ki],
+                    _validate.get_field(self._listeners, keys[ki]))
+            }
+        }
+        self._listeners = new_listeners
+    }
+
+    // Remove all listeners for all topics.
+    fn clear_all(self) {
+        self._listeners = http.create_struct([], [])
+    }
+
+    // Number of listeners for a topic.
+    fn listener_count(self, topic) -> int {
+        let subs = _validate.get_field(self._listeners, topic)
+        if subs == null { return 0 }
+        return subs.len()
+    }
+
+    // List all topics that have listeners.
+    fn topics(self) {
+        return _validate.get_keys(self._listeners)
+    }
+}
+
+// Match a concrete topic against a wildcard pattern.
+// "user.signup" matches "user.*" and "*".
+fn _topic_matches(topic, pattern) {
+    if pattern == "*" { return true }
+    if topic == pattern { return true }
+    // Check prefix wildcard: "user.*" matches "user.signup"
+    let star_idx = pattern.index_of("*")
+    if star_idx >= 0 {
+        let prefix = pattern.substring(0, star_idx)
+        if topic.starts_with(prefix) { return true }
+    }
+    return false
+}

@@ -1,0 +1,91 @@
+// Smoke tests for new vn_modules — verify constructors and simple operations.
+
+test "cache module basics" {
+    let c = new_cache(null)
+    assert_ne(c, null)
+    let cp = new_cache_with_prefix(null, "test")
+    assert_ne(cp, null)
+}
+
+test "config module basics" {
+    let cfg = load_config_path("/nonexistent/.env")
+    assert_ne(cfg, null)
+    assert_eq(cfg.str("MISSING_KEY", "default"), "default")
+    assert_eq(cfg.get_int("MISSING_KEY", 42), 42)
+    assert_eq(cfg.get_bool("MISSING_KEY", true), true)
+    cfg.set("runtime_key", "runtime_val")
+    assert_eq(cfg.str("runtime_key", ""), "runtime_val")
+}
+
+test "config require throws" {
+    let cfg = load_config_path("/nonexistent/.env")
+    let ok = false
+    try {
+        cfg.require("DEFINITELY_MISSING")
+    } catch e {
+        ok = (e != null)
+    }
+    assert_eq(ok, true)
+}
+
+test "event bus basics" {
+    let bus = new_event_bus()
+    assert_ne(bus, null)
+    let unsub = bus.on("test.event", |_| {})
+    assert_ne(unsub, null)
+    bus.emit("test.event", null)
+    assert_eq(bus.listener_count("test.event"), 1)
+    unsub(null)
+    assert_eq(bus.listener_count("test.event"), 0)
+}
+
+test "event bus clear" {
+    let bus = new_event_bus()
+    bus.on("a", |_| {})
+    bus.on("b", |_| {})
+    assert_eq(bus.listener_count("a"), 1)
+    bus.clear("a")
+    assert_eq(bus.listener_count("a"), 0)
+    bus.clear_all()
+}
+
+test "csv parse basic" {
+    let rows = csv_parse("a,b\n1,2")
+    assert_eq(rows.len(), 2)
+}
+
+test "csv serialize basic" {
+    let result = csv_serialize([["a", "b"], ["1", "2"]])
+    assert_eq(result, "a,b\n1,2")
+}
+
+test "csv roundtrip" {
+    let original = "x,y\n3,4"
+    assert_eq(csv_serialize(csv_parse(original)), original)
+}
+
+test "csv with headers" {
+    let structs, headers = csv_parse_with_headers("k,v\nhello,world")
+    assert_eq(headers.len(), 2)
+    assert_eq(headers[0], "k")
+    assert_eq(headers[1], "v")
+}
+
+test "rate limiter construction" {
+    let rl = new_rate_limiter(null)
+    assert_ne(rl, null)
+    let rlp = new_rate_limiter_with_prefix(null, "test:rl")
+    assert_ne(rlp, null)
+}
+
+test "rate limiter defaults without redis" {
+    let rl = new_rate_limiter(null)
+    let meta = rl.check_with_meta("test", 100, 60)
+    assert_eq(meta.allowed, true)
+    assert_eq(meta.remaining, 100)
+}
+
+test "WebSocket struct construction" {
+    let ws = WebSocket { fd: -1, ssl: null }
+    assert_ne(ws, null)
+}

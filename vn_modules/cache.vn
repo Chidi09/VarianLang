@@ -1,0 +1,190 @@
+// cache.vn — Typed Redis cache over native redis.cmd
+//
+// Self-contained: does not require zenith.vn to be loaded first.
+
+// Shallow-copy a struct and override/add one key. Mirrors the _tpl_bind
+// helper in zenith.vn — defined here so cache.vn works standalone.
+fn _cache_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
+//
+//   let c = new_cache(redis.connect("localhost", 6379))
+//   c.set("greeting", "hello")
+//   let v = c.get("greeting")           // "hello" or null
+//   c.set_json("user", { name: "Alice" })
+//   let u = c.get_json("user")          // { name: "Alice" }
+//
+// redis.cmd(conn, command, [args_array]) — args MUST be an array.
+// Return types from redis_reply_to_value:
+//   GET/HGET/LPOP/RPOP  → VAL_STRING or VAL_NIL
+//   INCR/INCRBY/EXISTS/TTL/LLEN/SETNX → VAL_INT
+//   SMEMBERS/LRANGE/HGETALL           → VAL_ARRAY
+
+struct Cache { conn: any, prefix: string }
+
+fn new_cache(conn) { return Cache { conn: conn, prefix: "" } }
+fn new_cache_with_prefix(conn, prefix) { return Cache { conn: conn, prefix: prefix } }
+
+impl Cache {
+    fn _key(self, key) {
+        if self.prefix == "" { return key }
+        return self.prefix + ":" + key
+    }
+
+    // ── String get/set ────────────────────────────────────────────────────
+    // GET returns VAL_STRING or VAL_NIL directly — no array wrapper.
+    fn get(self, key) {
+        return redis.cmd(self.conn, "GET", [self._key(key)])
+    }
+
+    fn set(self, key, value) {
+        redis.cmd(self.conn, "SET", [self._key(key), "" + value])
+    }
+
+    // SETEX key seconds value
+    fn set_ex(self, key, value, ttl_seconds) {
+        redis.cmd(self.conn, "SETEX", [self._key(key), "" + ttl_seconds, "" + value])
+    }
+
+    // SETNX returns VAL_INT 1 (set) or 0 (already existed)
+    fn set_nx(self, key, value) {
+        let r = redis.cmd(self.conn, "SETNX", [self._key(key), "" + value])
+        return r == 1
+    }
+
+    // ── Typed getters ─────────────────────────────────────────────────────
+    fn get_int(self, key) {
+        let v = self.get(key)
+        if v == null { return null }
+        try { return json_decode(v) } catch e { return null }
+    }
+
+    fn get_json(self, key) {
+        let v = self.get(key)
+        if v == null { return null }
+        try { return json_decode(v) } catch e { return null }
+    }
+
+    fn set_json(self, key, value) {
+        self.set(key, json_encode(value))
+    }
+
+    // ── Counters ──────────────────────────────────────────────────────────
+    // INCR/INCRBY return VAL_INT directly.
+    fn incr(self, key) {
+        let r = redis.cmd(self.conn, "INCR", [self._key(key)])
+        return r ?? 0
+    }
+
+    fn incr_by(self, key, amount) {
+        let r = redis.cmd(self.conn, "INCRBY", [self._key(key), "" + amount])
+        return r ?? 0
+    }
+
+    // ── Key management ────────────────────────────────────────────────────
+    // EXISTS returns VAL_INT 1 or 0.
+    fn exists(self, key) {
+        let r = redis.cmd(self.conn, "EXISTS", [self._key(key)])
+        return r == 1
+    }
+
+    fn del(self, key) { redis.cmd(self.conn, "DEL", [self._key(key)]) }
+
+    // EXPIRE takes key + integer TTL; the C layer converts VAL_INT to string.
+    fn expire(self, key, seconds) {
+        redis.cmd(self.conn, "EXPIRE", [self._key(key), "" + seconds])
+    }
+
+    // TTL returns VAL_INT (-2 = does not exist, -1 = no TTL, N = seconds).
+    fn ttl(self, key) {
+        let r = redis.cmd(self.conn, "TTL", [self._key(key)])
+        return r ?? -2
+    }
+
+    // ── Set commands ──────────────────────────────────────────────────────
+    fn sadd(self, key, member) {
+        redis.cmd(self.conn, "SADD", [self._key(key), "" + member])
+    }
+
+    // SMEMBERS returns VAL_ARRAY of VAL_STRING elements.
+    fn smembers(self, key) {
+        let r = redis.cmd(self.conn, "SMEMBERS", [self._key(key)])
+        return r ?? []
+    }
+
+    fn srem(self, key, member) {
+        redis.cmd(self.conn, "SREM", [self._key(key), "" + member])
+    }
+
+    // ── List commands ─────────────────────────────────────────────────────
+    fn lpush(self, key, val) {
+        redis.cmd(self.conn, "LPUSH", [self._key(key), "" + val])
+    }
+
+    fn rpush(self, key, val) {
+        redis.cmd(self.conn, "RPUSH", [self._key(key), "" + val])
+    }
+
+    // LPOP/RPOP return VAL_STRING or VAL_NIL directly.
+    fn lpop(self, key) {
+        return redis.cmd(self.conn, "LPOP", [self._key(key)])
+    }
+
+    fn rpop(self, key) {
+        return redis.cmd(self.conn, "RPOP", [self._key(key)])
+    }
+
+    // LRANGE returns VAL_ARRAY.
+    fn lrange(self, key, start, stop) {
+        let r = redis.cmd(self.conn, "LRANGE", [self._key(key), "" + start, "" + stop])
+        return r ?? []
+    }
+
+    // LLEN returns VAL_INT.
+    fn llen(self, key) {
+        let r = redis.cmd(self.conn, "LLEN", [self._key(key)])
+        return r ?? 0
+    }
+
+    // ── Hash commands ─────────────────────────────────────────────────────
+    fn hset(self, key, field, val) {
+        redis.cmd(self.conn, "HSET", [self._key(key), field, "" + val])
+    }
+
+    // HGET returns VAL_STRING or VAL_NIL directly.
+    fn hget(self, key, field) {
+        return redis.cmd(self.conn, "HGET", [self._key(key), field])
+    }
+
+    fn hdel(self, key, field) {
+        redis.cmd(self.conn, "HDEL", [self._key(key), field])
+    }
+
+    // HGETALL returns VAL_ARRAY: [field, value, field, value, ...]
+    fn hgetall(self, key) {
+        let rows = redis.cmd(self.conn, "HGETALL", [self._key(key)])
+        if rows == null { return http.create_struct([], []) }
+        let obj = http.create_struct([], [])
+        for i in 0..rows.len() / 2 {
+            obj = _cache_bind(obj, rows[i * 2], rows[i * 2 + 1])
+        }
+        return obj
+    }
+
+    // ── Escape hatch ──────────────────────────────────────────────────────
+    // Pass any command with a pre-built args array.
+    fn cmd(self, cmd_str, args) {
+        return redis.cmd(self.conn, cmd_str, args)
+    }
+}

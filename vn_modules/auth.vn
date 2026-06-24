@@ -41,56 +41,50 @@ fn jwt_middleware(secret) {
     }
 }
 
-// Session Actor
+// Session Actor — proper Varian actor with named methods.
+// Spawn with: let store = SessionStore.spawn()
+// Then call:  store.set(sid, user) / store.get(sid) / store.delete(sid)
 actor SessionStore {
-    sessions: any // Map/Struct created dynamically
-}
+    sessions: any,
 
-fn session_store_actor(self) {
-    self.sessions = http.create_struct([], [])
-    while (true) {
-        let msg = receive()
-        let action = _validate.get_field(msg, "action")
-        let sid = _validate.get_field(msg, "sid")
-        if (action == "get") {
-            let user = _validate.get_field(self.sessions, sid)
-            let reply_to = _validate.get_field(msg, "reply_to")
-            reply_to <- user
-        } else if (action == "set") {
-            let user = _validate.get_field(msg, "user")
-            // Update sessions by creating a new struct with new key/value
-            let keys = _validate.get_keys(self.sessions)
-            let vals = []
-            let i = 0
-            let replaced = false
-            while (i < keys.len()) {
-                if (keys[i] == sid) {
-                    vals = vals.push(user)
-                    replaced = true
-                } else {
-                    vals = vals.push(_validate.get_field(self.sessions, keys[i]))
-                }
-                i = i + 1
-            }
-            if (!replaced) {
-                keys = keys.push(sid)
+    fn init(self) {
+        self.sessions = http.create_struct([], [])
+    }
+
+    fn get(self, sid) {
+        return _validate.get_field(self.sessions, sid)
+    }
+
+    fn set(self, sid, user) {
+        let keys = _validate.get_keys(self.sessions)
+        let vals = []
+        let replaced = false
+        for i in 0..keys.len() {
+            if keys[i] == sid {
                 vals = vals.push(user)
+                replaced = true
+            } else {
+                vals = vals.push(_validate.get_field(self.sessions, keys[i]))
             }
-            self.sessions = http.create_struct(keys, vals)
-        } else if (action == "delete") {
-            let keys = _validate.get_keys(self.sessions)
-            let new_keys = []
-            let new_vals = []
-            let i = 0
-            while (i < keys.len()) {
-                if (keys[i] != sid) {
-                    new_keys = new_keys.push(keys[i])
-                    new_vals = new_vals.push(_validate.get_field(self.sessions, keys[i]))
-                }
-                i = i + 1
-            }
-            self.sessions = http.create_struct(new_keys, new_vals)
         }
+        if !replaced {
+            keys = keys.push(sid)
+            vals = vals.push(user)
+        }
+        self.sessions = http.create_struct(keys, vals)
+    }
+
+    fn delete(self, sid) {
+        let keys = _validate.get_keys(self.sessions)
+        let new_keys = []
+        let new_vals = []
+        for i in 0..keys.len() {
+            if keys[i] != sid {
+                new_keys = new_keys.push(keys[i])
+                new_vals = new_vals.push(_validate.get_field(self.sessions, keys[i]))
+            }
+        }
+        self.sessions = http.create_struct(new_keys, new_vals)
     }
 }
 
@@ -116,13 +110,8 @@ fn session_middleware(store_pid, cookie_name) {
         let sid = _extract_cookie(cookie_header, cookie_name)
         let user = null
 
-        if (sid != null) {
-            let reply = task.channel(1)
-            store_pid <- http.create_struct(
-                ["action", "sid", "reply_to"],
-                ["get", sid, reply]
-            )
-            user = <- reply
+        if sid != null {
+            user = store_pid.get(sid)
         }
 
         // Attach user (or null) to req.user
@@ -146,7 +135,11 @@ let zenith_auth = http.create_struct(
     ["jwt", "session_store", "session", "hash_password", "verify_password"],
     [
         |secret| { return jwt_middleware(secret) },
-        | | { return task.spawn(session_store_actor, []) },
+        | | {
+            let s = SessionStore.spawn()
+            s.init()
+            return s
+        },
         |store_pid, cookie_name| { return session_middleware(store_pid, cookie_name) },
         |password| { return auth.hash_password(password) },
         |password, hash| { return auth.verify_password(password, hash) }

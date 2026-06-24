@@ -1,0 +1,110 @@
+// ratelimit.vn — Redis-backed fixed-window rate limiter
+//
+// Suitable for API rate limiting per-IP, per-user, per-route, etc.
+//
+// Usage:
+//   let rl = new_rate_limiter(redis.connect("localhost", 6379))
+//
+//   // Allow up to 100 requests per 60-second window per IP
+//   let allowed = rl.check("api:127.0.0.1", 100, 60)
+//   if !allowed {
+//       return json_response({ error: "rate limit exceeded" }, 429)
+//   }
+//
+//   // With per-key prefix
+//   let rl2 = new_rate_limiter_with_prefix(conn, "myapp:ratelimit")
+//
+// redis.cmd return types used here:
+//   INCR  → VAL_INT  (the new counter value)
+//   GET   → VAL_STRING or VAL_NIL
+//   TTL   → VAL_INT  (-2 = no key, -1 = no expiry, N = seconds remaining)
+//   DEL   → VAL_INT  (number of keys deleted)
+
+struct RateLimiter {
+    conn: any,
+    prefix: string,
+}
+
+fn new_rate_limiter(conn) {
+    return RateLimiter { conn: conn, prefix: "" }
+}
+
+fn new_rate_limiter_with_prefix(conn, prefix) {
+    return RateLimiter { conn: conn, prefix: prefix }
+}
+
+impl RateLimiter {
+    fn _key(self, key) {
+        if self.prefix == "" { return key }
+        return self.prefix + ":" + key
+    }
+
+    // Check if a key has exceeded its limit.
+    // Returns true if the request is allowed, false if rate-limited.
+    // Uses a fixed-window INCR pattern: the counter expires after
+    // window_seconds, so up to ~2× requests can occur across a window
+    // boundary (known trade-off vs sliding window).
+    fn check(self, key, max_requests, window_seconds) {
+        if self.conn == null { return true }
+        let rkey = self._key(key)
+
+        // INCR returns VAL_INT directly.
+        let current = redis.cmd(self.conn, "INCR", [rkey])
+        if current == null { current = 0 }
+
+        // On the first increment, set the expiry so the window resets.
+        if current == 1 {
+            redis.cmd(self.conn, "EXPIRE", [rkey, "" + window_seconds])
+        }
+
+        return current <= max_requests
+    }
+
+    // Returns the remaining quota for a key.
+    fn remaining(self, key, max_requests) {
+        if self.conn == null { return max_requests }
+        let rkey = self._key(key)
+
+        // GET returns VAL_STRING or VAL_NIL — decode the string to int.
+        let v = redis.cmd(self.conn, "GET", [rkey])
+        let current = 0
+        if v != null {
+            try { current = json_decode(v) } catch e { current = 0 }
+        }
+        let rem = max_requests - current
+        if rem < 0 { rem = 0 }
+        return rem
+    }
+
+    // Returns the TTL (in seconds) until the window resets.
+    // TTL returns VAL_INT directly.
+    fn reset_in(self, key) {
+        if self.conn == null { return 0 }
+        let r = redis.cmd(self.conn, "TTL", [self._key(key)])
+        if r == null or r < 0 { return 0 }
+        return r
+    }
+
+    // Check with metadata: returns a struct { allowed, remaining, reset_in }.
+    fn check_with_meta(self, key, max_requests, window_seconds) {
+        if self.conn == null {
+            return http.create_struct(
+                ["allowed", "remaining", "reset_in"],
+                [true, max_requests, 0]
+            )
+        }
+        let allowed = self.check(key, max_requests, window_seconds)
+        let rem = self.remaining(key, max_requests)
+        let reset = self.reset_in(key)
+        return http.create_struct(
+            ["allowed", "remaining", "reset_in"],
+            [allowed, rem, reset]
+        )
+    }
+
+    // Reset the counter for a key. DEL returns VAL_INT (keys deleted).
+    fn reset(self, key) {
+        if self.conn == null { return }
+        redis.cmd(self.conn, "DEL", [self._key(key)])
+    }
+}

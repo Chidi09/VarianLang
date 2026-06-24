@@ -1,0 +1,238 @@
+// ws.vn — WebSocket upgrade and frame helpers
+//
+// Wraps the native http.serve/read_socket/write_socket primitives and
+// auth.sha1_base64 to provide a clean WebSocket upgrade handshake and
+// frame send/receive API.
+
+struct WebSocket {
+    fd: int,
+    ssl: any,
+}
+
+// WebSocket opcodes
+let _WS_TEXT = 1
+let _WS_BINARY = 2
+let _WS_CLOSE = 8
+let _WS_PING = 9
+let _WS_PONG = 10
+
+// Bitmask constants
+let _WS_FIN = 128
+let _WS_MASK = 128
+let _WS_OPCODE = 15
+let _WS_LEN7 = 127
+
+// WebSocket upgrade magic GUID per RFC 6455
+let _WS_GUID = "258EAFA5-E914-47DA-95CA-5AB5DC11B735"
+
+// Perform the RFC 6455 WebSocket upgrade handshake from an incoming
+// HTTP request. Returns a WebSocket struct on success, null on failure.
+fn ws_upgrade(req) {
+    let key = req.headers?.sec_websocket_key
+    if key == null { return null }
+
+    let accept = auth.sha1_base64(key + _WS_GUID)
+    let resp_headers = http.create_struct(
+        ["upgrade", "connection", "sec_websocket_accept"],
+        ["websocket", "Upgrade", accept]
+    )
+
+    let resp = http.create_struct(
+        ["status", "body", "content_type", "headers"],
+        [101, "", "", resp_headers]
+    )
+
+    let fd = _validate.get_field(req, "_client_fd")
+    if fd == null { return null }
+    let ssl = _validate.get_field(req, "_ssl")
+    return WebSocket { fd: fd, ssl: ssl }
+}
+
+// Send a text frame over a WebSocket connection.
+fn ws_send(ws, data) {
+    let frame = _ws_encode_frame(data, _WS_TEXT)
+    http.write_socket(ws.fd, frame)
+}
+
+// Send a binary frame.
+fn ws_send_binary(ws, data) {
+    let frame = _ws_encode_frame(data, _WS_BINARY)
+    http.write_socket(ws.fd, frame)
+}
+
+// Send a close frame.
+fn ws_close(ws, code, reason) {
+    let payload = ""
+    if code != null {
+        try {
+            payload = _int_to_bytes(code) + (reason ?? "")
+        } catch e {
+            payload = _int_to_bytes(1000)
+        }
+    }
+    let frame = _ws_encode_frame(payload, _WS_CLOSE)
+    try {
+        http.write_socket(ws.fd, frame)
+    } catch e {
+        // Socket may already be closed
+    }
+    http.close_socket(ws.fd)
+}
+
+// Send a ping frame.
+fn ws_ping(ws, data) {
+    let frame = _ws_encode_frame(data, _WS_PING)
+    http.write_socket(ws.fd, frame)
+}
+
+// Receive the next WebSocket frame. Returns the payload as a string.
+// Returns null on connection close or error.
+fn ws_recv(ws) {
+    // Read frame header (first 2 bytes minimum)
+    let header = http.read_socket(ws.fd, 2)
+    if header == null or header.len() < 2 { return null }
+
+    // Parse first two bytes
+    let b0 = _byte_at(header, 0)
+    let b1 = _byte_at(header, 1)
+    let opcode = _bit_and(b0, _WS_OPCODE)
+    let masked = (_bit_and(b1, _WS_MASK)) != 0
+    let payload_len = _bit_and(b1, _WS_LEN7)
+
+    // Extended payload length (no << operator — use multiply)
+    let ext_len = 0
+    if payload_len == 126 {
+        let ext = http.read_socket(ws.fd, 2)
+        if ext == null or ext.len() < 2 { return null }
+        ext_len = _byte_at(ext, 0) * 256 + _byte_at(ext, 1)
+    } else if payload_len == 127 {
+        let ext = http.read_socket(ws.fd, 8)
+        if ext == null { return null }
+        ext_len = _byte_at(ext, 4) * 16777216 + _byte_at(ext, 5) * 65536 +
+                  _byte_at(ext, 6) * 256 + _byte_at(ext, 7)
+    } else {
+        ext_len = payload_len
+    }
+
+    // Read mask key if present
+    let mask_key = ""
+    if masked {
+        mask_key = http.read_socket(ws.fd, 4)
+    }
+
+    // Read payload
+    let payload = http.read_socket(ws.fd, ext_len)
+    if payload == null { return null }
+
+    // Unmask if needed
+    if masked and mask_key.len() >= 4 {
+        payload = _ws_unmask(payload, mask_key)
+    }
+
+    // Handle control frames
+    if opcode == _WS_CLOSE {
+        ws_close(ws, 1000, "")
+        return null
+    }
+    if opcode == _WS_PING {
+        // Respond with pong carrying the same payload
+        let frame = _ws_encode_frame(payload, _WS_PONG)
+        http.write_socket(ws.fd, frame)
+        return ws_recv(ws)
+    }
+    if opcode == _WS_PONG {
+        return ws_recv(ws)
+    }
+
+    return payload
+}
+
+// Encode a WebSocket frame (server -> client, unmasked).
+fn _ws_encode_frame(payload, opcode) {
+    let len = payload.len()
+    let frame = ""
+
+    // First byte: FIN (128) + opcode
+    frame = frame + _int_to_byte(_WS_FIN + opcode)
+
+    // Payload length
+    if len < 126 {
+        frame = frame + _int_to_byte(len)
+    } else if len < 65536 {
+        frame = frame + _int_to_byte(126)
+        frame = frame + _int_to_byte((len / 256) % 256)
+        frame = frame + _int_to_byte(len % 256)
+    } else {
+        frame = frame + _int_to_byte(127)
+        frame = frame + _int_to_byte(0) + _int_to_byte(0) +
+                _int_to_byte(0) + _int_to_byte(0)
+        frame = frame + _int_to_byte((len / 16777216) % 256) +
+                _int_to_byte((len / 65536) % 256) +
+                _int_to_byte((len / 256) % 256) +
+                _int_to_byte(len % 256)
+    }
+
+    return frame + payload
+}
+
+// Unmask a client-to-server payload using the 4-byte mask key.
+fn _ws_unmask(payload, mask_key) {
+    let result = ""
+    for i in 0..payload.len() {
+        let masked_byte = _byte_at(payload, i)
+        let key_byte = _byte_at(mask_key, i % 4)
+        // XOR manually (no ^ operator in Varian)
+        let unb = _xor_byte(masked_byte, key_byte)
+        result = result + _int_to_byte(unb)
+    }
+    return result
+}
+
+fn _xor_byte(a, b) {
+    // Bitwise XOR using arithmetic
+    let res = 0
+    let bit = 1
+    while bit < 256 {
+        let abit = a % 2
+        let bbit = b % 2
+        if abit != bbit {
+            res = res + bit
+        }
+        a = a / 2
+        b = b / 2
+        bit = bit * 2
+    }
+    return res
+}
+
+// Get byte at index from a string (returns integer 0-255).
+fn _byte_at(s, idx) {
+    return s.code_at(idx)
+}
+
+// Convert an integer (0-255) to a single-byte string.
+fn _int_to_byte(val) {
+    return "".from_codes([val])
+}
+
+// Convert an integer to a 2-byte big-endian string.
+fn _int_to_bytes(val) {
+    return _int_to_byte((val / 256) % 256) + _int_to_byte(val % 256)
+}
+
+// Bitwise AND using arithmetic.
+fn _bit_and(a, b) {
+    let res = 0
+    let place = 1
+    let x = a
+    let y = b
+    while x > 0 or y > 0 {
+        if x % 2 == 1 and y % 2 == 1 {
+            res = res + place
+        }
+        x = x / 2
+        y = y / 2
+        place = place * 2
+    }
+    return res
+}
