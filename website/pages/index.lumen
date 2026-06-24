@@ -807,14 +807,14 @@ app.<span class="token-function">get</span>(<span class="token-string">"/users"<
         <h2 class="section-title">Benchmarks</h2>
         <p class="section-subtitle">Honest numbers for a young dynamic language. Varian prioritizes developer productivity over raw throughput — but it's no slouch.</p>
         <div style="overflow-x:auto;margin:var(--space-8) 0;">
-          <table class="bench-table">
+              <table class="bench-table">
             <thead>
-              <tr><th>Framework</th><th>Single-process</th><th>8 workers</th><th>Memory per request</th></tr>
+              <tr><th>Framework</th><th>Single-process</th><th>8 workers</th><th>Memory per request</th><th>Property access</th><th>Method dispatch</th></tr>
             </thead>
             <tbody>
-              <tr style="background:color-mix(in srgb, var(--accent) 8%, transparent);"><td style="font-weight:600;color:var(--accent);"><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">auto_awesome</span> Zenith (Varian)</td><td>~10,500 req/s</td><td>~35–38k req/s</td><td>~2 KB</td></tr>
-              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Go (net/http)</td><td>~20k req/s</td><td>~85k req/s</td><td>~4 KB</td></tr>
-              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Rust (axum)</td><td>~30k req/s</td><td>~113k req/s</td><td>~1 KB</td></tr>
+              <tr style="background:color-mix(in srgb, var(--accent) 8%, transparent);"><td style="font-weight:600;color:var(--accent);"><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">auto_awesome</span> Zenith (Varian)</td><td>~10,500 req/s</td><td>~35–38k req/s</td><td>~2 KB</td><td>28.3M/s</td><td>56.6M/s</td></tr>
+              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Go (net/http)</td><td>~20k req/s</td><td>~85k req/s</td><td>~4 KB</td><td>—</td><td>—</td></tr>
+              <tr><td><span class="material-symbols-outlined" style="font-size:14px;margin-right:4px;">code</span> Rust (axum)</td><td>~30k req/s</td><td>~113k req/s</td><td>~1 KB</td><td>—</td><td>—</td></tr>
             </tbody>
           </table>
         </div>

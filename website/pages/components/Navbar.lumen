@@ -1,7 +1,7 @@
 <template>
 <nav class="navbar" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
   <a href="/" class="nav-brand">
-    <img src="/favicon-32x32.png" alt="Varian Logo" width="36" height="36" style="border-radius: 6px;">
+    <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
     <span style="font-size: 1.5rem;">Varian</span>
   </a>
   <button class="nav-toggle" @click="toggleMenu" aria-label="Toggle navigation menu">
