@@ -1,0 +1,92 @@
+// pagination.vn — Pagination helper for SQL queries and API responses
+//
+//   let p = paginate(2, 20)                  // page 2, 20 per page
+//   let rows = sqlite.query(conn, "SELECT * FROM items LIMIT ? OFFSET ?",
+//       [p.limit, p.offset])
+//   let total = sqlite.query(conn, "SELECT COUNT(*) AS c FROM items")[0].c
+//   p = p.with_total(total)
+//   return json_response(p.response(), 200)
+//
+//   // response = { data: rows, page: 2, per_page: 20, total: 100, pages: 5 }
+//
+//   // For the comptime ORM:
+//   let q = select("items").fields(["id", "name"]).paginate(2, 20).build()
+//   let rows = run_sqlite(bind(q, []), conn)
+
+struct Pagination {
+    page: int,
+    per_page: int,
+    offset: int,
+    limit: int,
+    total: int,
+    _has_total: bool,
+}
+
+fn paginate(page, per_page) {
+    if page < 1 { page = 1 }
+    if per_page < 1 { per_page = 20 }
+    return Pagination {
+        page: page,
+        per_page: per_page,
+        offset: (page - 1) * per_page,
+        limit: per_page,
+        total: 0,
+        _has_total: false,
+    }
+}
+
+impl Pagination {
+    fn with_total(self, total) {
+        self.total = total
+        self._has_total = true
+        return self
+    }
+
+    fn pages(self) {
+        if !self._has_total { return 0 }
+        let p = self.total / self.per_page
+        if self.total % self.per_page != 0 { p = p + 1 }
+        return p
+    }
+
+    fn has_prev(self) { if self.page > 1 { return true } return false }
+    fn has_next(self) { if self.page < self.pages() { return true } return false }
+
+    fn prev_page(self) {
+        if self.page <= 1 { return 1 }
+        return self.page - 1
+    }
+
+    fn next_page(self) {
+        let p = self.pages()
+        if self.page >= p { return p }
+        return self.page + 1
+    }
+
+    fn response(self) {
+        let resp = http.create_struct(
+            ["page", "per_page", "offset"],
+            [self.page, self.per_page, self.offset]
+        )
+        if self._has_total {
+            resp = _p_bind(resp, "total", self.total)
+            resp = _p_bind(resp, "pages", self.pages())
+        }
+        return resp
+    }
+}
+
+fn _p_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}

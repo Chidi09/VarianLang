@@ -1,0 +1,234 @@
+// sanitize.vn — HTML tag allowlist sanitizer
+//
+//   sanitize.html("<b>hello</b><script>alert(1)</script>")
+//     → "&lt;b&gt;hello&lt;/b&gt;alert(1)"
+//
+//   sanitize.html("<b>hello</b>", ["b"])
+//     → "<b>hello</b>"
+//
+//   sanitize.html("<a href=\"evil.com\">link</a>", ["a"])
+//     → "<a>link</a>"
+//
+//   sanitize.strip("<b>hello</b>")
+//     → "hello"
+//
+//   sanitize.escape("<hello> & goodbye")
+//     → "&lt;hello&gt; &amp; goodbye"
+//
+// Native primitives:
+//   _sanitize.escape_html(str) — lib_sanitize.c
+//   _sanitize.strip_html(str)  — lib_sanitize.c (naive < > removal)
+//
+// This module adds: tag allowlist, attribute stripping, safe URL checking.
+
+// Safe tags: always allowed when present in allowlist
+let _SAFE_TAGS = [
+    "a", "abbr", "b", "blockquote", "br", "caption", "cite", "code",
+    "col", "colgroup", "dd", "del", "details", "dfn", "div", "dl",
+    "dt", "em", "figcaption", "figure", "h1", "h2", "h3", "h4", "h5",
+    "h6", "hr", "i", "img", "ins", "kbd", "li", "mark", "ol", "p",
+    "pre", "q", "s", "samp", "small", "span", "strong", "sub",
+    "summary", "sup", "table", "tbody", "td", "tfoot", "th", "thead",
+    "time", "tr", "u", "ul", "var"
+]
+
+// Safe protocols for href/src
+let _SAFE_PROTOCOLS = ["http:", "https:", "mailto:", "tel:", "ftp:"]
+
+// Sanitize HTML: strip tags not in allowlist, strip unsafe attributes.
+// If allowlist is null/empty, all tags are stripped (plain text mode).
+fn html(unsafe, allow_tags) {
+    if allow_tags == null { allow_tags = [] }
+    let result = ""
+    let i = 0
+    let len = unsafe.len()
+
+    while i < len {
+        if unsafe.substring(i, i + 1) == "<" {
+            // Find end of tag
+            let end = unsafe.index_of(">", i)
+            if end < 0 {
+                // Unterminated tag — escape the rest and stop
+                result = result + _sanitize.escape_html(unsafe.substring(i, len))
+                break
+            }
+            let tag_html = unsafe.substring(i, end + 1)
+            let tag_name = _extract_tag_name(tag_html)
+
+            if _is_allowed(tag_name, allow_tags) {
+                result = result + _clean_tag(tag_html, tag_name)
+            }
+            // else: strip the tag entirely
+
+            i = end + 1
+        } else {
+            // Normal text — escape
+            let next_lt = unsafe.index_of("<", i)
+            if next_lt < 0 { next_lt = len }
+            result = result + _sanitize.escape_html(unsafe.substring(i, next_lt))
+            i = next_lt
+        }
+    }
+
+    return result
+}
+
+// Strip all HTML tags (plain text). Uses native _sanitize.strip_html.
+fn strip(unsafe) {
+    return _sanitize.strip_html(unsafe)
+}
+
+// Escape HTML entities. Uses native _sanitize.escape_html.
+fn escape(unsafe) {
+    return _sanitize.escape_html(unsafe)
+}
+
+// ── Internal helpers ────────────────────────────────────────────────────
+
+fn _is_allowed(tag_name, allow_tags) {
+    if allow_tags.len() == 0 { return false }
+    for i in 0..allow_tags.len() {
+        if allow_tags[i] == tag_name { return true }
+    }
+    return false
+}
+
+fn _extract_tag_name(tag_html) {
+    // "<b>" → "b", "</b>" → "b", "<a href=\"x\">" → "a"
+    let start = 1
+    if tag_html.substring(1, 2) == "/" { start = 2 }
+    let end = start
+    let len = tag_html.len()
+    while end < len {
+        let c = tag_html.substring(end, end + 1)
+        if c == " " or c == ">" or c == "/" { break }
+        end = end + 1
+    }
+    return tag_html.substring(start, end)
+}
+
+fn _clean_tag(tag_html, tag_name) {
+    // Reconstruct the tag with only safe attributes.
+    let result = "<" + tag_name
+    let attr_start = tag_name.len() + 1  // skip "<tagname"
+
+    // Find attributes
+    let i = attr_start
+    while i < tag_html.len() {
+        let c = tag_html.substring(i, i + 1)
+        if c == ">" or (c == "/" and tag_html.substring(i + 1, i + 2) == ">") {
+            break
+        }
+        // Skip whitespace
+        if c == " " or c == "\t" or c == "\n" { i = i + 1; continue }
+
+        // Extract attribute name
+        let a_start = i
+        while i < tag_html.len() {
+            let ac = tag_html.substring(i, i + 1)
+            if ac == "=" or ac == " " or ac == ">" or ac == "/" { break }
+            i = i + 1
+        }
+        let attr_name = tag_html.substring(a_start, i)
+
+        // Only keep safe attributes
+        if _is_safe_attr(attr_name) {
+            // Skip "="
+            if tag_html.substring(i, i + 1) == "=" {
+                i = i + 1
+                // Skip optional quote
+                let quote = ""
+                if tag_html.substring(i, i + 1) == "\"" { quote = "\""; i = i + 1 }
+                if tag_html.substring(i, i + 1) == "'" { quote = "'"; i = i + 1 }
+
+                let v_start = i
+                while i < tag_html.len() {
+                    let vc = tag_html.substring(i, i + 1)
+                    if quote != "" {
+                        if vc == quote { break }
+                    } else {
+                        if vc == " " or vc == ">" { break }
+                    }
+                    i = i + 1
+                }
+                let attr_val = tag_html.substring(v_start, i)
+
+                // Only allow safe URLs for href/src
+                if attr_name == "href" or attr_name == "src" {
+                    if _is_safe_url(attr_val) {
+                        result = result + " " + attr_name + "=\"" + _sanitize.escape_html(attr_val) + "\""
+                    }
+                } else {
+                    result = result + " " + attr_name + "=\"" + _sanitize.escape_html(attr_val) + "\""
+                }
+
+                if quote != "" { i = i + 1 }
+            }
+        } else {
+            // Skip unsafe attribute value
+            if tag_html.substring(i, i + 1) == "=" {
+                i = i + 1
+                let quote = ""
+                if tag_html.substring(i, i + 1) == "\"" { quote = "\""; i = i + 1 }
+                if tag_html.substring(i, i + 1) == "'" { quote = "'"; i = i + 1 }
+                while i < tag_html.len() {
+                    let vc = tag_html.substring(i, i + 1)
+                    if quote != "" { if vc == quote { i = i + 1; break } }
+                    else if vc == " " or vc == ">" { break }
+                    i = i + 1
+                }
+            }
+        }
+        // Skip to next attribute or end
+        i = i + 1
+    }
+
+    // Close tag
+    if tag_html.substring(tag_html.len() - 2, tag_html.len() - 1) == "/" {
+        result = result + " />"
+    } else {
+        result = result + ">"
+    }
+    return result
+}
+
+fn _is_safe_attr(attr) {
+    if attr == "href" { return true }
+    if attr == "src" { return true }
+    if attr == "alt" { return true }
+    if attr == "title" { return true }
+    if attr == "rel" { return true }
+    if attr == "class" { return true }
+    if attr == "id" { return true }
+    if attr == "style" { return true }
+    if attr == "width" { return true }
+    if attr == "height" { return true }
+    if attr == "lang" { return true }
+    if attr == "dir" { return true }
+    if attr == "colspan" { return true }
+    if attr == "rowspan" { return true }
+    if attr == "start" { return true }
+    if attr == "value" { return true }
+    if attr == "type" { return true }
+    if attr == "name" { return true }
+    if attr == "target" { return true }
+    if attr == "download" { return true }
+    return false
+}
+
+fn _is_safe_url(url) {
+    for i in 0.._SAFE_PROTOCOLS.len() {
+        if url.starts_with(_SAFE_PROTOCOLS[i]) { return true }
+    }
+    // Allow relative URLs and fragment-only links
+    if url.starts_with("/") { return true }
+    if url.starts_with("#") { return true }
+    return false
+}
+
+fn _in_list(item, list) {
+    for i in 0..list.len() {
+        if list[i] == item { return true }
+    }
+    return false
+}

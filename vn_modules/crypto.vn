@@ -1,0 +1,58 @@
+// crypto.vn — HMAC, random bytes, secure tokens
+//
+//   let key = crypto.random_string(32)           // 64-char hex string
+//   let sig = crypto.hmac("secret", "message")   // HMAC-SHA256 signature
+//   let ok = crypto.hmac_verify("secret", "message", sig)
+//
+// Native primitives:
+//   auth.generate_token(n) — RAND_bytes at lib_auth.c:329
+//   auth.sign_jwt(payload, secret) — HMAC-SHA256 at lib_auth.c:135
+//   auth.constant_time_eq(a, b) — lib_auth.c
+
+fn random_string(n) { return auth.generate_token(n) }
+fn random_hex(n) { return auth.generate_token(n) }
+
+fn random_bytes(n) {
+    let hex = auth.generate_token(n)
+    let out = ""
+    for i in 0..n {
+        let hi = _hex_val(hex.substring(i * 2, i * 2 + 1))
+        let lo = _hex_val(hex.substring(i * 2 + 1, i * 2 + 2))
+        out = out + "".from_codes([hi * 16 + lo])
+    }
+    return out
+}
+
+fn hmac(key, data) {
+    let payload = http.create_struct(["d"], [data])
+    let token = auth.sign_jwt(payload, key)
+    let parts = token.split(".")
+    if parts.len() != 3 { return "" }
+    return parts[2]
+}
+
+fn hmac_verify(key, data, signature) {
+    let expected = hmac(key, data)
+    if expected == "" { return false }
+    return auth.constant_time_eq(expected, signature)
+}
+
+fn _hex_val(c) {
+    if c == "0" { return 0 }
+    if c == "1" { return 1 }
+    if c == "2" { return 2 }
+    if c == "3" { return 3 }
+    if c == "4" { return 4 }
+    if c == "5" { return 5 }
+    if c == "6" { return 6 }
+    if c == "7" { return 7 }
+    if c == "8" { return 8 }
+    if c == "9" { return 9 }
+    if c == "a" or c == "A" { return 10 }
+    if c == "b" or c == "B" { return 11 }
+    if c == "c" or c == "C" { return 12 }
+    if c == "d" or c == "D" { return 13 }
+    if c == "e" or c == "E" { return 14 }
+    if c == "f" or c == "F" { return 15 }
+    return 0
+}

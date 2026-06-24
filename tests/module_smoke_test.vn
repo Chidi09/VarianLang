@@ -1,4 +1,5 @@
 // Smoke tests for new vn_modules — verify constructors and simple operations.
+// All functions from vn_modules/ are at global scope (concatenated prelude).
 
 test "cache module basics" {
     let c = new_cache(null)
@@ -20,11 +21,7 @@ test "config module basics" {
 test "config require throws" {
     let cfg = load_config_path("/nonexistent/.env")
     let ok = false
-    try {
-        cfg.require("DEFINITELY_MISSING")
-    } catch e {
-        ok = (e != null)
-    }
+    try { cfg.require("DEFINITELY_MISSING") } catch e { ok = true }
     assert_eq(ok, true)
 }
 
@@ -88,4 +85,140 @@ test "rate limiter defaults without redis" {
 test "WebSocket struct construction" {
     let ws = WebSocket { fd: -1, ssl: null }
     assert_ne(ws, null)
+}
+
+// ── New module smoke tests (8 modules) ────────────────────────────────────
+// All functions are at global scope — no module prefix.
+
+test "fetch module — request struct" {
+    let req = fetch("https://example.com")
+    assert_ne(req, null)
+    req.timeout(5000)
+    req.retry(3)
+}
+
+test "fetch module — header builder" {
+    let req = fetch("https://example.com")
+    req.header("Authorization", "Bearer test")
+    req.header("Accept", "application/json")
+}
+
+test "crypto module — random helpers" {
+    let s = random_string(16)
+    // auth.generate_token(n) returns 2n hex chars
+    assert_eq(s.len(), 32)
+}
+
+test "crypto module — HMAC roundtrip" {
+    let sig = hmac("secret", "message")
+    assert_ne(sig, null)
+    assert_ne(sig, "")
+    assert_eq(hmac_verify("secret", "message", sig), true)
+    assert_eq(hmac_verify("wrong", "message", sig), false)
+}
+
+test "sanitize module — escape" {
+    let result = escape("<hello> & goodbye")
+    assert_eq(result, "&lt;hello&gt; &amp; goodbye")
+}
+
+test "sanitize module — strip tags" {
+    let result = strip("<b>bold</b>")
+    assert_eq(result, "bold")
+}
+
+test "sanitize module — allowlist" {
+    let result = html("<b>bold</b><script>alert(1)</script>", ["b"])
+    assert_ne(result, null)
+}
+
+test "pagination module — basic" {
+    let p = paginate(1, 20)
+    assert_eq(p.page, 1)
+    assert_eq(p.per_page, 20)
+    assert_eq(p.offset, 0)
+    p = p.with_total(100)
+    assert_eq(p.pages(), 5)
+    assert_eq(p.has_next(), true)
+    assert_eq(p.has_prev(), false)
+}
+
+test "pagination module — last page" {
+    let p = paginate(5, 20)
+    p = p.with_total(100)
+    assert_eq(p.has_next(), false)
+    assert_eq(p.next_page(), 5)
+}
+
+test "pagination module — response struct" {
+    let p = paginate(2, 10)
+    p = p.with_total(50)
+    let resp = p.response()
+    assert_eq(resp.page, 2)
+    assert_eq(resp.pages, 5)
+    assert_eq(resp.total, 50)
+}
+
+test "i18n module — basic" {
+    let i18n = new_i18n("en")
+    i18n.load_json("en", json_encode(http.create_struct(["greeting"], ["Hello"])))
+    let result = i18n.t("greeting")
+    assert_eq(result, "Hello")
+}
+
+test "i18n module — missing key returns key" {
+    let i18n = new_i18n("en")
+    let result = i18n.t("nonexistent")
+    assert_eq(result, "nonexistent")
+}
+
+test "i18n module — plural" {
+    let i18n = new_i18n("en")
+    assert_eq(i18n.plural(1, "item", "items"), "1 item")
+    assert_eq(i18n.plural(3, "item", "items"), "3 items")
+}
+
+test "seo module — sitemap" {
+    let s = new_sitemap("https://example.com")
+    s.add("/page1", "2024-06-01", "monthly", 0.8)
+    let xml = s.render()
+    assert_ne(xml, null)
+    assert_eq(xml.contains("<loc>https://example.com/page1</loc>"), true)
+}
+
+test "seo module — robots.txt" {
+    let robots = seo_robots("https://example.com/sitemap.xml")
+    assert_eq(robots.contains("Sitemap: https://example.com/sitemap.xml"), true)
+}
+
+test "seo module — JSON-LD breadcrumb" {
+    let ld = seo_ld_breadcrumb(["Home", "/", "Products", "/products"])
+    let parsed = json_decode(ld)
+    assert_ne(parsed, null)
+    let context = _validate.get_field(parsed, "@context")
+    assert_eq(context, "https://schema.org")
+}
+
+test "feature module — boolean flag" {
+    let f = new_features()
+    f.define("dark_mode", true)
+    f.define("legacy_ui", false)
+    assert_eq(f.enabled("dark_mode"), true)
+    assert_eq(f.enabled("legacy_ui"), false)
+    assert_eq(f.enabled("undefined"), false)
+}
+
+test "feature module — override" {
+    let f = new_features()
+    f.define("flag", false)
+    assert_eq(f.enabled("flag"), false)
+    f.override("flag", true)
+    assert_eq(f.enabled("flag"), true)
+    f.reset("flag")
+    assert_eq(f.enabled("flag"), false)
+}
+
+test "migration module — construction" {
+    // new_migrator needs a valid DB conn — verify the function exists
+    assert_ne(new_migrator, null)
 }

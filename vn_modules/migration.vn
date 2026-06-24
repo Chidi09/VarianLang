@@ -1,0 +1,140 @@
+// migration.vn — SQL schema versioning
+//
+//   let m = new_migrator(conn)
+//   m.register("001_create_users", [
+//       "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)"
+//   ])
+//   m.register("002_add_age", [
+//       "ALTER TABLE users ADD COLUMN age INTEGER"
+//   ])
+//   m.up()     // apply all pending migrations
+//   m.down(1)  // roll back one migration
+//
+// Uses a _migrations tracking table created automatically.
+
+struct Migrator {
+    conn: any,
+    _migrations: any,   // { "name": [up_sql, down_sql] }
+}
+
+let _MIGRATIONS_TABLE = "_migrations"
+
+fn new_migrator(conn) {
+    // Ensure tracking table exists
+    try {
+        let sql = "CREATE TABLE IF NOT EXISTS " + _MIGRATIONS_TABLE + " (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE, applied_at TEXT)"
+        sqlite.query(conn, sql, [])
+    } catch e {
+    }
+    return Migrator { conn: conn, _migrations: http.create_struct([], []) }
+}
+
+impl Migrator {
+    fn register(self, name, up_sql, down_sql) {
+        self._migrations = _m_bind(self._migrations, name,
+            http.create_struct(["up", "down"], [up_sql, down_sql]))
+    }
+
+    fn register_up(self, name, up_sql) {
+        self.register(name, up_sql, "")
+    }
+
+    fn applied(self) {
+        let rows = null
+        try {
+            rows = sqlite.query(self.conn, "SELECT name FROM " + _MIGRATIONS_TABLE + " ORDER BY id", [])
+        } catch e { return [] }
+        if rows == null { return [] }
+        let names = []
+        for i in 0..rows.len() {
+            names = names.push(rows[i].name)
+        }
+        return names
+    }
+
+    fn pending(self) {
+        let applied = self.applied()
+        let all_names = _validate.get_keys(self._migrations)
+        let result = []
+        for i in 0..all_names.len() {
+            let found = false
+            for j in 0..applied.len() {
+                if applied[j] == all_names[i] { found = true; break }
+            }
+            if !found { result = result.push(all_names[i]) }
+        }
+        // Return in registration order (already in array order)
+        return result
+    }
+
+    fn up(self) {
+        let pending = self.pending()
+        for i in 0..pending.len() {
+            let name = pending[i]
+            let mig = _validate.get_field(self._migrations, name)
+            if mig == null { continue }
+            let up_sql = _validate.get_field(mig, "up")
+            if up_sql == null { continue }
+            // Execute each statement
+            for si in 0..up_sql.len() {
+                try {
+                    sqlite.query(self.conn, up_sql[si], [])
+                } catch e {
+                    print("[migration] ERROR applying " + name + ": " + e)
+                    throw(e)
+                }
+            }
+            // Record
+            try {
+                sqlite.query(self.conn, "INSERT INTO " + _MIGRATIONS_TABLE + " (name, applied_at) VALUES (?, ?)",
+                    [name, time.now_iso8601()])
+            } catch e {
+                // Already recorded in a partially-run batch
+            }
+            print("[migration] Applied: " + name)
+        }
+    }
+
+    fn down(self, steps) {
+        let applied = self.applied()
+        let count = steps
+        if count > applied.len() { count = applied.len() }
+        for i in 0..count {
+            let name = applied[applied.len() - 1 - i]
+            let mig = _validate.get_field(self._migrations, name)
+            if mig == null { continue }
+            let down_sql = _validate.get_field(mig, "down")
+            if down_sql == null or down_sql == "" {
+                print("[migration] WARNING: no down for " + name + ", skipping")
+                continue
+            }
+            for si in 0..down_sql.len() {
+                try {
+                    sqlite.query(self.conn, down_sql[si], [])
+                } catch e {
+                    print("[migration] ERROR rolling back " + name + ": " + e)
+                    throw(e)
+                }
+            }
+            try {
+                sqlite.query(self.conn, "DELETE FROM " + _MIGRATIONS_TABLE + " WHERE name = ?", [name])
+            } catch e {}
+            print("[migration] Rolled back: " + name)
+        }
+    }
+}
+
+fn _m_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}

@@ -1,0 +1,104 @@
+// i18n.vn — Internationalization: JSON dictionary loading, t(), pluralization
+//
+//   let i18n = new_i18n("en")
+//   i18n.load("locales/en.json")
+//   i18n.load("locales/fr.json")
+//
+//   i18n.t("greeting")                    → "Hello"
+//   i18n.t("welcome", { name: "Alice" }) → "Hello, Alice!"
+//   i18n.plural(1, "item", "items")       → "1 item"
+//   i18n.plural(3, "item", "items")       → "3 items"
+//
+// Dictionary format (JSON):
+//   { "greeting": "Hello", "welcome": "Hello, {name}!" }
+
+struct I18n {
+    locale: string,
+    _dicts: any,
+}
+
+fn new_i18n(locale) {
+    return I18n { locale: locale, _dicts: http.create_struct([], []) }
+}
+
+fn _i18n_t(i18n, key) {
+    return _i18n_t_args(i18n, key, http.create_struct([], []))
+}
+
+fn _i18n_t_args(i18n, key, args) {
+    let dict = _validate.get_field(i18n._dicts, i18n.locale)
+    if dict == null { return key }
+    let val = _validate.get_field(dict, key)
+    if val == null { return key }
+    return _interpolate(val, args)
+}
+
+impl I18n {
+    fn load(self, path) {
+        let text = io.read_text(path)
+        if text == null { return }
+        let data = null
+        try { data = json_decode(text) } catch e { return }
+        if data == null { return }
+        let keys = _validate.get_keys(data)
+        for i in 0..keys.len() {
+            let locale = keys[i]
+            let dict = _validate.get_field(data, locale)
+            self._dicts = _i18n_bind(self._dicts, locale, dict)
+        }
+    }
+
+    fn load_json(self, locale, json_text) {
+        let data = null
+        try { data = json_decode(json_text) } catch e { return }
+        if data == null { return }
+        self._dicts = _i18n_bind(self._dicts, locale, data)
+    }
+
+    fn set_locale(self, locale) { self.locale = locale }
+
+    fn t(self, key) {
+        return _i18n_t(self, key)
+    }
+
+    fn plural(self, count, singular, plural) {
+        if count == 1 { return "" + count + " " + singular }
+        return "" + count + " " + plural
+    }
+}
+
+fn _interpolate(tpl, args) {
+    let result = ""
+    let i = 0
+    let len = tpl.len()
+    while i < len {
+        if tpl.substring(i, i + 1) == "{" {
+            let end = tpl.index_of("}", i)
+            if end < 0 { result = result + tpl.substring(i, len); break }
+            let key = tpl.substring(i + 1, end)
+            let val = _validate.get_field(args, key)
+            if val != null { result = result + "" + val }
+            else { result = result + "{" + key + "}" }
+            i = end + 1
+        } else {
+            result = result + tpl.substring(i, i + 1)
+            i = i + 1
+        }
+    }
+    return result
+}
+
+fn _i18n_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}

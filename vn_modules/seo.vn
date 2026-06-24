@@ -1,0 +1,108 @@
+// seo.vn — Sitemap, robots.txt, JSON-LD structured data
+//
+//   let s = new_sitemap("https://example.com")
+//   s.add("/", "2024-06-01", "daily", 1.0)
+//   s.add("/about", "2024-05-15", "monthly", 0.8)
+//   let xml = s.render()
+//
+//   let robots = seo_robots("https://example.com/sitemap.xml")
+//
+//   let ld = seo_ld_breadcrumb(["Home", "/", "Products", "/products"])
+//   // Or use the builder:
+//   let org = seo_ld_org("My Corp", "https://example.com/logo.png")
+
+struct Sitemap {
+    base_url: string,
+    urls: any,
+}
+
+fn new_sitemap(base_url) {
+    if !base_url.ends_with("/") { base_url = base_url + "/" }
+    return Sitemap { base_url: base_url, urls: [] }
+}
+
+impl Sitemap {
+    fn add(self, path, lastmod, changefreq, priority) {
+        let url = http.create_struct(
+            ["loc", "lastmod", "changefreq", "priority"],
+            [self.base_url + _strip_leading_slash(path), lastmod, changefreq, "" + priority]
+        )
+        self.urls = self.urls.push(url)
+    }
+
+    fn render(self) {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml = xml + "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        for i in 0..self.urls.len() {
+            let u = self.urls[i]
+            xml = xml + "  <url>\n"
+            xml = xml + "    <loc>" + _escape_xml(_validate.get_field(u, "loc")) + "</loc>\n"
+            let lm = _validate.get_field(u, "lastmod")
+            if lm != null and lm != "" {
+                xml = xml + "    <lastmod>" + lm + "</lastmod>\n"
+            }
+            let cf = _validate.get_field(u, "changefreq")
+            if cf != null and cf != "" {
+                xml = xml + "    <changefreq>" + cf + "</changefreq>\n"
+            }
+            let pr = _validate.get_field(u, "priority")
+            if pr != null and pr != "" {
+                xml = xml + "    <priority>" + pr + "</priority>\n"
+            }
+            xml = xml + "  </url>\n"
+        }
+        xml = xml + "</urlset>\n"
+        return xml
+    }
+}
+
+fn seo_robots(sitemap_url) {
+    return "User-agent: *\nAllow: /\n\nSitemap: " + sitemap_url + "\n"
+}
+
+fn seo_ld_breadcrumb(items) {
+    // items = ["Home", "/", "Products", "/products", ...]
+    let item_list = []
+    for i in 0..items.len() / 2 {
+        let name = items[i * 2]
+        let url = items[i * 2 + 1]
+        item_list = item_list.push(http.create_struct(
+            ["@type", "position", "name", "item"],
+            ["ListItem", i + 1, name, url]
+        ))
+    }
+    return json_encode(http.create_struct(
+        ["@context", "@type", "itemListElement"],
+        ["https://schema.org", "BreadcrumbList", item_list]
+    ))
+}
+
+fn seo_ld_org(name, logo_url) {
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "logo"],
+        ["https://schema.org", "Organization", name, logo_url]
+    ))
+}
+
+fn seo_ld_article(headline, author, date_published, date_modified) {
+    return json_encode(http.create_struct(
+        ["@context", "@type", "headline", "author", "datePublished", "dateModified"],
+        ["https://schema.org", "Article", headline, author, date_published, date_modified]
+    ))
+}
+
+fn seo_ld_webapp(name, url, description) {
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "url", "description"],
+        ["https://schema.org", "WebApplication", name, url, description]
+    ))
+}
+
+fn _escape_xml(s) {
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")
+}
+
+fn _strip_leading_slash(path) {
+    if path.starts_with("/") { return path.substring(1, path.len()) }
+    return path
+}

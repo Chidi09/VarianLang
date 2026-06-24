@@ -1,0 +1,157 @@
+// fetch.vn — Fluent HTTP client over native http.get/http.post
+//
+//   let resp = fetch("https://api.example.com/users")
+//     .header("Authorization", "Bearer xxx")
+//     .timeout(5000)
+//     .json()
+//
+//   let resp = fetch("https://api.example.com/users")
+//     .post({ name: "Alice" })
+//     .retry(3)
+//     .json()
+//
+// http.get(url [, timeout_ms]) — native, blocking, no retry
+// http.post(url, headers, body [, timeout_ms]) — native, blocking, no retry
+//
+// This wrapper adds: retry, timeout sugar, JSON auto-encode/decode,
+// header builders, method chaining.
+
+struct FetchRequest {
+    url: string,
+    method: string,
+    headers: any,
+    body: string,
+    _timeout: int,
+    _retries: int,
+    _parse_json: bool,
+}
+
+fn fetch(url) {
+    return FetchRequest {
+        url: url,
+        method: "GET",
+        headers: http.create_struct([], []),
+        body: "",
+        _timeout: 0,
+        _retries: 0,
+        _parse_json: false,
+    }
+}
+
+impl FetchRequest {
+    fn header(self, name, value) {
+        let keys = _validate.get_keys(self.headers)
+        let vals = []
+        let found = false
+        for i in 0..keys.len() {
+            if keys[i] == name {
+                vals = vals.push(value)
+                found = true
+            } else {
+                vals = vals.push(_validate.get_field(self.headers, keys[i]))
+            }
+        }
+        if !found {
+            keys = keys.push(name)
+            vals = vals.push(value)
+        }
+        self.headers = http.create_struct(keys, vals)
+    }
+
+    fn timeout(self, ms) { self._timeout = ms }
+    fn retry(self, n) { self._retries = n }
+
+    fn json(self) {
+        self._parse_json = true
+    }
+
+    fn _header_str(self) {
+        if _validate.get_keys(self.headers).len() == 0 { return "" }
+        return http.create_struct(
+            ["authorization", "content-type", "accept"],
+            ["", "", ""]
+        )  // placeholder — callers set headers via .header()
+    }
+
+    fn _build_headers(self) {
+        let keys = _validate.get_keys(self.headers)
+        if keys.len() == 0 { return "" }
+        let lines = []
+        for i in 0..keys.len() {
+            let v = _validate.get_field(self.headers, keys[i])
+            lines = lines.push(keys[i] + ": " + v)
+        }
+        return _join_strings(lines, "\r\n") + "\r\n"
+    }
+
+    fn _do(self) {
+        let attempt = 0
+        loop {
+            let result = null
+            try {
+                if self.method == "GET" {
+                    if self._timeout > 0 {
+                        result = http.get(self.url, self._timeout)
+                    } else {
+                        result = http.get(self.url)
+                    }
+                } else {
+                    let hdr = self._build_headers()
+                    if self._timeout > 0 {
+                        result = http.post(self.url, hdr, self.body, self._timeout)
+                    } else {
+                        result = http.post(self.url, hdr, self.body)
+                    }
+                }
+            } catch e {
+                if attempt < self._retries {
+                    attempt = attempt + 1
+                    continue
+                }
+                throw(e)
+            }
+            if result == null {
+                if attempt < self._retries {
+                    attempt = attempt + 1
+                    continue
+                }
+                throw("fetch: no response after " + (self._retries + 1) + " attempts")
+            }
+            if self._parse_json {
+                try { return json_decode(result) } catch e { return result }
+            }
+            return result
+        }
+    }
+
+    fn get(self) {
+        self.method = "GET"
+        return self._do()
+    }
+
+    fn post(self, body) {
+        self.method = "POST"
+        self.body = json_encode(body)
+        return self._do()
+    }
+
+    fn put(self, body) {
+        self.method = "PUT"
+        self.body = json_encode(body)
+        return self._do()
+    }
+
+    fn delete(self) {
+        self.method = "DELETE"
+        return self._do()
+    }
+}
+
+fn _join_strings(arr, sep) {
+    let res = ""
+    for i in 0..arr.len() {
+        if i > 0 { res = res + sep }
+        res = res + arr[i]
+    }
+    return res
+}

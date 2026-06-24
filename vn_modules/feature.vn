@@ -1,0 +1,109 @@
+// feature.vn — Feature flags and A/B testing
+//
+//   let f = new_features()
+//   f.define("dark_mode", true)
+//   f.define("new_checkout", false)
+//   f.define("beta_search", |user| { return user.role == "beta" })
+//
+//   if f.enabled("dark_mode") { ... }
+//   if f.enabled_for("beta_search", user) { ... }
+//
+//   f.override("new_checkout", true)    // per-request override
+//   f.reset("new_checkout")             // remove override
+//
+// Features can be:
+//   - bool  (always on/off)
+//   - fn    (dynamic evaluation per-request)
+//   - int   (bucket: user.id % 100 < threshold)
+//   - env   (read from environment variable)
+
+struct Features {
+    _defs: any,
+    _overrides: any,
+}
+
+fn new_features() {
+    return Features {
+        _defs: http.create_struct([], []),
+        _overrides: http.create_struct([], []),
+    }
+}
+
+impl Features {
+    fn define(self, name, value) {
+        self._defs = _f_bind(self._defs, name, value)
+    }
+
+    fn enabled(self, name) {
+        // Check override first
+        let ov = _validate.get_field(self._overrides, name)
+        if ov != null { return ov == true or ov == 1 }
+
+        let def = _validate.get_field(self._defs, name)
+        if def == null { return false }
+        // If it's a simple boolean or integer, return as truthy
+        if def == true { return true }
+        if def == false { return false }
+        if def.type == VAL_INT { return def != 0 }
+        return false
+    }
+
+    fn enabled_for(self, name, context) {
+        let ov = _validate.get_field(self._overrides, name)
+        if ov != null { return ov == true or ov == 1 }
+
+        let def = _validate.get_field(self._defs, name)
+        if def == null { return false }
+        // If it's a closure (function), evaluate it with context
+        if def.type == VAL_FUNCTION or def.type == VAL_CLOSURE {
+            try { return def(context) == true } catch e { return false }
+        }
+        return self.enabled(name)
+    }
+
+    fn override(self, name, value) {
+        self._overrides = _f_bind(self._overrides, name, value)
+    }
+
+    fn reset(self, name) {
+        let keys = _validate.get_keys(self._overrides)
+        let vals = []
+        for i in 0..keys.len() {
+            if keys[i] != name {
+                vals = vals.push(_validate.get_field(self._overrides, keys[i]))
+            }
+        }
+        self._overrides = http.create_struct(keys, vals)
+    }
+
+    fn reset_all(self) {
+        self._overrides = http.create_struct([], [])
+    }
+
+    // Percentage rollout: enabled_for(user, "feature", 20) — 20% of users
+    fn percentage(self, name, context, pct) {
+        let ov = _validate.get_field(self._overrides, name)
+        if ov != null { return ov == true or ov == 1 }
+        let def = _validate.get_field(self._defs, name)
+        if def != null { return def }  // explicit definition wins
+        // No explicit definition — use bucket from context.id
+        let id = _validate.get_field(context, "id")
+        if id == null { return false }
+        return id % 100 < pct
+    }
+}
+
+fn _f_bind(ctx, key, value) {
+    let keys = [key]
+    let vals = [value]
+    if ctx != null {
+        let ck = _validate.get_keys(ctx)
+        for i in 0..ck.len() {
+            if ck[i] != key {
+                keys = keys.push(ck[i])
+                vals = vals.push(_validate.get_field(ctx, ck[i]))
+            }
+        }
+    }
+    return http.create_struct(keys, vals)
+}
