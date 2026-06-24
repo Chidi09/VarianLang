@@ -1900,14 +1900,19 @@ static Value lib_http_create_struct(VM *vm, int arg_count, Value *args) {
     ObjArray *vals = vals_val.as.array;
     int count = keys->count < vals->count ? keys->count : vals->count;
     ObjStruct *s = new_struct(vm, count, false);
-    s->type_name = NULL;
-    for (int i = 0; i < count; i++) {
-        if (keys->elements[i].type == VAL_STRING) {
-            s->field_names[i] = strdup(keys->elements[i].as.string->chars);
-        } else {
-            s->field_names[i] = strdup("");
+    /* Build shape from the keys array so field_names is valid.
+     * The struct may be arena-backed (field_names == NULL), so we need to
+     * attach a proper shape before populating fields. */
+    if (count > 0) {
+        char *scratch[64];
+        int safe = count < 64 ? count : 64;
+        for (int i = 0; i < safe; i++)
+            scratch[i] = (keys->elements[i].type == VAL_STRING)
+                ? keys->elements[i].as.string->chars : "";
+        struct_attach_shape(vm, s, NULL, (char *const *)scratch, count);
+        for (int i = 0; i < count; i++) {
+            s->fields[i] = vals->elements[i];
         }
-        s->fields[i] = vals->elements[i];
     }
     return val_struct(s);
 }
