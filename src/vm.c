@@ -880,15 +880,14 @@ static size_t gc_sweep(VM *vm) {
                     obj_size = sizeof(ObjEnum); break;
                 case VAL_STRUCT: {
                     ObjStruct *s = (ObjStruct *)obj;
-                    /* Stage 1: field_names may be either:
-                     *   (a) A shape alias (s->field_names == s->shape->field_names)
-                     *       — owned by the Shape, do NOT free.
-                     *   (b) A native-code scratch array
-                     *       (s->shape is NULL, or names differ from shape)
-                     *       — owned by this struct, free entries + array.
-                     * type_name is always a shape alias or NULL; never freed here. */
-                    bool is_shape_alias = s->shape && s->field_names == s->shape->field_names;
-                    if (!is_shape_alias && s->field_names) {
+                    /* Stage 1: field_names is either a shape alias (don't
+                     * free) or embedded in the struct's old-style arena
+                     * block (also don't free — it's part of the contiguous
+                     * new_struct allocation, not a separate malloc).
+                     * Only free field_names when we have a shape AND the
+                     * pointer differs (transitional native scratch array).
+                     * type_name is always a shape alias or NULL. */
+                    if (s->shape && s->field_names != s->shape->field_names) {
                         for (int i = 0; i < s->field_count; i++)
                             free(s->field_names[i]);
                         free(s->field_names);
@@ -5375,9 +5374,8 @@ void vm_free(VM *vm) {
             }
             case VAL_STRUCT: {
                 ObjStruct *s = (ObjStruct *)obj;
-                /* Same as gc_sweep: free field_names only if NOT a shape alias */
-                bool is_shape_alias = s->shape && s->field_names == s->shape->field_names;
-                if (!is_shape_alias && s->field_names) {
+                /* Same as gc_sweep */
+                if (s->shape && s->field_names != s->shape->field_names) {
                     for (int i = 0; i < s->field_count; i++)
                         free(s->field_names[i]);
                     free(s->field_names);
