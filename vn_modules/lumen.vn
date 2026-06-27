@@ -3121,6 +3121,22 @@ fn _lumen_live_loop(ws, component, provider, req) {
             prev = _lumen_send_update(ws, prev, html)
         }
     }
+    // Disconnect teardown: drop this connection from the active set and leave
+    // its presence topic, so closed sockets don't accumulate (keeps the
+    // presence broadcast + re-render fan-out bounded). NOTE: do NOT touch
+    // _lumen_query_deps here — those refetch closures are shared across all
+    // connections (the live_query core is a singleton), so removing them would
+    // break still-open clients.
+    let _kept = []
+    let _ci = 0
+    while _ci < _lumen_active_connections.len() {
+        if _lumen_active_connections[_ci].id != conn_id {
+            _kept = _kept.push(_lumen_active_connections[_ci])
+        }
+        _ci = _ci + 1
+    }
+    _lumen_active_connections = _kept
+    lumen_presence_leave(topic, user_id)
 }
 
 // The <head> Lumen injects into every page: responsive viewport, the full
