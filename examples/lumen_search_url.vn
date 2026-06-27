@@ -1,0 +1,69 @@
+// examples/lumen_search_url.vn — Aurora Pillar 4: typed URL / search state.
+// The search box text and sort column live in the URL (?q=...&sort=...):
+//   - on load, state is seeded from the URL (typed via lumen_search + a schema)
+//   - as you type / change sort, the address bar updates live (shareable link)
+//   - Back/Forward restores the previous search (popstate -> lumen_nav)
+//
+// Run:   ./vn run examples/lumen_search_url.vn
+// Open:  http://localhost:8094   (try http://localhost:8094/?q=a&sort=email)
+
+let conn = db.connect("sqlite", "people.db")
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)", [])
+let seeded = (conn.query)("SELECT COUNT(*) AS n FROM users", [])
+if seeded[0].n == 0 {
+    let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)", ["Ada Lovelace", "ada@example.com"])
+    let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)", ["Alan Turing", "alan@example.com"])
+    let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)", ["Grace Hopper", "grace@example.com"])
+}
+
+// Typed search schema: name -> { type, default, validator? }
+let search_schema = http.create_struct(
+    ["q", "sort"],
+    [ http.create_struct(["type", "default"], ["string", ""]),
+      http.create_struct(["type", "default"], ["string", "name"]) ]
+)
+
+let render = |s| {
+    let q = s.q
+    let sort = s.sort
+    let sortcol = "name"
+    if sort == "email" { sortcol = "email" }
+    let rows = (conn.query)("SELECT name, email FROM users WHERE name LIKE ? ORDER BY " + sortcol + " LIMIT 20", ["%" + q + "%"])
+    let list = ""
+    let i = 0
+    while i < rows.len() {
+        list = list + "<li>" + _sanitize.escape_html("" + rows[i].name) + " — " + _sanitize.escape_html("" + rows[i].email) + "</li>"
+        i = i + 1
+    }
+    let marker = _lumen_url_marker(http.create_struct(["q", "sort"], [q, sort]))
+    let html = "<div class=\"lmn-app\" style=\"padding:2rem;max-width:560px;margin:0 auto\">" +
+        "<h2 class=\"lmn-h\">People search</h2>" +
+        "<input class=\"lmn-input\" value=\"" + _sanitize.escape_html("" + q) + "\" placeholder=\"Search by name…\" @input=\"set_q\" />" +
+        "<div style=\"display:flex;gap:.5rem;margin:.75rem 0\">" +
+            "<button class=\"lmn-btn\" data-variant=\"outline\" @click=\"set_sort\" value=\"name\">Sort: Name</button>" +
+            "<button class=\"lmn-btn\" data-variant=\"outline\" @click=\"set_sort\" value=\"email\">Sort: Email</button>" +
+        "</div>" +
+        "<ul>" + list + "</ul>" +
+        marker +
+        "</div>"
+    return lumen_render(html, {})
+}
+
+let comp = lumen_component(
+    | | { return { q: "", sort: "name" } },
+    render,
+    ["load", "set_q", "set_sort", "lumen_nav"],
+    [ |req| { return lumen_search(req, search_schema) },
+      |s, v| { s.q = v; return s },
+      |s, v| { s.sort = v; return s },
+      |s, v| {
+          let p = lumen_search(http.create_struct(["query"], [v]), search_schema)
+          s.q = p.q
+          s.sort = p.sort
+          return s
+      } ]
+)
+
+let app = new_app()
+lumen_mount(app, "/", comp)
+app.listen(8094)
