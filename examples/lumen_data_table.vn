@@ -1,0 +1,33 @@
+// examples/lumen_data_table.vn — Aurora Pillar 2: live, sortable, paginated data table.
+// A server-driven table backed by a real DB table. It auto-updates whenever the
+// `users` table changes (built on Pillar 1's live_query) — no client polling.
+//
+// Run:   ./vn run examples/lumen_data_table.vn
+// Open:  http://localhost:8091
+//
+// Try it: insert/update/delete rows in app.db from another process — the table
+// re-renders itself. Click a column header to sort; use Prev/Next to page.
+
+let conn = db.connect("sqlite", "app.db")
+
+// One-time demo schema + seed (safe to re-run).
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)", [])
+let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)", ["Ada Lovelace", "ada@example.com"])
+let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)", ["Alan Turing", "alan@example.com"])
+
+let users = data_table_component({
+    conn: conn,
+    table: "users",
+    columns: [
+        { name: "id",    label: "ID",    sortable: true },
+        { name: "name",  label: "Name",  sortable: true },
+        { name: "email", label: "Email", sortable: true }
+    ],
+    page_size: 25,
+    order_by: "id",
+    order_dir: "desc"
+})
+
+let app = new_app()
+lumen_mount(app, "/", users)
+app.listen(8091)

@@ -15,7 +15,7 @@ let _db_capture = [null]
 // Pure function of query shape -> SQL text. No parameter values involved,
 // so this can be called from inside `comptime { ... }` to bake the SQL
 // string into the program at compile time.
-fn compile_select(table, fields, wheres, limit_val, offset_val, dialect) {
+fn compile_select(table, fields, wheres, limit_val, offset_val, dialect, orders) {
     let sql = "SELECT "
     for i in 0..fields.len() {
         if i > 0 { sql = sql + ", " }
@@ -34,6 +34,14 @@ fn compile_select(table, fields, wheres, limit_val, offset_val, dialect) {
                 placeholder = "$" + idx
             }
             sql = sql + clause[0] + " " + clause[1] + " " + placeholder
+        }
+    }
+
+    if orders.len() > 0 {
+        sql = sql + " ORDER BY "
+        for i in 0..orders.len() {
+            if i > 0 { sql = sql + ", " }
+            sql = sql + orders[i][0] + " " + orders[i][1]
         }
     }
 
@@ -209,7 +217,8 @@ struct QueryBuilder {
     where_clauses: array,
     limit_val: int,
     offset_val: int,
-    dialect: string
+    dialect: string,
+    order_clauses: array
 }
 
 fn select(table) {
@@ -219,7 +228,8 @@ fn select(table) {
         where_clauses: [],
         limit_val: -1,
         offset_val: -1,
-        dialect: "sqlite"
+        dialect: "sqlite",
+        order_clauses: []
     }
 }
 
@@ -249,6 +259,13 @@ impl QueryBuilder {
         return self
     }
 
+    fn order_by(self, field, dir) {
+        let d = "ASC"
+        if dir == "desc" or dir == "DESC" { d = "DESC" }
+        self.order_clauses = self.order_clauses.push([field, d])
+        return self
+    }
+
     fn paginate(self, page, per_page) {
         if page < 1 {
             page = 1
@@ -274,6 +291,6 @@ impl QueryBuilder {
 
     fn build(self) {
         return compile_select(self.table, self.select_fields, self.where_clauses,
-                               self.limit_val, self.offset_val, self.dialect)
+                               self.limit_val, self.offset_val, self.dialect, self.order_clauses)
     }
 }

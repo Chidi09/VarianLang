@@ -1482,6 +1482,202 @@ fn live_query(fetcher) {
     return res
 }
 
+// ─── Pillar 2: headless data_table — server-driven, live, sortable, paginated.
+// Build SQL via the db query builder, run it through the connection WRAPPER
+// (so Pillar-1 read-set capture registers the table), wrapped in live_query so
+// rows auto-update on DB change. Returns a headless core (TanStack-style):
+//   let dt = data_table({ conn: db, table: "users",
+//                         columns: [ {name:"id",label:"ID",sortable:true}, ... ],
+//                         page_size: 25, order_by: "id", order_dir: "desc", filters: [] })
+//   render:  each (dt.rows)() ...      handler: (dt.set_sort)("name")
+fn data_table(opts) {
+    let conn = _validate.get_field(opts, "conn")
+    let table = _validate.get_field(opts, "table")
+    let columns = _validate.get_field(opts, "columns")
+    if columns == null { columns = [] }
+    let page_size = _validate.get_field(opts, "page_size")
+    if page_size == null { page_size = 25 }
+
+    // state holders (1-element arrays = the .vn mutable-cell idiom)
+    let st_sort = [_validate.get_field(opts, "order_by")]
+    let st_dir = ["asc"]
+    let init_dir = _validate.get_field(opts, "order_dir")
+    if init_dir != null { st_dir[0] = init_dir }
+    let st_page = [1]
+    let st_filters = [_validate.get_field(opts, "filters")]
+    if st_filters[0] == null { st_filters[0] = [] }
+
+    // column name list for SELECT (fall back to "*")
+    let col_names = []
+    let ci = 0
+    while ci < columns.len() {
+        let cn = _validate.get_field(columns[ci], "name")
+        if cn != null { col_names = col_names.push(cn) }
+        ci = ci + 1
+    }
+    if col_names.len() == 0 { col_names = ["*"] }
+
+    let fetcher = | | {
+        let q = db.select(table)
+        q = q.fields(col_names)
+        let params = []
+        let fs = st_filters[0]
+        let fi = 0
+        while fi < fs.len() {
+            let f = fs[fi]
+            q = q.where(_validate.get_field(f, "field"), _validate.get_field(f, "op"))
+            params = params.push(_validate.get_field(f, "value"))
+            fi = fi + 1
+        }
+        if st_sort[0] != null { q = q.order_by(st_sort[0], st_dir[0]) }
+        q = q.paginate(st_page[0], page_size)
+        let compiled = q.build()
+        // run through the connection wrapper so read-set capture sees the table
+        return (conn.query)(compiled.sql, params)
+    }
+
+    let res = live_query(fetcher)
+
+    let rows = | | {
+        let s = (res.state)()
+        if s.data == null { return [] }
+        return s.data
+    }
+    let meta = | | {
+        return http.create_struct(
+            ["page", "page_size", "sort", "dir", "loading", "error"],
+            [st_page[0], page_size, st_sort[0], st_dir[0], (res.state)().loading, (res.state)().error]
+        )
+    }
+    let _apply = | | {
+        let _ = (res.refetch)()
+        let _ = _lumen_async_updates <- true
+        return null
+    }
+    let set_sort = |field| {
+        if st_sort[0] == field {
+            if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
+        } else {
+            st_sort[0] = field
+            st_dir[0] = "asc"
+        }
+        st_page[0] = 1
+        return (_apply)()
+    }
+    let set_filter = |filters| {
+        st_filters[0] = filters
+        st_page[0] = 1
+        return (_apply)()
+    }
+    let next_page = | | {
+        st_page[0] = st_page[0] + 1
+        return (_apply)()
+    }
+    let prev_page = | | {
+        if st_page[0] > 1 { st_page[0] = st_page[0] - 1 }
+        return (_apply)()
+    }
+    let reload = | | { return (_apply)() }
+
+    return http.create_struct(
+        ["rows", "meta", "columns", "set_sort", "set_filter", "next_page", "prev_page", "reload"],
+        [rows, meta, columns, set_sort, set_filter, next_page, prev_page, reload]
+    )
+}
+
+// ─── Pillar 2: render a data_table core to live HTML (sortable headers + pager).
+// Built as a plain HTML string then passed through lumen_render so @click binds.
+// Header buttons carry value="<col>" so the clicked column name reaches the
+// |s,v| sort handler (the client sends el.value).
+fn _data_table_html(core) {
+    let cols = core.columns
+    let rows = (core.rows)()
+    let m = (core.meta)()
+
+    let head = "<thead><tr>"
+    let ci = 0
+    while ci < cols.len() {
+        let col = cols[ci]
+        let cname = _validate.get_field(col, "name")
+        let clabel = _validate.get_field(col, "label")
+        if clabel == null { clabel = cname }
+        let sortable = _validate.get_field(col, "sortable")
+        if sortable {
+            let arrow = ""
+            if m.sort == cname {
+                if m.dir == "desc" { arrow = " ▼" } else { arrow = " ▲" }
+            }
+            head = head + "<th class=\"lmn-th\"><button class=\"lmn-th-btn\" @click=\"dt_sort\" value=\"" + cname + "\">" + _sanitize.escape_html(clabel) + arrow + "</button></th>"
+        } else {
+            head = head + "<th class=\"lmn-th\">" + _sanitize.escape_html(clabel) + "</th>"
+        }
+        ci = ci + 1
+    }
+    head = head + "</tr></thead>"
+
+    let body = "<tbody>"
+    if m.loading {
+        body = body + "<tr><td class=\"lmn-td lmn-td-msg\" colspan=\"" + cols.len() + "\">Loading…</td></tr>"
+    } else {
+        if m.error != null {
+            body = body + "<tr><td class=\"lmn-td lmn-td-msg\" colspan=\"" + cols.len() + "\">" + _sanitize.escape_html("" + m.error) + "</td></tr>"
+        } else {
+            if rows.len() == 0 {
+                body = body + "<tr><td class=\"lmn-td lmn-td-msg\" colspan=\"" + cols.len() + "\">No rows.</td></tr>"
+            } else {
+                let ri = 0
+                while ri < rows.len() {
+                    let row = rows[ri]
+                    body = body + "<tr>"
+                    let cj = 0
+                    while cj < cols.len() {
+                        let cn = _validate.get_field(cols[cj], "name")
+                        let cell = _validate.get_field(row, cn)
+                        let txt = ""
+                        if cell != null { txt = _sanitize.escape_html("" + cell) }
+                        body = body + "<td class=\"lmn-td\">" + txt + "</td>"
+                        cj = cj + 1
+                    }
+                    body = body + "</tr>"
+                    ri = ri + 1
+                }
+            }
+        }
+    }
+    body = body + "</tbody>"
+
+    let pager = "<div class=\"lmn-pager\">" +
+        "<button class=\"lmn-pager-btn\" @click=\"dt_prev\">Prev</button>" +
+        "<span class=\"lmn-pager-info\">Page " + m.page + "</span>" +
+        "<button class=\"lmn-pager-btn\" @click=\"dt_next\">Next</button>" +
+        "</div>"
+
+    let html = "<div class=\"lmn-table-wrap\"><table class=\"lmn-table\">" + head + body + "</table>" + pager + "</div>"
+    return lumen_render(html, {})
+}
+
+// ─── Pillar 2: build a live, mountable data-table component over a DB table.
+// Usage (like examples/lumen_counter.vn):
+//   let conn = db.connect("sqlite", "app.db")
+//   let users = data_table_component({ conn: conn, table: "users",
+//       columns: [ {name:"id",label:"ID",sortable:true}, {name:"email",label:"Email",sortable:true} ],
+//       page_size: 25, order_by: "id", order_dir: "desc" })
+//   lumen_mount(app, "/users", users)
+// It auto-updates when the underlying table changes (built on live_query).
+fn data_table_component(opts) {
+    let core = data_table(opts)
+    let state_fn = | | { return {} }
+    let render_fn = |s| { return _data_table_html(core) }
+    let handler_names = ["dt_sort", "dt_next", "dt_prev", "dt_reload"]
+    let handler_fns = [
+        |s, v| { let _ = (core.set_sort)(v); return s },
+        |s, v| { let _ = (core.next_page)(); return s },
+        |s, v| { let _ = (core.prev_page)(); return s },
+        |s, v| { let _ = (core.reload)(); return s }
+    ]
+    return lumen_component(state_fn, render_fn, handler_names, handler_fns)
+}
+
 // ─── Lumen async resource: off-thread fetch with live re-render ───
 // Same surface as lumen_resource but `refetch()` spawns a background task
 // that runs the fetcher off the render thread. When the fetch completes,
@@ -2563,6 +2759,16 @@ fn _lumen_design_css() {
         ".lmn-typing-dot\{width:8px;height:8px;border-radius:50%;background:var(--lumen-muted);animation:lumen-typing-bounce 1.2s ease-in-out infinite\}" +
         ".lmn-typing-dot:nth-child(2)\{animation-delay:.2s\}.lmn-typing-dot:nth-child(3)\{animation-delay:.4s\}" +
         "@keyframes lumen-typing-bounce\{0%,60%,100%\{transform:translateY(0)\}30%\{transform:translateY(-6px)\}\}\}" +
+        ".lmn-table-wrap\{width:100%;overflow-x:auto;border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);background:var(--lumen-surface)\}" +
+        ".lmn-table\{width:100%;border-collapse:collapse;font-size:.9rem\}" +
+        ".lmn-table thead\{background:var(--lumen-surface-2)\}" +
+        ".lmn-th\{text-align:left;padding:0;border-bottom:1px solid var(--lumen-border);font-weight:700;color:var(--lumen-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;padding:.6rem .9rem\}" +
+        ".lmn-th-btn\{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit\}.lmn-th-btn:hover\{color:var(--lumen-primary)\}" +
+        ".lmn-td\{padding:.6rem .9rem;border-bottom:1px solid var(--lumen-border);color:var(--lumen-fg)\}.lmn-table tbody tr:last-child .lmn-td\{border-bottom:0\}.lmn-table tbody tr:hover\{background:var(--lumen-surface-2)\}" +
+        ".lmn-td-msg\{text-align:center;color:var(--lumen-muted);padding:1.5rem\}" +
+        ".lmn-pager\{display:flex;align-items:center;gap:.75rem;justify-content:flex-end;padding:.75rem .9rem;border-top:1px solid var(--lumen-border)\}" +
+        ".lmn-pager-info\{color:var(--lumen-muted);font-size:.82rem\}" +
+        ".lmn-pager-btn\{font:inherit;font-size:.82rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--lumen-border);background:transparent;color:var(--lumen-fg);cursor:pointer\}.lmn-pager-btn:hover\{border-color:var(--lumen-primary);color:var(--lumen-primary)\}" +
         "</style>"
 }
 
