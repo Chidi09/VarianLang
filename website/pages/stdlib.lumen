@@ -143,21 +143,16 @@
 </style>
 </head>
 <body>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-        <a href="/#language">Language</a>
-        <a href="/#ecosystem">Ecosystem</a>
-        <a href="/aurora">Aurora</a>
-        <a href="/zenith">Zenith</a>
-        <a href="/lumen">Lumen</a>
-        <a href="/the_varian_book">The Book</a>
-        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-      </div>
-  </nav>
+  <Page>
+  <Nav brand="Varian">
+      <a href="/#language">Language</a>
+      <a href="/#ecosystem">Ecosystem</a>
+      <a href="/aurora">Aurora</a>
+      <a href="/zenith">Zenith</a>
+      <a href="/lumen">Lumen</a>
+      <a href="/the_varian_book">The Book</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -349,43 +344,37 @@ print(my_err.hint)     // &quot;ask the user to try another card&quot;
 </ul>
     </main>
   </div>
-  <footer class="footer-main">
-    <div class="container">
-      <div class="footer-grid">
-        <div class="footer-col">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="/aurora">Aurora</a></li>
-            <li><a href="/zenith">Zenith</a></li>
-            <li><a href="/lumen">Lumen</a></li>
-            <li><a href="/kiln">Kiln</a></li>
-            <li><a href="/constellation">Constellation</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Learn</h4>
-          <ul>
-            <li><a href="/the_varian_book">The Book</a></li>
-            <li><a href="/language">Language Spec</a></li>
-            <li><a href="/stdlib">Standard Library</a></li>
-            <li><a href="/tooling">Tooling</a></li>
-            <li><a href="/security">Security</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Community</h4>
-          <ul>
-            <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        &copy; 2026 VarianLang. Built with Aurora.
-      </div>
-    </div>
-  </footer>
+  <Footer>
+    <Container size="lg">
+      <Grid cols="3" gap="8">
+        <Stack gap="2">
+          <Heading as="h4" size="sm">Product</Heading>
+          <a href="/aurora">Aurora</a>
+          <a href="/zenith">Zenith</a>
+          <a href="/lumen">Lumen</a>
+          <a href="/kiln">Kiln</a>
+          <a href="/constellation">Constellation</a>
+        </Stack>
+        <Stack gap="2">
+          <Heading as="h4" size="sm">Learn</Heading>
+          <a href="/the_varian_book">The Book</a>
+          <a href="/language">Language Spec</a>
+          <a href="/stdlib">Standard Library</a>
+          <a href="/tooling">Tooling</a>
+          <a href="/security">Security</a>
+        </Stack>
+        <Stack gap="2">
+          <Heading as="h4" size="sm">Community</Heading>
+          <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+          <a href="https://github.com/Chidi09/VarianLang/issues">Issues</a>
+          <a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a>
+        </Stack>
+      </Grid>
+      <Divider/>
+      <Text size="sm" muted>&copy; 2026 VarianLang. Built with Aurora.</Text>
+    </Container>
+  </Footer>
+  </Page>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {

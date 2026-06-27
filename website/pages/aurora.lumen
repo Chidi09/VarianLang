@@ -143,27 +143,22 @@
 </style>
 </head>
 <body class="theme-aurora">
+  <Page>
   <div class="ambient-bg ambient-bg-strong" aria-hidden="true">
     <video autoplay muted loop playsinline poster="/aurora-bg.jpg" preload="metadata">
       <source src="/aurora-bg.webm" type="video/webm">
       <source src="/aurora-bg.mp4" type="video/mp4">
     </video>
   </div>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-      <a href="/#language">Language</a>
-      <a href="/#ecosystem">Ecosystem</a>
-      <a href="/aurora">Aurora</a>
-      <a href="/zenith">Zenith</a>
-      <a href="/lumen">Lumen</a>
-      <a href="/the_varian_book">The Book</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-    </div>
-  </nav>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -199,81 +194,40 @@
 <p>All <code>vn_modules/</code> files — including <code>zenith.vn</code>, <code>lumen.vn</code>, <code>lumen_ui.vn</code>, <code>db.vn</code>, and <code>http.vn</code> — are automatically concatenated as a prelude when you run an Aurora project. <code>new_app()</code>, <code>lumen_mount()</code>, <code>sqlite.connect()</code>, and the entire Lumen UI registry are always in scope. <strong>No <code>import</code>, no <code>require</code>, no <code>npm install</code>.</strong> The toolchain auto-detects Aurora, Lumen, or Zenith project type and compiles accordingly.</p>
 
 <!-- ============ WHY AURORA ============ -->
-<h2 id="why-aurora"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Aurora?</h2>
+<Heading size="2xl" as="h2" id="why-aurora">Why Aurora?</Heading>
 <p>Aurora's pitch is not "yet another fullstack framework." It's <strong>one language, one toolchain, one binary — from database schema to DOM morph.</strong> No separate frontend build, no JavaScript framework, no <code>node_modules</code>, no dependency tree.</p>
 
-<div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);padding:var(--space-6);margin:var(--space-6) 0;">
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);font-size:var(--text-sm);">
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">language</span>
-        <h4 style="margin:0;font-size:var(--text-base);">One language, the entire stack</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Backend API routes, database queries, session management, HTML templates, and UI components — all Varian. Share types, validation, and business logic between server and client with no serialization boundary.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">flash_on</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Zero-config scaffolding</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn new myapp</code> creates a complete fullstack project: <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, <code>constellation.toml</code>. <code>vn dev</code> starts a live-reload dev server. No config files to write.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">autorenew</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Server-driven UI</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Lumen components render on the server. A 5 KB client forwards events over WebSocket; the server re-renders and morphs only the changed DOM nodes. Zero hydration bugs, zero client framework, zero Varian in the browser.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">neurology</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Comptime ORM + DB drivers</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">SQLite and Postgres drivers built in. The comptime ORM checks SQL strings at compile time and generates bound queries. <code>bind()</code> throws on parameter count mismatch — not at runtime.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">inventory_2</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Batteries included</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">package_2</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Deploys as one binary</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn build --release</code> produces a single native executable with Zenith, Lumen, the ORM, and the database schema all compiled in. No runtime to install, no <code>node_modules</code> on the server, no "works on my machine."</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">description</span>
-        <h4 style="margin:0;font-size:var(--text-base);">OpenAPI for free</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">track_changes</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Multi-core by default</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Zenith clusters across threads with independent VMs, SIMD request parsing, writev single-syscall responses, and per-request arena allocation. Lumen's WebSocket event loop handles concurrent connections without threads.</p>
-    </div>
-
-  </div>
-</div>
+<Card>
+  <Grid cols="2" gap="6">
+    <Feature icon="language" title="One language, the entire stack">
+      Backend API routes, database queries, session management, HTML templates, and UI components — all Varian. Share types, validation, and business logic between server and client with no serialization boundary.
+    </Feature>
+    <Feature icon="flash_on" title="Zero-config scaffolding">
+      <code>vn new myapp</code> creates a complete fullstack project: <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, <code>constellation.toml</code>. <code>vn dev</code> starts a live-reload dev server. No config files to write.
+    </Feature>
+    <Feature icon="autorenew" title="Server-driven UI">
+      Lumen components render on the server. A 5 KB client forwards events over WebSocket; the server re-renders and morphs only the changed DOM nodes. Zero hydration bugs, zero client framework, zero Varian in the browser.
+    </Feature>
+    <Feature icon="neurology" title="Comptime ORM + DB drivers">
+      SQLite and Postgres drivers built in. The comptime ORM checks SQL strings at compile time and generates bound queries. <code>bind()</code> throws on parameter count mismatch — not at runtime.
+    </Feature>
+    <Feature icon="inventory_2" title="Batteries included">
+      JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.
+    </Feature>
+    <Feature icon="package_2" title="Deploys as one binary">
+      <code>vn build --release</code> produces a single native executable with Zenith, Lumen, the ORM, and the database schema all compiled in. No runtime to install, no <code>node_modules</code> on the server, no "works on my machine."
+    </Feature>
+    <Feature icon="description" title="OpenAPI for free">
+      Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.
+    </Feature>
+    <Feature icon="track_changes" title="Multi-core by default">
+      Zenith clusters across threads with independent VMs, SIMD request parsing, writev single-syscall responses, and per-request arena allocation. Lumen's WebSocket event loop handles concurrent connections without threads.
+    </Feature>
+  </Grid>
+</Card>
 
 <!-- ============ SCAFFOLDING ============ -->
-<h2 id="scaffold"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">rocket_launch</span> Scaffolding an Aurora project</h2>
+<Heading size="2xl" as="h2" id="scaffold"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">rocket_launch</span> Scaffolding an Aurora project</Heading>
 <p>A single command creates a complete fullstack project:</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -311,10 +265,10 @@ vn dev                <span class="token-comment"># live-reload dev server on :8
 <p><code>vn dev</code> detects the Aurora project type automatically, starts the Zenith server, mounts all Lumen pages, and watches for changes with live reload. <code>vn build --release</code> compiles everything into a single native binary.</p>
 
 <!-- ============ EXAMPLES ============ -->
-<h2 id="examples"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> Full-stack examples</h2>
+<Heading size="2xl" as="h2" id="examples"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> Full-stack examples</Heading>
 <p>Every Aurora project follows the same architecture. Here is the complete walkthrough of a production fullstack app — the <strong>Aurora storefront</strong> reference implementation.</p>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">input</span> Entry point — <code>main.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">input</span> Entry point — <code>main.vn</code></Heading>
 <p>The <code>main.vn</code> wires together every module: config, database, middleware, API routes, auth, background jobs, and Lumen page mounting. It is the single entry point for the entire application.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -357,7 +311,7 @@ app.<span class="token-function">listen</span>(c.port)
 
 <p>Notice: no <code>import</code> for <code>new_app()</code>, <code>http.create_struct</code>, <code>sqlite</code> — all auto-in-scope through the <code>vn_modules/</code> prelude.</p>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">settings</span> Configuration — <code>lib/config.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">settings</span> Configuration — <code>lib/config.vn</code></Heading>
 <p>Centralized env-based configuration. Every <code>env.get()</code> call lives in one place — no magic numbers or hardcoded secrets scattered across modules.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -381,7 +335,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">storage</span> Database — <code>lib/db.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">storage</span> Database — <code>lib/db.vn</code></Heading>
 <p>SQLite schema initialization, migration, and seed data. The comptime ORM (<code>db.vn</code> in <code>vn_modules/</code>) provides a builder API (<code>select()</code>, <code>bind()</code>, <code>run_sqlite()</code>) that validates queries at compile time.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -423,7 +377,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">link</span> Middleware — <code>lib/middleware.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">link</span> Middleware — <code>lib/middleware.vn</code></Heading>
 <p>Middleware is applied as a chain with <code>app.add_middleware()</code>. Each middleware receives the request and a <code>next</code> callback.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -443,7 +397,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">api</span> REST API — <code>lib/api_products.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">api</span> REST API — <code>lib/api_products.vn</code></Heading>
 <p>Product listing and detail endpoints. Routes are registered with a <code>summary</code> string for auto-generated OpenAPI docs. Query parameters parsed with <code>query()</code>, database queries use bound parameters.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -487,7 +441,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">shopping_cart</span> Session-backed Cart — <code>lib/api_cart.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">shopping_cart</span> Session-backed Cart — <code>lib/api_cart.vn</code></Heading>
 <p>The cart is stored in the session cookie. <code>session_get</code> and <code>session_set</code> handle JWT-signed cookie encryption automatically.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -538,7 +492,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">lock</span> Authentication — <code>lib/auth.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">lock</span> Authentication — <code>lib/auth.vn</code></Heading>
 <p>Registration, login, and logout with password hashing and JWT-signed session cookies. Routes include OpenAPI schema annotations for auto-generated docs.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -593,7 +547,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> Mounting Lumen Pages with SSR Data — <code>lib/pages.vn</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">publish</span> Mounting Lumen Pages with SSR Data — <code>lib/pages.vn</code></Heading>
 <p>Lumen pages mount onto Zenith routes with the <code>lumen_mount_data</code> API. The callback runs on every request, fetches data from the database, and passes it to the Lumen component as initial state — full server-side rendering with zero client data fetching.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -670,7 +624,7 @@ app.<span class="token-function">listen</span>(c.port)
 </pre></div>
 </div>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">widgets</span> Lumen UI Component — <code>ProductCard.lumen</code></h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">widgets</span> Lumen UI Component — <code>ProductCard.lumen</code></Heading>
 <p>A Lumen component lives in <code>pages/components/</code> — it is automatically compiled as a component struct that gets imported by other pages. This one renders a product card that fetches cart data from the <code>/api</code> endpoints.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -723,13 +677,13 @@ app.<span class="token-function">listen</span>(c.port)
 </div>
 
 <!-- ============ VS NEXTJS ============ -->
-<h2 id="vs-nextjs"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">compare_arrows</span> Aurora vs Next.js</h2>
+<Heading size="2xl" as="h2" id="vs-nextjs"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">compare_arrows</span> Aurora vs Next.js</Heading>
 <p>Aurora is to Varian what Next.js is to JavaScript — but the setup story is fundamentally different because Aurora ships <strong>everything built in</strong>.</p>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">timer</span> Time to "Hello World"</h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">timer</span> Time to "Hello World"</Heading>
 
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);margin-bottom:var(--space-6);">
-  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:var(--space-4);">
+<Grid cols="2" gap="6">
+  <Card>
     <h4 style="margin:0 0 var(--space-2);font-size:var(--text-base);display:flex;align-items:center;gap:var(--space-1);">
       <span class="material-symbols-outlined" style="color:var(--accent);font-size:18px;">check_circle</span> Aurora
     </h4>
@@ -738,8 +692,8 @@ app.<span class="token-function">listen</span>(c.port)
       <div>$ cd myapp &amp;&amp; vn dev</div>
       <div style="color:var(--text-muted);margin-top:var(--space-1);">→ 2 commands, 0 seconds install, 0 dependencies</div>
     </div>
-  </div>
-  <div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:var(--space-4);">
+  </Card>
+  <Card>
     <h4 style="margin:0 0 var(--space-2);font-size:var(--text-base);display:flex;align-items:center;gap:var(--space-1);">
       <span class="material-symbols-outlined" style="color:#f87171;font-size:18px;">schedule</span> Next.js
     </h4>
@@ -751,10 +705,10 @@ app.<span class="token-function">listen</span>(c.port)
       <div>$ npm run dev</div>
       <div style="color:var(--text-muted);margin-top:var(--space-1);">→ 3 commands, 2+ min install, 1000+ dependencies</div>
     </div>
-  </div>
-</div>
+  </Card>
+</Grid>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">table</span> Feature comparison</h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">table</span> Feature comparison</Heading>
 
 <table>
   <tr><th>Concern</th><th>Aurora (Varian)</th><th>Next.js (JavaScript)</th></tr>
@@ -820,7 +774,7 @@ app.<span class="token-function">listen</span>(c.port)
   </tr>
 </table>
 
-<h3><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">flash_on</span> What setup looks like in practice</h3>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">flash_on</span> What setup looks like in practice</Heading>
 
 <p><strong>Next.js setup checklist</strong> (real-world ecommerce app):</p>
 <ol>
@@ -844,7 +798,7 @@ app.<span class="token-function">listen</span>(c.port)
 </ol>
 
 <!-- ============ WHEN TO USE ============ -->
-<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">category</span> When to use Aurora vs Lumen vs Zenith</h2>
+<Heading size="2xl" as="h2"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">category</span> When to use Aurora vs Lumen vs Zenith</Heading>
 <p>The toolchain auto-detects the project type, but here is how to think about which one fits your project:</p>
 <table>
   <tr><th>Project shape</th><th>Use</th><th>Scaffold</th></tr>
@@ -858,43 +812,39 @@ app.<span class="token-function">listen</span>(c.port)
     </main>
   </div>
 
-  <footer class="footer-main">
-    <div class="container">
-      <div class="footer-grid">
-        <div class="footer-col">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="/aurora">Aurora</a></li>
-            <li><a href="/zenith">Zenith</a></li>
-            <li><a href="/lumen">Lumen</a></li>
-            <li><a href="/kiln">Kiln</a></li>
-            <li><a href="/constellation">Constellation</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Learn</h4>
-          <ul>
-            <li><a href="/the_varian_book">The Book</a></li>
-            <li><a href="/language">Language Spec</a></li>
-            <li><a href="/stdlib">Standard Library</a></li>
-            <li><a href="/tooling">Tooling</a></li>
-            <li><a href="/security">Security</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Community</h4>
-          <ul>
-            <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
-          </ul>
-        </div>
-      </div>
-      <div class="footer-bottom">
-        &copy; 2026 VarianLang. Built with Aurora.
-      </div>
+  <Footer>
+    <div class="footer-col">
+      <Heading size="xs" as="h4">Product</Heading>
+      <ul>
+        <li><a href="/aurora">Aurora</a></li>
+        <li><a href="/zenith">Zenith</a></li>
+        <li><a href="/lumen">Lumen</a></li>
+        <li><a href="/kiln">Kiln</a></li>
+        <li><a href="/constellation">Constellation</a></li>
+      </ul>
     </div>
-  </footer>
+    <div class="footer-col">
+      <Heading size="xs" as="h4">Learn</Heading>
+      <ul>
+        <li><a href="/the_varian_book">The Book</a></li>
+        <li><a href="/language">Language Spec</a></li>
+        <li><a href="/stdlib">Standard Library</a></li>
+        <li><a href="/tooling">Tooling</a></li>
+        <li><a href="/security">Security</a></li>
+      </ul>
+    </div>
+    <div class="footer-col">
+      <Heading size="xs" as="h4">Community</Heading>
+      <ul>
+        <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
+        <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
+        <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
+      </ul>
+    </div>
+    <div class="footer-bottom">
+      &copy; 2026 VarianLang. Built with Aurora.
+    </div>
+  </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -912,6 +862,7 @@ app.<span class="token-function">listen</span>(c.port)
     });
   }
 </script>
+  </Page>
 </body>
 </html>
 </template>

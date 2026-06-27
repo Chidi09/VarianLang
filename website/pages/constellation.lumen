@@ -143,21 +143,16 @@
 </style>
 </head>
 <body class="theme-constellation">
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-      <a href="/#language">Language</a>
-      <a href="/#ecosystem">Ecosystem</a>
-      <a href="/aurora">Aurora</a>
-      <a href="/zenith">Zenith</a>
-      <a href="/lumen">Lumen</a>
-      <a href="/the_varian_book">The Book</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-    </div>
-  </nav>
+<Page>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -184,10 +179,10 @@
 </p>
 
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Constellation — The Varian Package Registry &amp; Dependency Manager</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
-<p><strong>Packages are stars; Constellation is the map that makes them a navigable whole.</strong></p>
-<p>Constellation is Varian's built-in package management system. It handles dependency declaration, static registry searches, semver compatibility matching, reproducible offline builds, and transitive package resolution with integrity hashing.</p>
-<hr />
-<h2>1. Architecture: Hybrid CDN Index + Git Vendoring</h2>
+<Text><strong>Packages are stars; Constellation is the map that makes them a navigable whole.</strong></Text>
+<Text>Constellation is Varian's built-in package management system. It handles dependency declaration, static registry searches, semver compatibility matching, reproducible offline builds, and transitive package resolution with integrity hashing.</Text>
+<Divider/>
+<Heading size="2xl" as="h2">1. Architecture: Hybrid CDN Index + Git Vendoring</Heading>
 <p>Constellation avoids the high maintenance costs and security vulnerabilities of fully hosted central registries (like npm or crates.io) by utilizing a <strong>hybrid model</strong>:
 * <strong>Thin Static Index</strong>: Package names are mapped to version structures in a single static JSON index (which can be hosted on a CDN, a Git repository, or a local file during offline tests). Each entry contains:
   $$\text{Version} \longrightarrow {\text{git url}, \text{git tag}, \text{sha256 tarball hash&#125;&#125;$$
@@ -195,36 +190,36 @@
 * <strong>Local Vendoring</strong>: Dependencies are unpacked into <code>vn_modules/&lt;package_name&gt;</code> locally. This provides absolute visibility into third-party code and ensures your project compiles offline.</p>
 <pre><code>                    constellation.toml
                            │
-             ┌─────────────┴─────────────┐
-             ▼                           ▼
-      Registry Spec                  Direct Git
-      (&quot;lumen-ui&quot; = &quot;^1.2.0&quot;)        (git = &quot;...&quot;, tag = &quot;...&quot;)
-             │                           │
-             ▼                           │
-      CDN Registry Index                 │
-      (Match best Semver)                │
-             │                           │
-             ▼                           ▼
-      ┌─────────────────────────────────────┐
-      │ Fetch Tarball from Git repository   │
-      └──────────────────┬──────────────────┘
-                         │
-                         ▼
-      ┌─────────────────────────────────────┐
-      │ Compute &amp; Verify SHA-256 Checksum   │
-      └──────────────────┬──────────────────┘
-                         │
-                         ▼
-      ┌─────────────────────────────────────┐
-      │ Unpack into vn_modules/&lt;package&gt;    │
-      └──────────────────┬──────────────────┘
-                         │
-                         ▼
-                 constellation.lock
+              ┌─────────────┴─────────────┐
+              ▼                           ▼
+       Registry Spec                  Direct Git
+       (&quot;lumen-ui&quot; = &quot;^1.2.0&quot;)        (git = &quot;...&quot;, tag = &quot;...&quot;)
+              │                           │
+              ▼                           │
+       CDN Registry Index                 │
+       (Match best Semver)                │
+              │                           │
+              ▼                           ▼
+       ┌─────────────────────────────────────┐
+       │ Fetch Tarball from Git repository   │
+       └──────────────────┬──────────────────┘
+                          │
+                          ▼
+       ┌─────────────────────────────────────┐
+       │ Compute &amp; Verify SHA-256 Checksum   │
+       └──────────────────┬──────────────────┘
+                          │
+                          ▼
+       ┌─────────────────────────────────────┐
+       │ Unpack into vn_modules/&lt;package&gt;    │
+       └──────────────────┬──────────────────┘
+                          │
+                          ▼
+                  constellation.lock
 </code></pre>
-<hr />
-<h2>2. Manifests &amp; Version Pinning</h2>
-<h3>The Manifest: <code>constellation.toml</code></h3>
+<Divider/>
+<Heading size="2xl" as="h2">2. Manifests &amp; Version Pinning</Heading>
+<Heading size="lg" as="h3">The Manifest: <code>constellation.toml</code></Heading>
 <p>The configuration for your project lives in <code>constellation.toml</code> (which automatically replaces the legacy <code>varian.pkg</code> format). Below is a complete specification of a package configuration:</p>
 <pre><code class="language-toml">[package]
 name    = &quot;my-lumen-app&quot;
@@ -244,7 +239,7 @@ python = false
 net    = true
 fs     = true
 </code></pre>
-<h3>Semver Range Matching rules</h3>
+<Heading size="lg" as="h3">Semver Range Matching rules</Heading>
 <p>Varian supports the following semver range selectors:
 * <strong>Caret (<code>^X.Y.Z</code>)</strong>: Matches versions that do not modify the leftmost non-zero digit.
   * <code>^1.2.3</code> matches $\ge 1.2.3$ and $&lt; 2.0.0$.
@@ -254,7 +249,7 @@ fs     = true
   * <code>~1.2.3</code> matches $\ge 1.2.3$ and $&lt; 1.3.0$.
 * <strong>Wildcards (<code>*</code> or <code>latest</code>)</strong>: Matches the absolute latest version available in the index.
 * <strong>Exact match (<code>X.Y.Z</code>)</strong>: Matches the version string exactly.</p>
-<h3>The Lockfile: <code>constellation.lock</code></h3>
+<Heading size="lg" as="h3">The Lockfile: <code>constellation.lock</code></Heading>
 <p><code>constellation.lock</code> records the resolved state of the entire transitive dependency tree. It ensures that subsequent installs yield byte-identical code across different environments:</p>
 <pre><code class="language-toml">[[package]]
 name = &quot;dep_a&quot;
@@ -270,58 +265,58 @@ git = &quot;/tmp/varian_pkg_c3_test/dep_b&quot;
 commit = &quot;6b3771fb5d688cfd3d8204689cf08e8ef6e61203&quot;
 sha256 = &quot;f339cf0120ab23a6c221bc014a6e336b28120023f054acb3815e61203fa8a32d&quot;
 </code></pre>
-<hr />
-<h2>3. CLI Command Reference</h2>
-<h3><code>vn add &lt;pkg_name&gt;</code></h3>
-<p>Adds a new dependency to <code>constellation.toml</code> at version <code>"latest"</code>. If no manifest exists, it automatically initializes a new one.</p>
-<h3><code>vn remove &lt;pkg_name&gt;</code></h3>
+<Divider/>
+<Heading size="2xl" as="h2">3. CLI Command Reference</Heading>
+<Heading size="lg" as="h3"><code>vn add &lt;pkg_name&gt;</code></Heading>
+<p>Adds a new dependency to <code>constellation.toml</code> at version <code>&quot;latest&quot;</code>. If no manifest exists, it automatically initializes a new one.</p>
+<Heading size="lg" as="h3"><code>vn remove &lt;pkg_name&gt;</code></Heading>
 <p>Removes the specified dependency from <code>constellation.toml</code>, prunes its files and any unused transitive dependencies from the <code>vn_modules/</code> folder, and updates the <code>constellation.lock</code> file.</p>
-<h3><code>vn install [--frozen]</code></h3>
+<Heading size="lg" as="h3"><code>vn install [--frozen]</code></Heading>
 <p>Resolves and downloads all dependencies declared in <code>constellation.toml</code>.
 * By default, it writes <code>constellation.lock</code> after the initial resolution.
 * <strong>Transitive Resolution</strong>: Recursively parses <code>constellation.toml</code> manifests within downloaded package directories to construct the complete dependency tree.
 * <strong>Pruning</strong>: Unused packages are deleted from <code>vn_modules/</code>.
 * <strong><code>--frozen</code></strong>: Disallows network queries or lockfile updates. If the lockfile is missing or does not match <code>constellation.toml</code> exactly, the installation fails loudly (critical for CI pipelines).</p>
-<h3><code>vn update</code></h3>
+<Heading size="lg" as="h3"><code>vn update</code></Heading>
 <p>Bypasses the current <code>constellation.lock</code> cache and forces a fresh query to the Registry Index or Git repository, pulling the latest matching tags and generating a new lockfile with updated commits and SHA-256 hashes.</p>
-<h3><code>vn search &lt;query&gt;</code></h3>
-<p>Queries the Registry Index and prints matching packages along with their available versions. Passing <code>"*"</code> lists every package in the index.</p>
-<h3><code>vn publish</code></h3>
+<Heading size="lg" as="h3"><code>vn search &lt;query&gt;</code></Heading>
+<p>Queries the Registry Index and prints matching packages along with their available versions. Passing <code>&quot;*&quot;</code> lists every package in the index.</p>
+<Heading size="lg" as="h3"><code>vn publish</code></Heading>
 <p>Prepares the current package (run from inside its git repo) for the index. It runs <code>git archive</code> on <code>HEAD</code>, computes the tarball SHA-256, and prints the exact index entry to submit. It does <strong>not</strong> upload anything — Constellation is a thin git-hosted index, so publishing means opening a PR that adds your entry; your own git host serves the code. Tag the commit <code>v&lt;version&gt;</code> and push so the hash stays valid.</p>
-<hr />
-<h2>4. Consuming a package: <code>use</code></h2>
+<Divider/>
+<Heading size="2xl" as="h2">4. Consuming a package: <code>use</code></Heading>
 <p>Installing vendors a package under <code>vn_modules/&lt;pkg&gt;/</code>. The ambient prelude only auto-loads top-level <code>vn_modules/*.vn</code> (the standard library), so a vendored package is <strong>loaded on demand</strong> with an explicit <code>use</code> directive — your file declares exactly what it depends on.</p>
 <ul>
-<li><code>use "lumen-ui"</code>: loads the package's top-level symbols into the <strong>flat global namespace</strong>. Collisions are <em>detected</em> (defining an in-scope name is a hard compile-time error) but not <em>avoided</em>.</li>
-<li><code>use "lumen-ui" as ui</code>: loads the package into a <strong>namespaced scope</strong>. Accessing its symbols is done via member access, e.g., <code>ui.Button(...)</code> and <code>ui.Card(...)</code>.</li>
-<li><code>use "lib/local.vn" as helpers</code>: accepts direct file paths as well.</li>
+<li><code>use &quot;lumen-ui&quot;</code>: loads the package's top-level symbols into the <strong>flat global namespace</strong>. Collisions are <em>detected</em> (defining an in-scope name is a hard compile-time error) but not <em>avoided</em>.</li>
+<li><code>use &quot;lumen-ui&quot; as ui</code>: loads the package into a <strong>namespaced scope</strong>. Accessing its symbols is done via member access, e.g., <code>ui.Button(...)</code> and <code>ui.Card(...)</code>.</li>
+<li><code>use &quot;lib/local.vn&quot; as helpers</code>: accepts direct file paths as well.</li>
 </ul>
-<h3>How Namespacing Works</h3>
+<Heading size="lg" as="h3">How Namespacing Works</Heading>
 <p>Namespacing is grounded in existing runtime features without introducing new opcodes or VM types:
-1. <strong>Module Initialization Function</strong>: When <code>use "pkg" as alias</code> is compiled, the compiler synthesizes a <code>__module_init_&lt;pkg&gt;()</code> function containing all the package's top-level declarations verbatim, returning an anonymous struct of its public names.
+1. <strong>Module Initialization Function</strong>: When <code>use &quot;pkg&quot; as alias</code> is compiled, the compiler synthesizes a <code>__module_init_&lt;pkg&gt;()</code> function containing all the package's top-level declarations verbatim, returning an anonymous struct of its public names.
 2. <strong>True Isolation via Closures</strong>: Sibling functions inside the package become nested functions inside the module initialization function. They resolve sibling references to enclosing locals/upvalues (e.g. <code>Button</code> calling <code>_render</code> resolves to a local sibling slot, not a global), achieving true per-package symbol isolation.
 3. <strong>Hoist-then-Define Pass</strong>: To support mutually-referencing package functions declared out of order, the compiler performs a two-pass hoisting compile specifically inside the module initialization function. In Pass 1, all functions and variables are pre-declared as local slots. In Pass 2, their initializers and bodies are compiled and assigned to their slots. Sibling references then resolve correctly even before the target is defined in source order.
 4. <strong>Upvalue Closing</strong>: When returning from a call frame, the VM copies final slot values to any closures that captured them (closing the upvalues) ensuring they remain correct after the module init frame is popped.
 5. <strong>Member Access</strong>: The alias global is bound to the exported struct, and calling a function <code>ui.Button(...)</code> is compiled using the existing <code>BC_MEMBER</code> member-lookup instruction + call.</p>
-<h3>Privacy Rule</h3>
+<Heading size="lg" as="h3">Privacy Rule</Heading>
 <p>Top-level package names starting with an underscore <code>_</code> (e.g., <code>_render_impl</code>) are visible to sibling functions inside the package but are <strong>excluded from the exported struct</strong>. Thus, <code>ui._render_impl</code> does not exist and throws a compile/runtime error on access. This aligns with standard library conventions (<code>_lumen_*</code>) without introducing new keywords.</p>
-<h3>v1 Limitations (Types)</h3>
+<Heading size="lg" as="h3">v1 Limitations (Types)</Heading>
 <p>In version 1, namespacing applies to <strong>functions and values</strong> (the common case). Struct/enum type declarations (e.g., <code>struct Card</code>) are resolved at parse time into a global registry; making <code>ui.Card</code> usable as a type annotation requires a scope-aware type resolver. Therefore, types exported under a namespace remain global and collision-checked.</p>
-<h3>Compilation Support</h3>
+<Heading size="lg" as="h3">Compilation Support</Heading>
 <p>Namespacing is supported across all three Varian backends:
 1. <strong>Source Execution (<code>vn run main.vn</code>)</strong>
 2. <strong>VNB Bundles (<code>vn build main.vn</code>)</strong>
 3. <strong>Native Compiled Binaries (<code>vn build main.vn --release app</code>)</strong></p>
 <p>The AOT compiler (<code>src/aot.c</code>) translates namespaced closures, metadata-based closure creation (<code>BC_CLOSURE</code>), and return-time upvalue closing (<code>close_upvalues</code>) directly into C, matching the interpreter's behavior exactly.</p>
-<h3><code>vn add</code> spec forms</h3>
+<Heading size="lg" as="h3"><code>vn add</code> spec forms</Heading>
 <pre><code class="language-sh">vn add foo            # registry, &quot;latest&quot;
 vn add foo@1.2.0      # registry, exact version
 vn add foo@^1.2.0     # registry, semver range
 vn add github.com/u/foo          # git dependency (tag &quot;main&quot;)
 vn add github.com/u/foo@v1.2.0   # git dependency at a tag
 </code></pre>
-<hr />
-<h2>5. Transitive Resolution &amp; Security Integrity</h2>
+<Divider/>
+<Heading size="2xl" as="h2">5. Transitive Resolution &amp; Security Integrity</Heading>
 <ol>
 <li><strong>Deterministic Dependency Ordering</strong>: Dependencies are evaluated using a queue-based recursive resolver that avoids duplicate resolution cycles or infinite recursion loops.</li>
 <li><strong>SHA-256 Validation</strong>: Downloaded tarball archives are validated against the index-declared hash before extraction. This guarantees that files have not been modified or hijacked on the Git provider.</li>
@@ -330,7 +325,7 @@ vn add github.com/u/foo@v1.2.0   # git dependency at a tag
 </ol>
     </main>
   </div>
-  <footer class="footer-main">
+  <Footer>
     <div class="container">
       <div class="footer-grid">
         <div class="footer-col">
@@ -366,24 +361,8 @@ vn add github.com/u/foo@v1.2.0   # git dependency at a tag
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
     </div>
-  </footer>
-<script>  var navToggle = document.getElementById('nav-toggle');
-  var navLinks = document.querySelector('.nav-links');
-  if (navToggle && navLinks) {
-    navToggle.addEventListener('click', function() {
-      var open = navLinks.classList.toggle('nav-open');
-      navToggle.setAttribute('aria-expanded', open);
-      navToggle.querySelector('.material-symbols-outlined').textContent = open ? 'close' : 'menu';
-    });
-    document.addEventListener('click', function(e) {
-      if (!navToggle.contains(e.target) && !navLinks.contains(e.target)) {
-        navLinks.classList.remove('nav-open');
-        navToggle.setAttribute('aria-expanded', 'false');
-        navToggle.querySelector('.material-symbols-outlined').textContent = 'menu';
-      }
-    });
-  }
-</script>
+  </Footer>
+</Page>
 </body>
 </html>
 </template>

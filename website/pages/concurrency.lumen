@@ -143,21 +143,16 @@
 </style>
 </head>
 <body>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-        <a href="/#language">Language</a>
-        <a href="/#ecosystem">Ecosystem</a>
-        <a href="/aurora">Aurora</a>
-        <a href="/zenith">Zenith</a>
-        <a href="/lumen">Lumen</a>
-        <a href="/the_varian_book">The Book</a>
-        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-      </div>
-  </nav>
+<Page>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -179,11 +174,12 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Concurrency: Tasks, Channels, Actors</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><Heading as="h1" size="4xl">Concurrency: Tasks, Channels, Actors</Heading><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <p>Varian runs a cooperative, single-threaded green-thread scheduler — tasks yield
 explicitly (or at blocking channel/actor operations), they are not preemptively
 scheduled across OS threads.</p>
-<h2>Tasks</h2>
+<Section anchor="tasks">
+<Heading as="h2" size="2xl">Tasks</Heading>
 <pre><code class="language-varian">fn worker(n) {
     print(n)
     task.yield()
@@ -199,7 +195,9 @@ print(task.id(t2))
 <p><code>task.spawn(fn_or_closure, args_array)</code> starts a new cooperative task. <code>task.yield()</code>
 gives other tasks a turn. <code>task.spawn</code> correctly handles spawning a closure (one that
 captured locals via <code>|...| {...}</code>), not just a plain named function.</p>
-<h2>Channels</h2>
+</Section>
+<Section anchor="channels">
+<Heading as="h2" size="2xl">Channels</Heading>
 <pre><code class="language-varian">fn sender(ch) {
     ch &lt;- 42
     ch &lt;- 100
@@ -224,7 +222,9 @@ task.spawn(receiver, [ch])
   been closed and is empty, it returns <code>nil</code> immediately instead of blocking forever —
   this is the mechanism to use for a clean worker-shutdown signal.</li>
 </ul>
-<h2>Actors</h2>
+</Section>
+<Section anchor="actors">
+<Heading as="h2" size="2xl">Actors</Heading>
 <pre><code class="language-varian">actor Counter {
     count: int = 0,
     fn increment(self) {
@@ -244,7 +244,9 @@ method on an actor sends a message to its inbox and (cooperatively) waits for th
 reply — it looks like a normal synchronous call but is implemented as async message
 passing under the hood, so it's safe to call from multiple tasks without manual
 locking.</p>
-<h2>Background jobs (<code>queue.vn</code>)</h2>
+</Section>
+<Section anchor="background-jobs">
+<Heading as="h2" size="2xl">Background jobs (<code>queue.vn</code>)</Heading>
 <pre><code class="language-varian">// Cron: runs `handler` every `interval_ms`, forever
 cron(200, || { print(&quot;tick&quot;) })
 
@@ -256,45 +258,44 @@ pool.submit(|| { print(&quot;processing job&quot;) })
 <p><code>WorkerPool.submit()</code> is backed by a buffered channel, so it already has backpressure
 for free (see Channels above) — submitting beyond the buffer's capacity just makes the
 submitting task yield until a worker frees up space, it does not drop or error.</p>
+</Section>
     </main>
   </div>
-  <footer class="footer-main">
-    <div class="container">
-      <div class="footer-grid">
-        <div class="footer-col">
-          <h4>Product</h4>
-          <ul>
-            <li><a href="/aurora">Aurora</a></li>
-            <li><a href="/zenith">Zenith</a></li>
-            <li><a href="/lumen">Lumen</a></li>
-            <li><a href="/kiln">Kiln</a></li>
-            <li><a href="/constellation">Constellation</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Learn</h4>
-          <ul>
-            <li><a href="/the_varian_book">The Book</a></li>
-            <li><a href="/language">Language Spec</a></li>
-            <li><a href="/stdlib">Standard Library</a></li>
-            <li><a href="/tooling">Tooling</a></li>
-            <li><a href="/security">Security</a></li>
-          </ul>
-        </div>
-        <div class="footer-col">
-          <h4>Community</h4>
-          <ul>
-            <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
-            <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
-          </ul>
-        </div>
+  <Footer>
+    <div class="footer-grid">
+      <div class="footer-col">
+        <h4>Product</h4>
+        <ul>
+          <li><a href="/aurora">Aurora</a></li>
+          <li><a href="/zenith">Zenith</a></li>
+          <li><a href="/lumen">Lumen</a></li>
+          <li><a href="/kiln">Kiln</a></li>
+          <li><a href="/constellation">Constellation</a></li>
+        </ul>
       </div>
-      <div class="footer-bottom">
-        &copy; 2026 VarianLang. Built with Aurora.
+      <div class="footer-col">
+        <h4>Learn</h4>
+        <ul>
+          <li><a href="/the_varian_book">The Book</a></li>
+          <li><a href="/language">Language Spec</a></li>
+          <li><a href="/stdlib">Standard Library</a></li>
+          <li><a href="/tooling">Tooling</a></li>
+          <li><a href="/security">Security</a></li>
+        </ul>
+      </div>
+      <div class="footer-col">
+        <h4>Community</h4>
+        <ul>
+          <li><a href="https://github.com/Chidi09/VarianLang">GitHub</a></li>
+          <li><a href="https://github.com/Chidi09/VarianLang/issues">Issues</a></li>
+          <li><a href="https://github.com/Chidi09/VarianLang/pulls">Pull Requests</a></li>
+        </ul>
       </div>
     </div>
-  </footer>
+    <div class="footer-bottom">
+      &copy; 2026 VarianLang. Built with Aurora.
+    </div>
+  </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -312,6 +313,7 @@ submitting task yield until a worker frees up space, it does not drop or error.<
     });
   }
 </script>
+</Page>
 </body>
 </html>
 </template>

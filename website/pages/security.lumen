@@ -143,11 +143,8 @@
 </style>
 </head>
 <body>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
+  <Page>
+    <Nav brand="Varian">
     <div class="nav-links">
         <a href="/#language">Language</a>
         <a href="/#ecosystem">Ecosystem</a>
@@ -157,7 +154,7 @@
         <a href="/the_varian_book">The Book</a>
         <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
       </div>
-  </nav>
+    </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -179,10 +176,10 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Security</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><Heading size="4xl" as="h1">Security</Heading><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <p>This document describes Varian/Zenith's security posture: what it defends against, what
 it does <strong>not</strong>, and how to build and write apps so they are hard to attack.</p>
-<h2>Threat models</h2>
+<Heading size="2xl" as="h2">Threat models</Heading>
 <table>
 <thead>
 <tr>
@@ -209,7 +206,7 @@ it does <strong>not</strong>, and how to build and write apps so they are hard t
 </tr>
 </tbody>
 </table>
-<h2>Sandboxing — running untrusted <code>.vn</code> is not safe</h2>
+<Heading size="2xl" as="h2">Sandboxing — running untrusted <code>.vn</code> is not safe</Heading>
 <p>Varian is <strong>not</strong> a sandbox. A <code>.vn</code> program is fully trusted and can take over the host
 by design:</p>
 <ul>
@@ -222,7 +219,7 @@ by design:</p>
 "run user-submitted code" service on the current runtime. A restricted execution mode
 (FFI/Python/IO disabled + CPU/memory/wall-clock quotas) would be required first and does
 not exist yet.</p>
-<h2>Memory safety of the interpreter</h2>
+<Heading size="2xl" as="h2">Memory safety of the interpreter</Heading>
 <p>The VM is written in C, so a missing bounds check is the highest-severity (RCE) risk. The
 hot paths have been audited:</p>
 <ul>
@@ -235,7 +232,7 @@ hot paths have been audited:</p>
 </ul>
 <p>When changing C code, re-run <code>make asan &amp;&amp; ASAN_OPTIONS=detect_leaks=0 ./vn test tests/</code>
 before committing. Prefer <code>snprintf</code>/explicit length clamps over fixed-buffer <code>memcpy</code>.</p>
-<h2>Hardened build</h2>
+<Heading size="2xl" as="h2">Hardened build</Heading>
 <p>Ship the <code>make release</code> binary, never the <code>-g</code> debug build. It enables:</p>
 <ul>
 <li><code>_FORTIFY_SOURCE=2</code> — libc buffer-overflow checks (needs <code>-O</code>, hence release-only).</li>
@@ -246,7 +243,7 @@ before committing. Prefer <code>snprintf</code>/explicit length clamps over fixe
 </ul>
 <p>Verify with <code>readelf -d vn | grep BIND_NOW</code>, <code>readelf -l vn | grep GNU_STACK</code>, and
 <code>file vn</code> (should report <code>pie executable</code>).</p>
-<h2>Built-in application defenses</h2>
+<Heading size="2xl" as="h2">Built-in application defenses</Heading>
 <ul>
 <li><strong><code>auth</code></strong> — <code>sign_jwt</code>/<code>verify_jwt</code>, <code>hash_password</code>/<code>verify_password</code>,
   <code>generate_token</code>, and <code>constant_time_eq</code> (use it for any secret comparison to avoid
@@ -264,13 +261,12 @@ before committing. Prefer <code>snprintf</code>/explicit length clamps over fixe
   into SQL. <code>vn lint --only security</code> flags concatenated SQL and hardcoded secrets.</li>
 <li><strong>SMTP header-injection guard</strong> — <code>smtp.send</code> rejects CR/LF in <code>from</code>/<code>to</code>/<code>subject</code>.</li>
 </ul>
-<h2>Reporting</h2>
+<Heading size="2xl" as="h2">Reporting</Heading>
 <p>This is a young runtime; audits are ongoing. Treat the sandboxing limitation above as the
 single most important caveat when deploying.</p>
     </main>
   </div>
-  <footer class="footer-main">
-    <div class="container">
+    <Footer>
       <div class="footer-grid">
         <div class="footer-col">
           <h4>Product</h4>
@@ -304,8 +300,7 @@ single most important caveat when deploying.</p>
       <div class="footer-bottom">
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
-    </div>
-  </footer>
+    </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -323,6 +318,7 @@ single most important caveat when deploying.</p>
     });
   }
 </script>
+  </Page>
 </body>
 </html>
 </template>

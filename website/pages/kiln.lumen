@@ -143,21 +143,16 @@
 </style>
 </head>
 <body class="theme-kiln">
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-      <a href="/#language">Language</a>
-      <a href="/#ecosystem">Ecosystem</a>
-      <a href="/aurora">Aurora</a>
-      <a href="/zenith">Zenith</a>
-      <a href="/lumen">Lumen</a>
-      <a href="/the_varian_book">The Book</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-    </div>
-  </nav>
+<Page>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -186,8 +181,8 @@
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Kiln — The Varian Build Tool</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <p><strong>Kiln fires raw Varian into a hardened, shippable artifact.</strong></p>
 <p>Kiln is the unified compilation and build orchestrator for Varian applications. It reads project settings from <code>constellation.toml</code>, resolves dependency graphs offline using <code>constellation.lock</code>, and bundles application logic and assets into single-file deliverables.</p>
-<hr />
-<h2>1. Zero-Config Build Philosophy</h2>
+<Divider/>
+<Heading as="h2" size="2xl">1. Zero-Config Build Philosophy</Heading>
 <p>Kiln eliminates build configuration file sprawl (such as webpack, vite, or tsconfig files) by standardizing on sensible defaults.
 * <strong>Auto-Discovery</strong>: If a <code>pages/</code> directory exists, Kiln enters Lumen framework mode, compiling pages into routes.
 * <strong>Asset Embedding</strong>: The <code>public/</code> directory (static assets, icons, fonts) is automatically embedded directly inside the output bundle or binary.
@@ -208,14 +203,14 @@
    - Embedded public/ assets        - Linked against libvarian.a
    - Immediate startup              - Standalone binary execution
 </code></pre>
-<hr />
-<h2>2. Compilation Backends</h2>
-<h3>Backend A: Portable Bytecode Bundle (<code>vn build</code>)</h3>
+<Divider/>
+<Heading as="h2" size="2xl">2. Compilation Backends</Heading>
+<Heading as="h3" size="lg">Backend A: Portable Bytecode Bundle (<code>vn build</code>)</Heading>
 <p>This is the default output backend, producing a single <code>app.vnb</code> bytecode container:
 * <strong>The <code>.vnb</code> Format</strong>: Contains a versioned header (specifying language ABI and VM version gates), serialized function chunks (bytecode instruction vectors and constant pools), a string table, and embedded assets.
 * <strong>Startup Performance</strong>: When executing <code>vn app.vnb</code>, the VM skips lexing, parsing, and bytecode generation entirely, reading bytecode arrays straight into execution structures.
 * <strong>Compatibility Gate</strong>: A <code>.vnb</code> bundle compiled by an incompatible Varian VM version is caught at the header level and rejected, preventing unsafe execution or memory corruption.</p>
-<h3>Backend B: Standalone Native Binary (<code>vn build --release</code>)</h3>
+<Heading as="h3" size="lg">Backend B: Standalone Native Binary (<code>vn build --release</code>)</Heading>
 <p>This backend produces a compiled, optimized native executable for the target machine:
 1. <strong>AOT C Generation</strong>: Drives <code>aot_compile()</code> (from <code>src/aot.c</code>) to turn Varian source code into equivalent native C structures representing Varian execution logic.
 2. <strong>Harness Generation</strong>: Emits a <code>main()</code> C harness that sets up the Varian runtime, instantiates the VM, loads the AOT function table (<code>varian_aot_load(vm)</code>), and executes the entry point.
@@ -226,8 +221,8 @@
    - <code>--target=&lt;triple&gt;</code>: Passes the <code>-target &lt;triple&gt;</code> flag to the C compiler, allowing for cross-compilation when used with a compatible compiler (like clang or zig cc).
    - <code>--cc=&lt;compiler&gt;</code>: Overrides the C compiler executable (e.g., <code>--cc=zig cc</code> or <code>--cc=aarch64-linux-gnu-gcc</code>). Alternatively, use the <code>$CC</code> environment variable.
 5. <strong>Embedded Assets</strong>: Embeds assets directly in the binary layout so the application runs standalone.</p>
-<hr />
-<h2>3. Incremental Build Caching</h2>
+<Divider/>
+<Heading as="h2" size="2xl">3. Incremental Build Caching</Heading>
 <p>To ensure rapid compilation, Kiln maintains a content-addressed build cache under <code>.kiln/cache/</code>:
 * <strong>Cache Keys</strong>: Built from the combined FNV-1a hash of:
   - The literal bytes of the Varian source code.
@@ -235,8 +230,8 @@
   - The bytes of all embedded assets found in the <code>public/</code> directory.
 * <strong>Unchanged Modules</strong>: If the computed 64-bit hash matches an existing file in <code>.kiln/cache/</code>, Kiln bypasses the entire parser and compiler, immediately copying the cached artifact to the output destination. This reduces repeated compilation times of large projects from seconds to milliseconds.
 * <strong>Reproducibility</strong>: The cache is purely a speed optimization. If you delete <code>.kiln/</code>, or run the build on a completely fresh machine (assuming the same <code>constellation.lock</code> and source files), Kiln is mathematically guaranteed to yield a byte-for-byte identical output artifact.</p>
-<hr />
-<h2>4. Lumen Framework Integration</h2>
+<Divider/>
+<Heading as="h2" size="2xl">4. Lumen Framework Integration</Heading>
 <p>Kiln is deeply aware of <strong>Lumen</strong>, Varian's web framework. If Kiln detects a <code>pages/</code> directory in the current working directory, it automatically shifts into "Lumen App Mode".</p>
 <ol>
 <li><strong>Pre-compilation of Routes</strong>: Kiln triggers <code>lumen_build()</code>, which traverses the <code>pages/</code> directory and transpiles the <code>.lumen</code> HTML/Varian templates into pure Varian functions (<code>.lumen-build.vn</code>).</li>
@@ -245,7 +240,7 @@
 </ol>
     </main>
   </div>
-  <footer class="footer-main">
+  <Footer>
     <div class="container">
       <div class="footer-grid">
         <div class="footer-col">
@@ -281,7 +276,7 @@
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
     </div>
-  </footer>
+  </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -299,6 +294,7 @@
     });
   }
 </script>
+</Page>
 </body>
 </html>
 </template>

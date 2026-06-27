@@ -154,21 +154,16 @@
 </style>
 </head>
 <body class="theme-zenith">
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-      <a href="/#language">Language</a>
-      <a href="/#ecosystem">Ecosystem</a>
-      <a href="/aurora">Aurora</a>
-      <a href="/zenith">Zenith</a>
-      <a href="/lumen">Lumen</a>
-      <a href="/the_varian_book">The Book</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-    </div>
-  </nav>
+  <Page>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -210,75 +205,34 @@
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Zenith?</h2>
 <p>Zenith's pitch is not "fastest raw throughput" (Go and Rust win there). It's <strong>everything a real web app needs, built in, secure by default, in one binary, with zero dependency tree.</strong></p>
 
-<div style="background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-xl);padding:var(--space-6);margin:var(--space-6) 0;">
-  <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-6);font-size:var(--text-sm);">
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">inventory_2</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Batteries included</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">SQLite, Postgres and Redis drivers, JWT auth, password hashing, request validation, HTML templates, signed sessions, OpenAPI docs — all built in. No <code>node_modules</code>, no supply-chain to audit.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">flash_on</span>
-        <h4 style="margin:0;font-size:var(--text-base);">No imports, no wiring</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Write <code>new_app()</code> and <code>app.get(...)</code> — no <code>require</code>, no plugin registration, no <code>app.use(...)</code> ceremony. Everything is automatically in scope.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">shield</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Secure by default</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Templates HTML-escape by default. Session cookies are <code>HttpOnly; SameSite=Lax</code> and JWT-signed. DB drivers use bound parameters. No opt-in required.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">neurology</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Comptime ORM</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Query shapes are built at compile time — SQL strings are checked and baked into the binary before your program ever runs. <code>bind()</code> throws on param count mismatch.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">description</span>
-        <h4 style="margin:0;font-size:var(--text-base);">OpenAPI for free</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">The <code>summary</code> you pass to each route feeds a generated OpenAPI spec. No decorator soup, no separate spec file to keep in sync.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">package_2</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Deploys as one binary</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;"><code>vn build --release</code> produces a single hardened executable. No runtime to install, no lockfile to reconcile, no "works on my machine."</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">track_changes</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Multi-core out the box</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Clusters across threads with independent VMs, SIMD parsing, <code>writev</code> single-syscall responses, and a per-request arena that skips GC entirely.</p>
-    </div>
-
-    <div>
-      <div style="display:flex;align-items:center;gap:var(--space-2);margin-bottom:var(--space-2);">
-        <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">code</span>
-        <h4 style="margin:0;font-size:var(--text-base);">Python escape hatch</h4>
-      </div>
-      <p style="color:var(--text-secondary);line-height:1.6;">Anything not built in (S3, niche SDKs) is one <code>python.run()</code> call away. "Batteries included" never becomes "stuck when you need something exotic."</p>
-    </div>
-
-  </div>
-</div>
+<Card>
+  <Grid cols="2" gap="6">
+    <Feature icon="inventory_2" title="Batteries included">
+      SQLite, Postgres and Redis drivers, JWT auth, password hashing, request validation, HTML templates, signed sessions, OpenAPI docs — all built in. No <code>node_modules</code>, no supply-chain to audit.
+    </Feature>
+    <Feature icon="flash_on" title="No imports, no wiring">
+      Write <code>new_app()</code> and <code>app.get(...)</code> — no <code>require</code>, no plugin registration, no <code>app.use(...)</code> ceremony. Everything is automatically in scope.
+    </Feature>
+    <Feature icon="shield" title="Secure by default">
+      Templates HTML-escape by default. Session cookies are <code>HttpOnly; SameSite=Lax</code> and JWT-signed. DB drivers use bound parameters. No opt-in required.
+    </Feature>
+    <Feature icon="neurology" title="Comptime ORM">
+      Query shapes are built at compile time — SQL strings are checked and baked into the binary before your program ever runs. <code>bind()</code> throws on param count mismatch.
+    </Feature>
+    <Feature icon="description" title="OpenAPI for free">
+      The <code>summary</code> you pass to each route feeds a generated OpenAPI spec. No decorator soup, no separate spec file to keep in sync.
+    </Feature>
+    <Feature icon="package_2" title="Deploys as one binary">
+      <code>vn build --release</code> produces a single hardened executable. No runtime to install, no lockfile to reconcile, no "works on my machine."
+    </Feature>
+    <Feature icon="track_changes" title="Multi-core out the box">
+      Clusters across threads with independent VMs, SIMD parsing, <code>writev</code> single-syscall responses, and a per-request arena that skips GC entirely.
+    </Feature>
+    <Feature icon="code" title="Python escape hatch">
+      Anything not built in (S3, niche SDKs) is one <code>python.run()</code> call away. "Batteries included" never becomes "stuck when you need something exotic."
+    </Feature>
+  </Grid>
+</Card>
 
 <!-- ============ QUICK START ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">play_arrow</span> Quick start</h2>
@@ -293,10 +247,9 @@ app.<span class="token-function">get</span>(<span class="token-string">"/"</span
 app.<span class="token-function">listen</span>(<span class="token-number">8080</span>)</pre></div>
 </div>
 
-<div style="background:color-mix(in srgb, var(--accent) 8%, transparent);border:1px solid color-mix(in srgb, var(--accent) 20%, transparent);border-radius:var(--radius-lg);padding:var(--space-4);margin-bottom:var(--space-6);display:flex;align-items:flex-start;gap:var(--space-3);">
-  <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">terminal</span>
-  <div><strong style="color:var(--text-primary);">Run it:</strong> <code style="background:var(--bg-main);padding:2px 8px;border-radius:4px;">./vn run server.vn</code> — then open <code>http://localhost:8080</code></div>
-</div>
+<Alert tone="info" icon="terminal">
+  <strong style="color:var(--text-primary);">Run it:</strong> <code style="background:var(--bg-main);padding:2px 8px;border-radius:4px;">./vn run server.vn</code> — then open <code>http://localhost:8080</code>
+</Alert>
 
 <!-- ============ BUILDING AN APP ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">construction</span> Building an app</h2>
@@ -681,7 +634,7 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
 
     </main>
   </div>
-  <footer class="footer-main">
+  <Footer>
     <div class="container">
       <div class="footer-grid">
         <div class="footer-col">
@@ -717,7 +670,7 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
     </div>
-  </footer>
+  </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -735,6 +688,7 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
     });
   }
 </script>
+  </Page>
 </body>
 </html>
 </template>

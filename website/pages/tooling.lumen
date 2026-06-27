@@ -143,21 +143,16 @@
 </style>
 </head>
 <body>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-        <a href="/#language">Language</a>
-        <a href="/#ecosystem">Ecosystem</a>
-        <a href="/aurora">Aurora</a>
-        <a href="/zenith">Zenith</a>
-        <a href="/lumen">Lumen</a>
-        <a href="/the_varian_book">The Book</a>
-        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-      </div>
-  </nav>
+  <Page>
+  <Nav brand="Varian">
+    <a href="/#language">Language</a>
+    <a href="/#ecosystem">Ecosystem</a>
+    <a href="/aurora">Aurora</a>
+    <a href="/zenith">Zenith</a>
+    <a href="/lumen">Lumen</a>
+    <a href="/the_varian_book">The Book</a>
+    <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -179,7 +174,7 @@
     </aside>
     
     <main class="docs-content markdown-body">
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><h1 style="margin:0;">Tooling — the <code>vn</code> CLI</h1><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
+<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-4);"><Heading as="h1" size="4xl">Tooling — the <code>vn</code> CLI</Heading><a href="#" onclick="window.print();return false;" style="display:inline-flex;align-items:center;gap:var(--space-1);padding:var(--space-1) var(--space-3);border:1px solid var(--border-subtle);border-radius:var(--radius-full);font-size:var(--text-xs);color:var(--text-secondary);text-decoration:none;white-space:nowrap;flex-shrink:0;"><span class="material-symbols-outlined" style="font-size:14px;">download</span> Download page</a></div>
 <pre><code>vn                  Start interactive REPL
 vn run &lt;file&gt;        Execute a Varian script
 vn &lt;file&gt;            Same as `vn run &lt;file&gt;` (back-compat shorthand)
@@ -190,54 +185,54 @@ vn add &lt;pkg&gt;          Record a dependency in varian.pkg
 vn wrap &lt;target&gt;      Generate a Varian wrapper for a foreign library
 vn --help             Show usage
 </code></pre>
-<p>Debug environment variables: <code>VN_DEBUG_AST=1</code> prints the parsed AST before compilation;
-<code>VN_DEBUG_BYTECODE=1</code> prints the compiled bytecode disassembly.</p>
-<h2>Module loading: there is no <code>import</code></h2>
-<p><code>vn run &lt;file&gt;</code> (and the bare <code>vn &lt;file&gt;</code> form) automatically reads every <code>.vn</code> file in
+<Text>Debug environment variables: <code>VN_DEBUG_AST=1</code> prints the parsed AST before compilation;
+<code>VN_DEBUG_BYTECODE=1</code> prints the compiled bytecode disassembly.</Text>
+<Heading as="h2" size="2xl">Module loading: there is no <code>import</code></Heading>
+<Text><code>vn run &lt;file&gt;</code> (and the bare <code>vn &lt;file&gt;</code> form) automatically reads every <code>.vn</code> file in
 <code>vn_modules/</code> (if that directory exists in the current working directory) and
 concatenates them as a prelude <em>before</em> your file's source, then compiles the combined
 source as one program. There is no <code>import</code>/<code>use</code> keyword in the lexer at all — Zenith,
 the comptime ORM, and <code>queue.vn</code>'s helpers are simply always in scope as long as
-<code>vn_modules/</code> is present next to where you run <code>vn</code> from.</p>
-<h2><code>vn run</code> / bare file</h2>
+<code>vn_modules/</code> is present next to where you run <code>vn</code> from.</Text>
+<Heading as="h2" size="2xl"><code>vn run</code> / bare file</Heading>
 <pre><code>vn run examples/zenith_app_test.vn
 vn examples/zenith_app_test.vn      // identical
 </code></pre>
-<h2><code>vn fmt</code></h2>
-<p>Formats a file in place. Implemented as a separate comment-preserving re-lexer
+<Heading as="h2" size="2xl"><code>vn fmt</code></Heading>
+<Text>Formats a file in place. Implemented as a separate comment-preserving re-lexer
 (<code>src/fmt.c</code>) — distinct from the parser used by <code>lint</code>/<code>test</code>/<code>run</code>, since formatting
-needs to round-trip whitespace/comments that the AST throws away.</p>
-<h2><code>vn test</code></h2>
+needs to round-trip whitespace/comments that the AST throws away.</Text>
+<Heading as="h2" size="2xl"><code>vn test</code></Heading>
 <pre><code>vn test tests/
 </code></pre>
-<p>Walks a directory for <code>.vn</code> files and runs each as a test file. Inside a test file, use
+<Text>Walks a directory for <code>.vn</code> files and runs each as a test file. Inside a test file, use
 <code>test "description" { ... }</code> blocks (see <code>examples/</code> and <code>tests/</code> for real examples) with
 the assertion globals <code>assert_eq(a, b)</code>, <code>assert_ne(a, b)</code>, <code>assert_throws(fn)</code> — all
 ordinary globals, not a module. On failure, the actual error message (not just the test
 description) is printed indented under the <code>❌ FAIL</code> line, so you don't have to re-run
-under a debugger to see why something failed.</p>
-<p><code>--filter &lt;substr&gt;</code> runs only tests whose description contains <code>&lt;substr&gt;</code>. <code>--timeout
+under a debugger to see why something failed.</Text>
+<Text><code>--filter &lt;substr&gt;</code> runs only tests whose description contains <code>&lt;substr&gt;</code>. <code>--timeout
 &lt;secs&gt;</code> (fractional seconds allowed) caps each individual test; a test exceeding it is
 killed at the next loop back-edge, marked <code>⏱️ TIMEOUT</code>, and counted as a failure without
 hanging the rest of the run. The summary line reports <code>X passed, Y failed (Z timed out),
-W skipped</code>.</p>
-<p>Mocking native module functions inside tests:</p>
+W skipped</code>.</Text>
+<Text>Mocking native module functions inside tests:</Text>
 <pre><code class="language-varian">let saved = mock.intercept(&quot;sqlite&quot;, &quot;query&quot;, |conn, sql, params| { return [] })
 // ... test code that calls sqlite.query(...) and gets [] back ...
 mock.restore(&quot;sqlite&quot;, &quot;query&quot;, saved)
 </code></pre>
-<p><code>mock.intercept(type_name, method_name, fake_fn)</code> swaps in <code>fake_fn</code> for any
+<Text><code>mock.intercept(type_name, method_name, fake_fn)</code> swaps in <code>fake_fn</code> for any
 (type, method) dispatch pair — the same dispatch table every native module
 (<code>sqlite</code>, <code>redis</code>, <code>string</code>, etc.) is built on — and returns whatever was previously
-bound there, so <code>mock.restore(type_name, method_name, saved)</code> can put it back exactly.</p>
-<h2><code>vn lint</code></h2>
+bound there, so <code>mock.restore(type_name, method_name, saved)</code> can put it back exactly.</Text>
+<Heading as="h2" size="2xl"><code>vn lint</code></Heading>
 <pre><code>vn lint examples/
 vn lint src/foo.vn --only security
 vn lint . --format json
 </code></pre>
-<p>AST-walking static analysis (not the <code>fmt.c</code> tokenizer — a real parse tree walk, the same
+<Text>AST-walking static analysis (not the <code>fmt.c</code> tokenizer — a real parse tree walk, the same
 pipeline <code>vn run</code>/<code>vn test</code> use). Output is one line per finding:
-<code>path:line: [category] message</code>. Categories:</p>
+<code>path:line: [category] message</code>. Categories:</Text>
 <ul>
 <li><strong>correctness</strong>: unreachable code (any statement after <code>return</code>/<code>break</code>/<code>continue</code>/
   <code>throw(...)</code> in the same block), unused <code>let</code> bindings, shadowed bindings (a <code>let</code> name
@@ -250,70 +245,70 @@ pipeline <code>vn run</code>/<code>vn test</code> use). Output is one line per f
   <code>for</code>/<code>while</code> body), SQL containing <code>SELECT</code> passed as a query argument with no
   <code>LIMIT</code> clause.</li>
 </ul>
-<p><code>--only &lt;category&gt;</code> filters to one category; <code>--format json</code> emits machine-readable
-output instead of the plain-text lines above.</p>
-<h2>Package Management &amp; Registry (<code>vn add</code>, <code>vn remove</code>, <code>vn install</code>, <code>vn update</code>, <code>vn search</code>)</h2>
-<p>For detailed information on Varian's package registry architecture, transitive resolution, capabilities, and version ranges, see <strong><a href="file:///root/dev/VarianLang/docs/CONSTELLATION.md">Constellation Documentation</a></strong>.</p>
+<Text><code>--only &lt;category&gt;</code> filters to one category; <code>--format json</code> emits machine-readable
+output instead of the plain-text lines above.</Text>
+<Heading as="h2" size="2xl">Package Management &amp; Registry (<code>vn add</code>, <code>vn remove</code>, <code>vn install</code>, <code>vn update</code>, <code>vn search</code>)</Heading>
+<Text>For detailed information on Varian's package registry architecture, transitive resolution, capabilities, and version ranges, see <strong><a href="file:///root/dev/VarianLang/docs/CONSTELLATION.md">Constellation Documentation</a></strong>.</Text>
 <ul>
 <li>
-<p><strong>Add a package dependency</strong>:
+<Text><strong>Add a package dependency</strong>:
   <code>vn add &lt;pkg_name&gt;</code>
-  Appends <code>&lt;pkg_name&gt; = "latest"</code> to <code>constellation.toml</code> (initializing a new manifest if missing).</p>
+  Appends <code>&lt;pkg_name&gt; = "latest"</code> to <code>constellation.toml</code> (initializing a new manifest if missing).</Text>
 </li>
 <li>
-<p><strong>Remove a dependency</strong>:
+<Text><strong>Remove a dependency</strong>:
   <code>vn remove &lt;pkg_name&gt;</code>
-  Removes the package from the manifest, prunes its directory and any unused transitive dependencies under <code>vn_modules/</code>, and updates the lockfile.</p>
+  Removes the package from the manifest, prunes its directory and any unused transitive dependencies under <code>vn_modules/</code>, and updates the lockfile.</Text>
 </li>
 <li>
-<p><strong>Install dependencies</strong>:
+<Text><strong>Install dependencies</strong>:
   <code>vn install [--frozen]</code>
-  Fetches direct Git and index-resolved dependencies recursively, extracts them to <code>vn_modules/</code>, and writes the <code>constellation.lock</code> file. The <code>--frozen</code> flag prevents index updates and fails if the lockfile is out of sync.</p>
+  Fetches direct Git and index-resolved dependencies recursively, extracts them to <code>vn_modules/</code>, and writes the <code>constellation.lock</code> file. The <code>--frozen</code> flag prevents index updates and fails if the lockfile is out of sync.</Text>
 </li>
 <li>
-<p><strong>Update dependencies</strong>:
+<Text><strong>Update dependencies</strong>:
   <code>vn update</code>
-  Forces fresh queries to Git/registry index to re-resolve matching versions, computes updated SHA-256 integrity hashes, and rewrites the lockfile.</p>
+  Forces fresh queries to Git/registry index to re-resolve matching versions, computes updated SHA-256 integrity hashes, and rewrites the lockfile.</Text>
 </li>
 <li>
-<p><strong>Search registry</strong>:
+<Text><strong>Search registry</strong>:
   <code>vn search &lt;query&gt;</code>
-  Queries the registry index for packages matching <code>&lt;query&gt;</code> (or <code>"*"</code> for all) and lists their registered versions.</p>
+  Queries the registry index for packages matching <code>&lt;query&gt;</code> (or <code>"*"</code> for all) and lists their registered versions.</Text>
 </li>
 <li>
-<p><strong>Wrapping foreign libraries</strong>:
+<Text><strong>Wrapping foreign libraries</strong>:
   <code>vn wrap python:requests</code>
-  Introspects a Python module and writes <code>vn_modules/&lt;module&gt;.vn</code> wrapper functions calling <code>python.run(module, fn, args)</code> (see <strong><a href="file:///root/dev/VarianLang/docs/STDLIB.md">Standard Library Docs</a></strong>).</p>
+  Introspects a Python module and writes <code>vn_modules/&lt;module&gt;.vn</code> wrapper functions calling <code>python.run(module, fn, args)</code> (see <strong><a href="file:///root/dev/VarianLang/docs/STDLIB.md">Standard Library Docs</a></strong>).</Text>
 </li>
 </ul>
-<h2>Build Orchestration (Kiln — <code>vn build</code>)</h2>
-<p>Varian applications are assembled and compiled using Kiln. For detailed information on bytecode container formats, native AOT compile harnesses, and compilation caching, see <strong><a href="file:///root/dev/VarianLang/docs/KILN.md">Kiln Documentation</a></strong>.</p>
+<Heading as="h2" size="2xl">Build Orchestration (Kiln — <code>vn build</code>)</Heading>
+<Text>Varian applications are assembled and compiled using Kiln. For detailed information on bytecode container formats, native AOT compile harnesses, and compilation caching, see <strong><a href="file:///root/dev/VarianLang/docs/KILN.md">Kiln Documentation</a></strong>.</Text>
 <ul>
 <li>
-<p><strong>Build a portable bytecode bundle</strong>:
+<Text><strong>Build a portable bytecode bundle</strong>:
   <code>vn build</code>
-  Assembles all source files and compiles them into a fast, portable <code>app.vnb</code> bytecode container (executable directly via <code>vn app.vnb</code>).</p>
+  Assembles all source files and compiles them into a fast, portable <code>app.vnb</code> bytecode container (executable directly via <code>vn app.vnb</code>).</Text>
 </li>
 <li>
-<p><strong>Build a native standalone binary</strong>:
+<Text><strong>Build a native standalone binary</strong>:
   <code>vn build --release</code>
-  Compiles Varian code directly to optimized C via AOT, compiles it with the host compiler, and links it against <code>libvarian.a</code> to produce a standalone executable binary.</p>
+  Compiles Varian code directly to optimized C via AOT, compiles it with the host compiler, and links it against <code>libvarian.a</code> to produce a standalone executable binary.</Text>
 </li>
 </ul>
-<h2>Building from source</h2>
+<Heading as="h2" size="2xl">Building from source</Heading>
 <pre><code>make            # default: -g debug build, fast to rebuild — use while developing
 make release    # -O2 hardened build to ship/benchmark (see docs/SECURITY.md)
 make asan       # AddressSanitizer + UBSan build, for finding memory bugs
 make clean
 </code></pre>
-<p><code>make release</code> enables <code>_FORTIFY_SOURCE=2</code>, stack-protector/-clash protection, full
+<Text><code>make release</code> enables <code>_FORTIFY_SOURCE=2</code>, stack-protector/-clash protection, full
 RELRO + immediate binding, a non-executable stack, and a position-independent executable
 (ASLR). <code>make asan</code> builds with <code>-fsanitize=address,undefined</code>; run the suite under it
 with <code>ASAN_OPTIONS=detect_leaks=0 ./vn test tests/</code> to catch overflows and UB. Both do a
-<code>clean</code> first so object files aren't mixed between flag sets.</p>
+<code>clean</code> first so object files aren't mixed between flag sets.</Text>
     </main>
   </div>
-  <footer class="footer-main">
+  <Footer>
     <div class="container">
       <div class="footer-grid">
         <div class="footer-col">
@@ -349,7 +344,8 @@ with <code>ASAN_OPTIONS=detect_leaks=0 ./vn test tests/</code> to catch overflow
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
     </div>
-  </footer>
+  </Footer>
+  </Page>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
