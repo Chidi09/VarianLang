@@ -72,6 +72,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_MATCH: return "TOKEN_MATCH";
         case TOKEN_CASE: return "TOKEN_CASE";
         case TOKEN_STRUCT: return "TOKEN_STRUCT";
+        case TOKEN_SCHEMA: return "TOKEN_SCHEMA";
         case TOKEN_ENUM: return "TOKEN_ENUM";
         case TOKEN_ACTOR: return "TOKEN_ACTOR";
         case TOKEN_IMPL: return "TOKEN_IMPL";
@@ -125,6 +126,7 @@ static KeywordEntry keywords[] = {
     {"match",  TOKEN_MATCH},
     {"case",   TOKEN_CASE},
     {"struct", TOKEN_STRUCT},
+    {"schema", TOKEN_SCHEMA},
     {"enum",   TOKEN_ENUM},
     {"actor",  TOKEN_ACTOR},
     {"impl",   TOKEN_IMPL},

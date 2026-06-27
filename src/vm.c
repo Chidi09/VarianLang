@@ -14,6 +14,7 @@
 
 
 
+
 /* ─── Forward declarations ─── */
 static void compile_node(Compiler *compiler, AstNode *node);
 Value *vm_find_dispatch(VM *vm, const char *type_name, const char *method_name);
@@ -1544,6 +1545,54 @@ static int function_return_count(Type *type) {
     return 1;
 }
 
+static int vm_type_to_str(Type *t, char *buf, int cap) {
+    if (!t) return snprintf(buf, cap, "any");
+    switch (t->kind) {
+    case TYPE_PRIMITIVE: {
+        const char *names[] = {
+            [PRIMITIVE_BOOL] = "bool", [PRIMITIVE_INT] = "int",
+            [PRIMITIVE_FLOAT] = "float", [PRIMITIVE_STRING] = "string",
+            [PRIMITIVE_BYTE] = "byte", [PRIMITIVE_VOID] = "void",
+            [PRIMITIVE_PTR] = "ptr", [PRIMITIVE_C_INT] = "c_int",
+            [PRIMITIVE_C_DOUBLE] = "c_double", [PRIMITIVE_C_FLOAT] = "c_float",
+            [PRIMITIVE_C_CHAR] = "c_char",
+        };
+        if ((int)t->primitive < (int)(sizeof(names)/sizeof(names[0])) && names[t->primitive])
+            return snprintf(buf, cap, "%s", names[t->primitive]);
+        return snprintf(buf, cap, "primitive");
+    }
+    case TYPE_NAMED:
+        return snprintf(buf, cap, "%s", t->named.name);
+    case TYPE_ARRAY: {
+        char elem[64];
+        vm_type_to_str(t->array.element_type, elem, sizeof(elem));
+        return snprintf(buf, cap, "[%s]", elem);
+    }
+    case TYPE_TUPLE: {
+        int pos = snprintf(buf, cap, "(");
+        for (int i = 0; i < t->tuple.count && pos < cap - 4; i++) {
+            if (i > 0) pos += snprintf(buf + pos, cap - pos, ", ");
+            pos += vm_type_to_str(t->tuple.types[i], buf + pos, cap - pos);
+        }
+        pos += snprintf(buf + pos, cap - pos, ")");
+        return pos;
+    }
+    case TYPE_FUNCTION: {
+        int pos = snprintf(buf, cap, "fn(");
+        for (int i = 0; i < t->function.param_count && pos < cap - 4; i++) {
+            if (i > 0) pos += snprintf(buf + pos, cap - pos, ", ");
+            pos += vm_type_to_str(t->function.param_types[i], buf + pos, cap - pos);
+        }
+        char ret[64];
+        vm_type_to_str(t->function.return_type, ret, sizeof(ret));
+        pos += snprintf(buf + pos, cap - pos, ") -> %s", ret);
+        return pos;
+    }
+    default:
+        return snprintf(buf, cap, "any");
+    }
+}
+
 /* ─── Compilation: Statements ─── */
 static void compile_node(Compiler *compiler, AstNode *node) {
     if (!node) return;
@@ -2242,6 +2291,105 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             break;
         }
 
+        case NODE_SCHEMA_DECL: {
+            /* 1. Register validations runtime-wise just like struct */
+            bool has_validations = (node->schema_decl.decorator_count > 0);
+            if (!has_validations) {
+                for (int i = 0; i < node->schema_decl.field_count; i++) {
+                    if (node->schema_decl.field_decorator_counts &&
+                        node->schema_decl.field_decorator_counts[i] > 0) {
+                        has_validations = true;
+                        break;
+                    }
+                }
+            }
+
+            if (has_validations) {
+                emit_byte(compiler, BC_REGISTER_VALIDATIONS);
+                ObjString *ts = copy_string(node->schema_decl.name, (int)strlen(node->schema_decl.name));
+                int ti = chunk_add_constant(compiler->chunk, val_string(ts));
+                emit_short(compiler, (uint16_t)ti);
+                emit_byte(compiler, (uint8_t)node->schema_decl.decorator_count);
+                for (int i = 0; i < node->schema_decl.decorator_count; i++) {
+                    ObjString *key = copy_string(node->schema_decl.decorator_keys[i], (int)strlen(node->schema_decl.decorator_keys[i]));
+                    int ki = chunk_add_constant(compiler->chunk, val_string(key));
+                    emit_short(compiler, (uint16_t)ki);
+                    Value arg_val = val_bool(true);
+                    if (!decorator_literal_to_value(node->schema_decl.decorator_values[i], &arg_val)) {
+                        compiler_error(compiler, "Decorator arguments must be literal values");
+                    }
+                    int ai = chunk_add_constant(compiler->chunk, arg_val);
+                    emit_short(compiler, (uint16_t)ai);
+                }
+                emit_byte(compiler, (uint8_t)node->schema_decl.field_count);
+                for (int i = 0; i < node->schema_decl.field_count; i++) {
+                    ObjString *fname = copy_string(node->schema_decl.field_names[i], (int)strlen(node->schema_decl.field_names[i]));
+                    int fi = chunk_add_constant(compiler->chunk, val_string(fname));
+                    emit_short(compiler, (uint16_t)fi);
+                    int fcount = node->schema_decl.field_decorator_counts ? node->schema_decl.field_decorator_counts[i] : 0;
+                    emit_byte(compiler, (uint8_t)fcount);
+                    for (int j = 0; j < fcount; j++) {
+                        ObjString *fkey = copy_string(node->schema_decl.field_decorator_keys[i][j], (int)strlen(node->schema_decl.field_decorator_keys[i][j]));
+                        int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
+                        emit_short(compiler, (uint16_t)fki);
+                        Value arg_val = val_bool(true);
+                        if (!decorator_literal_to_value(node->schema_decl.field_decorator_values[i][j], &arg_val)) {
+                            compiler_error(compiler, "Decorator arguments must be literal values");
+                        }
+                        int afi = chunk_add_constant(compiler->chunk, arg_val);
+                        emit_short(compiler, (uint16_t)afi);
+                    }
+                }
+            }
+
+            /* 2. Emit global __schema_metadata_Name struct */
+            ObjString *empty_s = copy_string("", 0);
+            int empty_idx = chunk_add_constant(compiler->chunk, val_string(empty_s));
+
+            for (int i = 0; i < node->schema_decl.field_count; i++) {
+                char tbuf[128];
+                vm_type_to_str(node->schema_decl.field_types[i], tbuf, sizeof(tbuf));
+                ObjString *tstr = copy_string(tbuf, (int)strlen(tbuf));
+                emit_constant(compiler, val_string(tstr));
+
+                int fcount = node->schema_decl.field_decorator_counts ? node->schema_decl.field_decorator_counts[i] : 0;
+                for (int j = 0; j < fcount; j++) {
+                    Value arg_val = val_bool(true);
+                    decorator_literal_to_value(node->schema_decl.field_decorator_values[i][j], &arg_val);
+                    emit_constant(compiler, arg_val);
+                }
+
+                emit_bytes(compiler, BC_STRUCT, (uint8_t)(1 + fcount));
+                emit_short(compiler, (uint16_t)empty_idx);
+
+                ObjString *type_k = copy_string("type", 4);
+                int type_k_idx = chunk_add_constant(compiler->chunk, val_string(type_k));
+                emit_short(compiler, (uint16_t)type_k_idx);
+
+                for (int j = 0; j < fcount; j++) {
+                    ObjString *fkey = copy_string(node->schema_decl.field_decorator_keys[i][j], (int)strlen(node->schema_decl.field_decorator_keys[i][j]));
+                    int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
+                    emit_short(compiler, (uint16_t)fki);
+                }
+            }
+
+            emit_bytes(compiler, BC_STRUCT, (uint8_t)node->schema_decl.field_count);
+            emit_short(compiler, (uint16_t)empty_idx);
+            for (int i = 0; i < node->schema_decl.field_count; i++) {
+                ObjString *fkey = copy_string(node->schema_decl.field_names[i], (int)strlen(node->schema_decl.field_names[i]));
+                int fki = chunk_add_constant(compiler->chunk, val_string(fkey));
+                emit_short(compiler, (uint16_t)fki);
+            }
+
+            char var_name[256];
+            snprintf(var_name, sizeof(var_name), "__schema_metadata_%s", node->schema_decl.name);
+            emit_byte(compiler, BC_DEFINE_GLOBAL);
+            ObjString *var_s = copy_string(var_name, (int)strlen(var_name));
+            int var_idx = chunk_add_constant(compiler->chunk, val_string(var_s));
+            emit_short(compiler, (uint16_t)var_idx);
+            break;
+        }
+
         case NODE_ACTOR_DECL: {
             /* Actor init — emit BC_ACTOR_INIT with type name + field info */
             emit_byte(compiler, BC_ACTOR_INIT);
@@ -2759,19 +2907,23 @@ static Value native_print(VM *vm, int arg_count, Value *args) {
      * to BOTH the terminal and the Lumen log buffer (so server logs appear in
      * the browser devtools without leaving the terminal). */
     if (g_log_capturing && arg_count > 0) {
-        char *buf = NULL; size_t sz = 0;
-        FILE *ms = open_memstream(&buf, &sz);
+        FILE *ms = tmpfile();
         if (ms) {
             for (int i = 0; i < arg_count; i++) {
                 value_fprint(ms, args[i]);
                 if (i < arg_count - 1) fputc(' ', ms);
             }
             fputc('\n', ms);
+            fflush(ms); long pos = ftell(ms); rewind(ms);
+            char *buf = malloc(pos ? (size_t)pos : 1);
+            size_t sz = buf ? fread(buf, 1, pos, ms) : 0;
             fclose(ms);
-            fwrite(buf, 1, sz, stdout);
-            fflush(stdout);
-            log_cap_append(buf, sz);
-            free(buf);
+            if (buf) {
+                fwrite(buf, 1, sz, stdout);
+                fflush(stdout);
+                log_cap_append(buf, sz);
+                free(buf);
+            }
             return val_nil();
         }
     }
@@ -3269,8 +3421,10 @@ bool vm_run(VM *vm, bool run_tests) {
 #ifndef VN_NO_REDIS
         extern void lib_redis_init(VM *vm);
 #endif
-        extern void lib_mock_init(VM *vm);
+#ifndef VN_NO_SMTP
         extern void lib_smtp_init(VM *vm);
+#endif
+        extern void lib_mock_init(VM *vm);
         extern void lib_time_init(VM *vm);
         extern void lib_regex_init(VM *vm);
         extern void lib_errors_init(VM *vm);
@@ -3296,7 +3450,9 @@ bool vm_run(VM *vm, bool run_tests) {
         lib_redis_init(vm);
 #endif
         lib_mock_init(vm);
+#ifndef VN_NO_SMTP
         lib_smtp_init(vm);
+#endif
         lib_time_init(vm);
         lib_regex_init(vm);
         lib_errors_init(vm);
@@ -4099,7 +4255,7 @@ L_BC_LOOP_TOP:
                 ObjClosure *closure = new_closure(NULL, upvalue_count);
                 closure->obj.next = vm->objects;
                 vm->objects = (Obj*)closure;
-                
+
                 closure->captured_slots = (int *)malloc(sizeof(int) * upvalue_count);
                 CallFrame *frame = &t->frames[t->frame_count - 1];
                 closure->captured_owner = frame->slots;  /* identity for close_upvalues */
@@ -4120,7 +4276,7 @@ L_BC_LOOP_TOP:
                         closure->captured[i] = frame->closure->captured[index];
                     }
                 }
-                
+
                 Value fn_val = POP();
                 closure->function = fn_val.as.function;
                 PUSH(val_closure(closure));
@@ -5474,17 +5630,17 @@ void vm_free(VM *vm) {
 
 const unsigned char *vm_lookup_asset(VM *vm, const char *path, int *out_size) {
     if (!vm || !vm->assets || !path) return NULL;
-    
+
     // Normalize path by stripping leading "./" or "/"
     const char *norm = path;
     if (norm[0] == '.' && norm[1] == '/') norm += 2;
     else if (norm[0] == '/') norm += 1;
-    
+
     for (int i = 0; i < vm->asset_count; i++) {
         const char *ap = vm->assets[i].path;
         if (ap[0] == '.' && ap[1] == '/') ap += 2;
         else if (ap[0] == '/') ap += 1;
-        
+
         if (strcmp(ap, norm) == 0) {
             *out_size = vm->assets[i].size;
             return vm->assets[i].data;

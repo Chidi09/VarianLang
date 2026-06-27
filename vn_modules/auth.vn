@@ -1,6 +1,18 @@
-// Authentication Module for Varian & Zenith
+// auth.vn — Authentication orchestrator for Varian & Zenith
+//
+// Native primitives (lib_auth.c):
+//   hash_sha256, sign_jwt, verify_jwt, hash_password, verify_password,
+//   generate_token, constant_time_eq, sha1_base64
+//
+// New native functions (planned):
+//   totp_generate, totp_verify, totp_secret,
+//   sign_jwt_rs256, verify_jwt_rs256,
+//   encrypt, decrypt, sign_jwt_v2, verify_jwt_v2
 
-// JWT Verification Middleware
+// ═══════════════════════════════════════════════════════════════════════
+// JWT Middleware
+// ═══════════════════════════════════════════════════════════════════════
+
 fn jwt_middleware(secret) {
     return |req, next| {
         let auth_header = req.headers?.authorization
@@ -35,15 +47,56 @@ fn jwt_middleware(secret) {
         }
         keys = keys.push("user")
         vals = vals.push(payload)
-        
+
         let req_with_user = http.create_struct(keys, vals)
         return next(req_with_user)
     }
 }
 
-// Session Actor — proper Varian actor with named methods.
-// Spawn with: let store = SessionStore.spawn()
-// Then call:  store.set(sid, user) / store.get(sid) / store.delete(sid)
+// JWT Middleware with RS256 (asymmetric signing)
+fn jwt_middleware_rs256(public_key) {
+    return |req, next| {
+        let auth_header = _validate.get_field(req.headers, "authorization")
+        if (auth_header == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Missing Authorization header", "text/plain"]
+            )
+        }
+        if (!auth_header.starts_with("Bearer ")) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid Authorization header format", "text/plain"]
+            )
+        }
+        let token = auth_header.substring(7, auth_header.len())
+        let payload = auth.verify_jwt_rs256(token, public_key)
+        if (payload == null) {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Invalid or expired token", "text/plain"]
+            )
+        }
+
+        let keys = _validate.get_keys(req)
+        let vals = []
+        let i = 0
+        while (i < keys.len()) {
+            vals = vals.push(_validate.get_field(req, keys[i]))
+            i = i + 1
+        }
+        keys = keys.push("user")
+        vals = vals.push(payload)
+
+        let req_with_user = http.create_struct(keys, vals)
+        return next(req_with_user)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Session Store Actor
+// ═══════════════════════════════════════════════════════════════════════
+
 actor SessionStore {
     sessions: any,
 
@@ -86,9 +139,25 @@ actor SessionStore {
         }
         self.sessions = http.create_struct(new_keys, new_vals)
     }
+
+    fn exists(self, sid) {
+        let val = _validate.get_field(self.sessions, sid)
+        return val != null
+    }
+
+    fn clear(self) {
+        self.sessions = http.create_struct([], [])
+    }
+
+    fn count(self) {
+        return _validate.get_keys(self.sessions).len()
+    }
 }
 
-// Helper to extract cookie value
+// ═══════════════════════════════════════════════════════════════════════
+// Session Middleware
+// ═══════════════════════════════════════════════════════════════════════
+
 fn _extract_cookie(cookie_header, name) {
     if (cookie_header == null) { return null }
     let parts = cookie_header.split(";")
@@ -103,10 +172,9 @@ fn _extract_cookie(cookie_header, name) {
     return null
 }
 
-// Session Middleware Builder
 fn session_middleware(store_pid, cookie_name) {
     return |req, next| {
-        let cookie_header = req.headers?.cookie
+        let cookie_header = _validate.get_field(req.headers, "cookie")
         let sid = _extract_cookie(cookie_header, cookie_name)
         let user = null
 
@@ -114,7 +182,6 @@ fn session_middleware(store_pid, cookie_name) {
             user = store_pid.get(sid)
         }
 
-        // Attach user (or null) to req.user
         let keys = _validate.get_keys(req)
         let vals = []
         let i = 0
@@ -124,17 +191,617 @@ fn session_middleware(store_pid, cookie_name) {
         }
         keys = keys.push("user")
         vals = vals.push(user)
-        
+
         let req_with_user = http.create_struct(keys, vals)
         return next(req_with_user)
     }
 }
 
-// Global zenith_auth namespace object
+// ═══════════════════════════════════════════════════════════════════════
+// User Registration & Login
+// ═══════════════════════════════════════════════════════════════════════
+
+// Create a user struct from raw values
+fn _make_user(id, email, password_hash, role, email_verified, created_at, updated_at) {
+    return http.create_struct(
+        ["id", "email", "password_hash", "role", "email_verified", "created_at", "updated_at"],
+        [id, email, password_hash, role, email_verified, created_at, updated_at]
+    )
+}
+
+// Register a new user with email + password
+fn register_user(db, email, password) {
+    // Check if email already exists
+    let existing = db.query("SELECT id FROM users WHERE email = ?", [email])
+    if existing.len() > 0 {
+        return http.create_struct(["success", "error"], [false, "Email already registered"])
+    }
+
+    let password_hash = auth.hash_password(password)
+    let now = time.now_ms() / 1000
+
+    db.execute(
+        "INSERT INTO users (email, password_hash, role, email_verified, created_at, updated_at) VALUES (?, ?, 'user', 0, ?, ?)",
+        [email, password_hash, now, now]
+    )
+
+    let rows = db.query("SELECT last_insert_rowid() as id", [])
+    let user_id = rows[0].id
+
+    let user = _make_user(user_id, email, password_hash, "user", false, now, now)
+    return http.create_struct(["success", "data"], [true, user])
+}
+
+// Login with email + password, returns user + session token
+fn login_user(db, email, password) {
+    let rows = db.query("SELECT id, email, password_hash, role, email_verified, created_at, updated_at FROM users WHERE email = ?", [email])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Invalid email or password"])
+    }
+
+    let row = rows[0]
+    if !auth.verify_password(password, row.password_hash) {
+        return http.create_struct(["success", "error"], [false, "Invalid email or password"])
+    }
+
+    let user = _make_user(row.id, row.email, row.password_hash, row.role, row.email_verified, row.created_at, row.updated_at)
+
+    // Generate session token
+    let session_token = auth.generate_token(32)
+
+    return http.create_struct(
+        ["success", "data"],
+        [true, http.create_struct(["user", "session_token"], [user, session_token])]
+    )
+}
+
+// Verify email with verification token
+fn verify_email(db, token) {
+    let rows = db.query("SELECT id, email FROM email_verifications WHERE token = ? AND expires_at > ?", [token, time.now_ms() / 1000])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Invalid or expired verification token"])
+    }
+
+    let row = rows[0]
+    db.execute("UPDATE users SET email_verified = 1, updated_at = ? WHERE id = ?", [time.now_ms() / 1000, row.id])
+    db.execute("DELETE FROM email_verifications WHERE id = ?", [row.id])
+    return http.create_struct(["success", "data"], [true, http.create_struct(["user_id"], [row.id])])
+}
+
+// Send verification email (generates token, returns it; mail call is a placeholder)
+fn send_verification_email(db, user, base_url) {
+    let token = auth.generate_token(32)
+    let expires_at = time.now_ms() / 1000 + 86400  // 24 hours
+
+    let user_id = _validate.get_field(user, "id")
+    let email = _validate.get_field(user, "email")
+
+    // Store token in email_verifications table
+    db.execute("INSERT INTO email_verifications (user_id, token, expires_at) VALUES (?,?,?)", [user_id, token, expires_at])
+
+    let verify_url = base_url + "/verify-email?token=" + token
+
+    return http.create_struct(
+        ["token", "verify_url"],
+        [token, verify_url]
+    )
+}
+
+// Generate password reset token
+fn forgot_password(db, email, base_url) {
+    let rows = db.query("SELECT id FROM users WHERE email = ?", [email])
+    if rows.len() == 0 {
+        // Return success even if email not found (don't leak info)
+        return http.create_struct(["success", "data"], [true, http.create_struct(["message"], ["If the email exists, a reset link has been sent"])])
+    }
+
+    let user_id = rows[0].id
+    let token = auth.generate_token(32)
+    let expires_at = time.now_ms() / 1000 + 3600  // 1 hour
+
+    db.execute("DELETE FROM password_resets WHERE user_id = ?", [user_id])
+    db.execute("INSERT INTO password_resets (user_id, token, expires_at) VALUES (?, ?, ?)", [user_id, token, expires_at])
+
+    let reset_url = base_url + "/reset-password?token=" + token
+    return http.create_struct(
+        ["success", "data"],
+        [true, http.create_struct(["token", "reset_url", "message"], [token, reset_url, "If the email exists, a reset link has been sent"])]
+    )
+}
+
+// Reset password with valid token
+fn reset_password(db, token, new_password) {
+    let rows = db.query("SELECT user_id FROM password_resets WHERE token = ? AND expires_at > ?", [token, time.now_ms() / 1000])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Invalid or expired reset token"])
+    }
+
+    let user_id = rows[0].user_id
+    let password_hash = auth.hash_password(new_password)
+
+    db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", [password_hash, time.now_ms() / 1000, user_id])
+    db.execute("DELETE FROM password_resets WHERE user_id = ?", [user_id])
+
+    // Revoke all sessions for this user after password reset
+    db.execute("DELETE FROM sessions WHERE user_id = ?", [user_id])
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["message"], ["Password reset successfully"])])
+}
+
+// Change password with old password verification
+fn change_password(db, user_id, old_password, new_password) {
+    let rows = db.query("SELECT password_hash FROM users WHERE id = ?", [user_id])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "User not found"])
+    }
+
+    if !auth.verify_password(old_password, rows[0].password_hash) {
+        return http.create_struct(["success", "error"], [false, "Current password is incorrect"])
+    }
+
+    let password_hash = auth.hash_password(new_password)
+    db.execute("UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?", [password_hash, time.now_ms() / 1000, user_id])
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["message"], ["Password changed successfully"])])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Session/Token Management
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_session(db, user_id, ttl_seconds) {
+    let session_token = auth.generate_token(32)
+    let expires_at = time.now_ms() / 1000 + ttl_seconds
+    let created_at = time.now_ms() / 1000
+
+    db.execute(
+        "INSERT INTO sessions (user_id, session_token, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        [user_id, session_token, expires_at, created_at]
+    )
+
+    return http.create_struct(
+        ["session_token", "expires_at", "user_id"],
+        [session_token, expires_at, user_id]
+    )
+}
+
+fn validate_session(db, session_token) {
+    let rows = db.query(
+        "SELECT s.user_id, s.expires_at, u.email, u.role FROM sessions s JOIN users u ON s.user_id = u.id WHERE s.session_token = ?",
+        [session_token]
+    )
+    if rows.len() == 0 {
+        return null
+    }
+
+    let row = rows[0]
+    if row.expires_at < time.now_ms() / 1000 {
+        db.execute("DELETE FROM sessions WHERE session_token = ?", [session_token])
+        return null
+    }
+
+    return http.create_struct(
+        ["user_id", "email", "role"],
+        [row.user_id, row.email, row.role]
+    )
+}
+
+fn revoke_session(db, session_token) {
+    db.execute("DELETE FROM sessions WHERE session_token = ?", [session_token])
+    return http.create_struct(["success"], [true])
+}
+
+fn revoke_all_sessions(db, user_id) {
+    db.execute("DELETE FROM sessions WHERE user_id = ?", [user_id])
+    return http.create_struct(["success"], [true])
+}
+
+fn cleanup_expired_sessions(db) {
+    let deleted = db.execute("DELETE FROM sessions WHERE expires_at < ?", [time.now_ms() / 1000])
+    return http.create_struct(["deleted_count"], [deleted])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// API Key Management
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_api_key(db, user_id, name, scopes) {
+    let raw_key = "api_" + auth.generate_token(32)
+    let key_hash = auth.hash_sha256(raw_key)
+    let created_at = time.now_ms() / 1000
+
+    db.execute(
+        "INSERT INTO api_keys (user_id, name, key_hash, scopes, created_at) VALUES (?, ?, ?, ?, ?)",
+        [user_id, name, key_hash, json_encode(scopes), created_at]
+    )
+
+    let rows = db.query("SELECT last_insert_rowid() as id", [])
+    let key_id = rows[0].id
+
+    return http.create_struct(
+        ["id", "raw_key", "name"],
+        [key_id, raw_key, name]
+    )
+}
+
+fn validate_api_key(db, api_key) {
+    let key_hash = auth.hash_sha256(api_key)
+
+    let rows = db.query(
+        "SELECT ak.id, ak.user_id, ak.name, ak.scopes, ak.revoked, u.email, u.role FROM api_keys ak JOIN users u ON ak.user_id = u.id WHERE ak.key_hash = ?",
+        [key_hash]
+    )
+    if rows.len() == 0 {
+        return null
+    }
+
+    let row = rows[0]
+    if row.revoked == 1 {
+        return null
+    }
+
+    let scopes = null
+    try { scopes = json_decode(row.scopes) } catch e { scopes = [] }
+
+    return http.create_struct(
+        ["id", "user_id", "name", "scopes", "email", "role"],
+        [row.id, row.user_id, row.name, scopes, row.email, row.role]
+    )
+}
+
+fn revoke_api_key(db, key_id) {
+    db.execute("UPDATE api_keys SET revoked = 1 WHERE id = ?", [key_id])
+    return http.create_struct(["success"], [true])
+}
+
+fn list_api_keys(db, user_id) {
+    let rows = db.query(
+        "SELECT id, name, scopes, created_at, revoked FROM api_keys WHERE user_id = ?",
+        [user_id]
+    )
+    let results = []
+    for i in 0..rows.len() {
+        let row = rows[i]
+        let scopes = null
+        try { scopes = json_decode(row.scopes) } catch e { scopes = [] }
+        let key_info = http.create_struct(
+            ["id", "name", "scopes", "created_at", "revoked"],
+            [row.id, row.name, scopes, row.created_at, row.revoked]
+        )
+        results = results.push(key_info)
+    }
+    return results
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Refresh Token Management
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_refresh_token(db, user_id, ttl_days) {
+    let token = auth.generate_token(48)
+    let token_hash = auth.hash_sha256(token)
+    let family = auth.generate_token(16)
+    let expires_at = time.now_ms() / 1000 + (ttl_days * 86400)
+    let created_at = time.now_ms() / 1000
+
+    db.execute(
+        "INSERT INTO refresh_tokens (user_id, token_hash, family, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+        [user_id, token_hash, family, expires_at, created_at]
+    )
+
+    return http.create_struct(
+        ["refresh_token", "family", "expires_at"],
+        [token, family, expires_at]
+    )
+}
+
+fn rotate_refresh_token(db, refresh_token) {
+    let token_hash = auth.hash_sha256(refresh_token)
+    let rows = db.query(
+        "SELECT id, user_id, family, expires_at FROM refresh_tokens WHERE token_hash = ? AND revoked = 0",
+        [token_hash]
+    )
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Invalid refresh token"])
+    }
+
+    let row = rows[0]
+    if row.expires_at < time.now_ms() / 1000 {
+        db.execute("UPDATE refresh_tokens SET revoked = 1 WHERE id = ?", [row.id])
+        return http.create_struct(["success", "error"], [false, "Refresh token expired"])
+    }
+
+    // Rotate: revoke old, issue new
+    db.execute("UPDATE refresh_tokens SET revoked = 1 WHERE id = ?", [row.id])
+
+    let new_token = auth.generate_token(48)
+    let new_hash = auth.hash_sha256(new_token)
+    let expires_at = time.now_ms() / 1000 + 2592000  // 30 days default
+    let created_at = time.now_ms() / 1000
+
+    db.execute(
+        "INSERT INTO refresh_tokens (user_id, token_hash, family, expires_at, created_at) VALUES (?, ?, ?, ?, ?)",
+        [row.user_id, new_hash, row.family, expires_at, created_at]
+    )
+
+    return http.create_struct(
+        ["success", "data"],
+        [true, http.create_struct(["refresh_token", "expires_at"], [new_token, expires_at])]
+    )
+}
+
+fn revoke_refresh_token(db, refresh_token) {
+    let token_hash = auth.hash_sha256(refresh_token)
+    db.execute("UPDATE refresh_tokens SET revoked = 1 WHERE token_hash = ?", [token_hash])
+    return http.create_struct(["success"], [true])
+}
+
+fn revoke_all_refresh_tokens(db, user_id) {
+    db.execute("UPDATE refresh_tokens SET revoked = 1 WHERE user_id = ?", [user_id])
+    return http.create_struct(["success"], [true])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Security Headers Middleware
+// ═══════════════════════════════════════════════════════════════════════
+
+fn security_headers(req, next) {
+    let resp = next(req)
+
+    let headers = http.create_struct(
+        [
+            "content_security_policy",
+            "strict_transport_security",
+            "x_frame_options",
+            "x_content_type_options",
+            "referrer_policy",
+            "permissions_policy"
+        ],
+        [
+            "default-src 'self'",
+            "max-age=31536000; includeSubDomains",
+            "DENY",
+            "nosniff",
+            "strict-origin-when-cross-origin",
+            "camera=(), microphone=(), geolocation=()"
+        ]
+    )
+
+    // Merge with existing response headers
+    let existing_headers = _validate.get_field(resp, "headers")
+    if existing_headers != null {
+        let keys = _validate.get_keys(existing_headers)
+        let vals = []
+        for i in 0..keys.len() {
+            vals = vals.push(_validate.get_field(existing_headers, keys[i]))
+        }
+        let sh_keys = _validate.get_keys(headers)
+        for j in 0..sh_keys.len() {
+            keys = keys.push(sh_keys[j])
+            vals = vals.push(_validate.get_field(headers, sh_keys[j]))
+        }
+        headers = http.create_struct(keys, vals)
+    }
+
+    return http.create_struct(
+        ["status", "body", "content_type", "headers"],
+        [resp.status, resp.body, resp.content_type, headers]
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Rate Limiter Integration
+// ═══════════════════════════════════════════════════════════════════════
+
+fn login_rate_limit(req, next, limiter, key) {
+    if limiter == null {
+        return next(req)
+    }
+
+    let rate_key = "login:" + key
+    let allowed = limiter.check(rate_key, 5, 60)  // 5 attempts per 60 seconds
+
+    if !allowed {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [429, "Too many login attempts. Please try again later.", "text/plain"]
+        )
+    }
+
+    return next(req)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Audit Logging
+// ═══════════════════════════════════════════════════════════════════════
+
+fn audit_log(db, user_id, action, details, ip) {
+    let created_at = time.now_ms() / 1000
+    if details == null { details = "" }
+    if ip == null { ip = "" }
+
+    db.execute(
+        "INSERT INTO audit_logs (user_id, action, details, ip, created_at) VALUES (?, ?, ?, ?, ?)",
+        [user_id, action, details, ip, created_at]
+    )
+
+    return http.create_struct(["success"], [true])
+}
+
+fn get_audit_logs(db, user_id, limit_val, offset_val) {
+    let rows = null
+    if user_id != null {
+        rows = db.query(
+            "SELECT id, user_id, action, details, ip, created_at FROM audit_logs WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            [user_id, limit_val, offset_val]
+        )
+    } else {
+        rows = db.query(
+            "SELECT id, user_id, action, details, ip, created_at FROM audit_logs ORDER BY created_at DESC LIMIT ? OFFSET ?",
+            [limit_val, offset_val]
+        )
+    }
+
+    let results = []
+    for i in 0..rows.len() {
+        let row = rows[i]
+        let entry = http.create_struct(
+            ["id", "user_id", "action", "details", "ip", "created_at"],
+            [row.id, row.user_id, row.action, row.details, row.ip, row.created_at]
+        )
+        results = results.push(entry)
+    }
+    return results
+}
+
+fn audit_middleware(db) {
+    return |req, next| {
+        let resp = next(req)
+
+        let user_id = null
+        let user_field = _validate.get_field(req, "user")
+        if user_field != null {
+            let uid = _validate.get_field(user_field, "id")
+            if uid != null { user_id = uid }
+        }
+
+        let action = req.method + " " + req.path
+        let details = "Status: " + resp.status
+        let ip = _validate.get_field(req, "ip")
+
+        audit_log(db, user_id, action, details, ip)
+
+        return resp
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RBAC Middleware (thin wrapper around auth_rbac)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn require_role(role_name) {
+    return |req, next| {
+        let user = _validate.get_field(req, "user")
+        if user == null {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Authentication required", "text/plain"]
+            )
+        }
+        let user_role = _validate.get_field(user, "role")
+        if user_role == null or user_role != role_name {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: insufficient permissions", "text/plain"]
+            )
+        }
+        return next(req)
+    }
+}
+
+fn require_permission(permission) {
+    return |req, next| {
+        let user = _validate.get_field(req, "user")
+        if user == null {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [401, "Authentication required", "text/plain"]
+            )
+        }
+        let user_role = _validate.get_field(user, "role")
+        if user_role == null {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: insufficient permissions", "text/plain"]
+            )
+        }
+        // Self-contained permission check: admin is allowed everything; otherwise
+        // the permission must be present on the user's "permissions" (or "scopes")
+        // claim carried in the JWT/session. For full registry-based RBAC, callers
+        // should use auth_rbac.require_permission(rbac, req, next, permission) directly.
+        let has_permission = false
+        if user_role == "admin" {
+            has_permission = true
+        } else if permission != null {
+            let perms = _validate.get_field(user, "permissions")
+            if perms == null { perms = _validate.get_field(user, "scopes") }
+            if perms != null {
+                let pi = 0
+                while (pi < perms.len()) {
+                    if perms[pi] == permission { has_permission = true }
+                    pi = pi + 1
+                }
+            }
+        }
+        if !has_permission {
+            return http.create_struct(
+                ["status", "body", "content_type"],
+                [403, "Forbidden: insufficient permissions", "text/plain"]
+            )
+        }
+        return next(req)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// DDL Helpers (create auth tables)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_auth_tables(db) {
+    db.execute("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT UNIQUE, password_hash TEXT, role TEXT DEFAULT 'user', email_verified INTEGER DEFAULT 0, created_at TEXT, updated_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, session_token TEXT UNIQUE, expires_at TEXT, created_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS email_verifications (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, token TEXT UNIQUE, expires_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS password_resets (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, token TEXT UNIQUE, expires_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, name TEXT, key_hash TEXT UNIQUE, scopes TEXT, revoked INTEGER DEFAULT 0, created_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS refresh_tokens (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, token_hash TEXT UNIQUE, family TEXT, revoked INTEGER DEFAULT 0, expires_at TEXT, created_at TEXT)", [])
+    db.execute("CREATE TABLE IF NOT EXISTS audit_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, action TEXT, details TEXT, ip TEXT, created_at TEXT)", [])
+    return http.create_struct(["success"], [true])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Global zenith_auth Namespace
+// ═══════════════════════════════════════════════════════════════════════
+
 let zenith_auth = http.create_struct(
-    ["jwt", "session_store", "session", "hash_password", "verify_password"],
+    [
+        "jwt",
+        "jwt_rs256",
+        "session_store",
+        "session",
+        "hash_password",
+        "verify_password",
+        "register_user",
+        "login_user",
+        "verify_email",
+        "send_verification_email",
+        "forgot_password",
+        "reset_password",
+        "change_password",
+        "create_session",
+        "validate_session",
+        "revoke_session",
+        "revoke_all_sessions",
+        "cleanup_expired_sessions",
+        "create_api_key",
+        "validate_api_key",
+        "revoke_api_key",
+        "list_api_keys",
+        "create_refresh_token",
+        "rotate_refresh_token",
+        "revoke_refresh_token",
+        "revoke_all_refresh_tokens",
+        "security_headers",
+        "login_rate_limit",
+        "audit_log",
+        "get_audit_logs",
+        "audit_middleware",
+        "require_role",
+        "require_permission",
+        "create_auth_tables",
+    ],
     [
         |secret| { return jwt_middleware(secret) },
+        |public_key| { return jwt_middleware_rs256(public_key) },
         | | {
             let s = SessionStore.spawn()
             s.init()
@@ -142,6 +809,34 @@ let zenith_auth = http.create_struct(
         },
         |store_pid, cookie_name| { return session_middleware(store_pid, cookie_name) },
         |password| { return auth.hash_password(password) },
-        |password, hash| { return auth.verify_password(password, hash) }
+        |password, hash| { return auth.verify_password(password, hash) },
+        |db, email, password| { return register_user(db, email, password) },
+        |db, email, password| { return login_user(db, email, password) },
+        |db, token| { return verify_email(db, token) },
+        |db, user, base_url| { return send_verification_email(db, user, base_url) },
+        |db, email, base_url| { return forgot_password(db, email, base_url) },
+        |db, token, new_password| { return reset_password(db, token, new_password) },
+        |db, user_id, old_password, new_password| { return change_password(db, user_id, old_password, new_password) },
+        |db, user_id, ttl_seconds| { return create_session(db, user_id, ttl_seconds) },
+        |db, session_token| { return validate_session(db, session_token) },
+        |db, session_token| { return revoke_session(db, session_token) },
+        |db, user_id| { return revoke_all_sessions(db, user_id) },
+        |db| { return cleanup_expired_sessions(db) },
+        |db, user_id, name, scopes| { return create_api_key(db, user_id, name, scopes) },
+        |db, api_key| { return validate_api_key(db, api_key) },
+        |db, key_id| { return revoke_api_key(db, key_id) },
+        |db, user_id| { return list_api_keys(db, user_id) },
+        |db, user_id, ttl_days| { return create_refresh_token(db, user_id, ttl_days) },
+        |db, refresh_token| { return rotate_refresh_token(db, refresh_token) },
+        |db, refresh_token| { return revoke_refresh_token(db, refresh_token) },
+        |db, user_id| { return revoke_all_refresh_tokens(db, user_id) },
+        |req, next| { return security_headers(req, next) },
+        |req, next, limiter, key| { return login_rate_limit(req, next, limiter, key) },
+        |db, user_id, action, details, ip| { return audit_log(db, user_id, action, details, ip) },
+        |db, user_id, limit_val, offset_val| { return get_audit_logs(db, user_id, limit_val, offset_val) },
+        |db| { return audit_middleware(db) },
+        |role_name| { return require_role(role_name) },
+        |permission| { return require_permission(permission) },
+        |db| { return create_auth_tables(db) },
     ]
 )

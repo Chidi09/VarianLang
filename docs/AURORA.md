@@ -26,12 +26,12 @@ you run `vn dev`, the dev server banner reads **"Aurora — fullstack Varian pla
 
 | Concern | Next.js / Nuxt | Aurora (Zenith + Lumen) |
 |---|---|---|
-| **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere** — same language, same runtime, same binary |
-| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Zero client JS** by default — ~2 KB inline **Lumen JS** script |
-| **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step for the frontend |
-| **Data loading** | `getServerSideProps` / `loader` / server actions | `lumen_mount_data()` — data provider runs on GET + WS reconnect |
+| **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere (with Strict TypeScript support)** — `.ts` only on the frontend, compiled on the fly |
+| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Strict TypeScript (.ts) only** — Type annotations are stripped natively at runtime; raw `.js` is forbidden |
+| **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step, native type stripper |
+| **Data loading** | `getServerSideProps` / `loader` / server actions | **Remix-style `load(req)` and `action(req)`** — auto-hydrated states on GET and WebSocket loops |
 | **API + pages** | Separate `app/api/` and `app/` directories | Same `main.vn`, same `ZenithApp` instance |
-| **Background jobs** | External workers (Bull, Sidekiq) | `WorkerPool.spawn()` + `cron()` — built in |
+| **Background jobs** | External workers (Bull, Sidekiq) | **Durable `vn_jobs` queue** — SQLite/Postgres persistence, LiveDashboard |
 | **Swagger docs** | Manual setup or `next-swagger-doc` plugin | Automatic — `app.enable_docs("/docs")` |
 | **Security middleware** | Manual — helmet, cors, csurf, express-rate-limit | `cors()`, `rate_limit()`, `csrf()` from `shield.vn` — built in |
 | **Deploy** | Node.js runtime + `node_modules` required | **Single native binary** — no runtime, no deps |
@@ -39,38 +39,33 @@ you run `vn dev`, the dev server banner reads **"Aurora — fullstack Varian pla
 
 ### BFF by default
 
-Aurora is a **Backend for Frontend (BFF)** by nature, not by configuration. Because Varian
-is a single language that compiles to a single binary, the backend API and the frontend UI
-live in the same process, share the same types, and are authored in the same language.
+Aurora is a **Backend for Frontend (BFF)** by nature. Because Varian is a single language that compiles to a native binary, the backend API and frontend UI live in the same process, share the same types, and run seamlessly without serializing data schemas.
 
-Concretely, every Lumen page can declare a **data provider** via `lumen_mount_data()`:
+Concretely, every Lumen page component can declare a `load(req)` and `action(req)` function:
 
 ```varian
-// aurora/lib/pages.vn — the provider runs server-side, shapes DB data for the component
-lumen_mount_data(app, "/shop", shop_comp, |req| {
+// pages/shop.lumen
+// Inside your <script> tag:
+
+fn load(req) {
     let q = query(req, "q", "")
-    let rows = sqlite.query(conn, "SELECT * FROM products WHERE name LIKE ? ORDER BY id", ["%" + q + "%"])
-    let items = []
-    for i in 0..rows.len() {
-        let p = rows[i]
-        items = items.push(http.create_struct(
-            ["id","name","price","stock","image"],
-            [p.id, p.name, format_price(p.price_cents), p.stock, p.image]))
-    }
-    return http.create_struct(["hasProducts", "products", "query"], [items.len() > 0, items, q])
-})
+    let rows = sqlite.query(conn, "SELECT * FROM products WHERE name LIKE ?", ["%" + q + "%"])
+    return { products: rows, query: q }
+}
+
+fn action(req) {
+    let item_id = req.json.id
+    sqlite.query(conn, "INSERT INTO cart_items (product_id) VALUES (?)", [item_id])
+    return redirect("/cart")
+}
 ```
 
-This provider:
-- Runs **on the initial page GET** — SSR with real data
-- Runs **on every WebSocket reconnect** — so live interactivity stays data-backed
-- Receives the **full request** — access to cookies, session, query params, path params
-- Returns **exactly the shape the component needs** — no over-fetching, no under-fetching
-
-There is no separate BFF service to deploy, no network hop between frontend and data, and
-no duplicated types across a language boundary. The JSON API routes (`/api/products`,
-`/api/cart`, etc.) that the Lumen pages call are also BFF endpoints — they speak the
-frontend's language because they're written by the same developer in the same file.
+This structure:
+- Runs `load(req)` **on the initial page GET** — SSR with hydrated data.
+- Ships data state transparently to the browser to bootstrap `/live` WebSocket connections.
+- Automatically handles POST requests using the component's `action(req)` block.
+- Integrates folder-level hierarchies including `layout.lumen` nesting and nearest `loading.lumen` fallback states.
+- Protects route groups using directory-level security guards (`+guard.vn`) compiled and executed on route matching.
 
 ```sh
 vn new myapp          # Scaffold a full Aurora project

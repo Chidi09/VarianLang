@@ -282,6 +282,7 @@ static FmtKeyword fmt_keywords[] = {
     {"null", false}, {"throw", false},
     {"bool", false}, {"int", false}, {"float", false},
     {"string", false}, {"byte", false}, {"void", false},
+    {"schema", true}, {"ffi", true},
     {NULL, false}
 };
 
@@ -300,7 +301,7 @@ static bool fmt_is_keyword(const char *start, int length, bool *is_decl) {
 static bool fmt_is_opening_brace_keyword(const char *start, int length) {
     const char *kws[] = {"fn", "if", "else", "while", "for", "loop",
                          "struct", "enum", "actor", "trait", "impl",
-                         "match", "try", "catch", "comptime", NULL};
+                         "match", "try", "catch", "comptime", "schema", NULL};
     for (int i = 0; kws[i]; i++) {
         if (length == (int)strlen(kws[i]) &&
             memcmp(start, kws[i], length) == 0)
@@ -796,9 +797,14 @@ char *fmt_format_source(const char *source, size_t size, int *out_pos_ret) {
                 continue;
             }
             /* Other operators — space around */
-            if (!prev_was_nl && !prev_was_punct) EMITS(" ");
-            EMIT(tok->start, tok->length);
-            EMITS(" ");
+            if (tok->length == 1 && tok->start[0] == '@') {
+                if (!prev_was_nl && !prev_was_punct) EMITS(" ");
+                EMIT(tok->start, tok->length);
+            } else {
+                if (!prev_was_nl && !prev_was_punct) EMITS(" ");
+                EMIT(tok->start, tok->length);
+                EMITS(" ");
+            }
             prev = *tok;
             prev_is_decl_keyword = false;
             continue;

@@ -30,6 +30,15 @@
 #define SO_REUSEPORT 15 /* Linux value; not exposed under strict _POSIX_C_SOURCE */
 #endif
 
+/* Graceful shutdown flag */
+static volatile sig_atomic_t g_shutdown_flag = 0;
+static bool g_signals_registered = false;
+
+static void sigint_handler(int sig) {
+    (void)sig;
+    g_shutdown_flag = 1;
+}
+
 /* ─── Dynamic buffer for collecting HTTP response ─── */
 typedef struct { char *data; size_t len; } DynBuf;
 
@@ -133,6 +142,92 @@ static Value lib_http_post(VM *vm, int arg_count, Value *args) {
     ObjString *result = allocate_string(vm, buf.data, (int)buf.len);
     free(buf.data);
     return val_string(result);
+}
+
+/* ─── http.post_stream(url, headers, body [, timeout_ms]) ───
+ * Like http.post but returns an array of SSE chunks split by \n\n.
+ * Each chunk is a string (preserving the "data: " prefix).
+ * Blocking, synchronous — same caveat as http.get/http.post. */
+static Value lib_http_post_stream(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_STRING) {
+        runtime_error(vm, "http.post_stream(url, headers, body) requires url (string)");
+        return val_nil();
+    }
+    const char *url = args[base].as.string->chars;
+    Value headers_val = (arg_count > base + 1) ? args[base + 1] : val_nil();
+    Value body_val = (arg_count > base + 2) ? args[base + 2] : val_nil();
+    const char *body = (body_val.type == VAL_STRING) ? body_val.as.string->chars : "";
+    long timeout = 30L;
+    if (arg_count > base + 3 && args[base + 3].type == VAL_INT) {
+        timeout = (long)args[base + 3].as.integer;
+    }
+
+    CURL *curl = curl_easy_init();
+    if (!curl) return val_nil();
+    DynBuf buf = {NULL, 0};
+
+    struct curl_slist *header_list = NULL;
+    if (headers_val.type == VAL_ARRAY) {
+        ObjArray *arr = headers_val.as.array;
+        for (int i = 0; i < arr->count; i++) {
+            if (arr->elements[i].type == VAL_STRING)
+                header_list = curl_slist_append(header_list, arr->elements[i].as.string->chars);
+        }
+    }
+
+    curl_easy_setopt(curl, CURLOPT_URL, url);
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, body);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, (long)strlen(body));
+    if (header_list) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, header_list);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_cb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &buf);
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "Varian/0.1.0");
+    CURLcode res = curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    if (header_list) curl_slist_free_all(header_list);
+
+    if (res != CURLE_OK) { free(buf.data); return val_nil(); }
+    if (!buf.data || buf.len == 0) { free(buf.data); return new_array(vm, 0); }
+
+    // Count SSE chunks separated by double-newline.
+    int chunk_count = 1;
+    size_t i;
+    for (i = 0; i + 1 < buf.len; i++) {
+        if (buf.data[i] == '\n' && buf.data[i + 1] == '\n') {
+            chunk_count++;
+        }
+    }
+
+    ObjArray *arr = new_array(vm, chunk_count);
+    int idx = 0;
+    size_t start = 0;
+    for (i = 0; i + 1 < buf.len; i++) {
+        if (buf.data[i] == '\n' && buf.data[i + 1] == '\n') {
+            size_t len = i - start;
+            // Trim trailing \r from each chunk
+            while (len > 0 && (buf.data[start + len - 1] == '\r' || buf.data[start + len - 1] == '\n'))
+                len--;
+            ObjString *chunk = allocate_string(vm, buf.data + start, (int)len);
+            arr->elements[idx++] = val_string(chunk);
+            start = i + 2;
+            i++;  // skip second \n so outer loop doesn't re-match
+        }
+    }
+    // Last chunk after final \n\n (or the whole body if none found)
+    if (start < buf.len) {
+        size_t len = buf.len - start;
+        while (len > 0 && (buf.data[start + len - 1] == '\r' || buf.data[start + len - 1] == '\n'))
+            len--;
+        ObjString *chunk = allocate_string(vm, buf.data + start, (int)len);
+        arr->elements[idx] = val_string(chunk);
+    }
+
+    free(buf.data);
+    return val_array(arr);
 }
 
 /* ═══════════════════════════════════════════
@@ -340,9 +435,9 @@ static ReqFrameStatus try_frame_request(ConnBuffer *cb, int *out_total_len) {
 /* ─── Request field names are static: avoid strdup per request ─── */
 static const char *REQ_FIELD_NAMES[] = {
     "method", "path", "body", "json", "params",
-    "headers", "ip", "socket_fd", "query"
+    "headers", "ip", "socket_fd", "query", "_multipart"
 };
-#define REQ_FIELD_COUNT 9
+#define REQ_FIELD_COUNT 10
 
 /* Shared shape for the internal {status, body} structs built on parse-error
  * / unhandled-error paths below — same fixed schema every time. */
@@ -359,7 +454,8 @@ static Value make_status_body_response(VM *vm, int status, ObjString *body) {
 static Value make_request(VM *vm, const char *method, const char *path,
                            const char *query, Value body_val, Value json_val,
                            Value params_val, Value headers_val,
-                           const char *ip_str, int client_fd) {
+                           const char *ip_str, int client_fd,
+                           Value multipart_val) {
     ObjStruct *req = new_struct(vm, REQ_FIELD_COUNT, false);
     if (req->field_names) free(req->field_names);
     struct_attach_shape(vm, req, "Request", (char *const *)REQ_FIELD_NAMES, REQ_FIELD_COUNT);
@@ -373,6 +469,7 @@ static Value make_request(VM *vm, const char *method, const char *path,
     req->fields[6] = val_string(allocate_string(vm, ip_str, (int)strlen(ip_str)));
     req->fields[7] = val_int(client_fd);
     req->fields[8] = val_string(allocate_string(vm, query ? query : "", query ? (int)strlen(query) : 0));
+    req->fields[9] = multipart_val;
 
     return val_struct(req);
 }
@@ -876,6 +973,179 @@ static bool determine_keep_alive_phr(int request_count, int minor_version,
     return is_http_11;
 }
 
+/* ═══════════════════════════════════════════
+ *  Multipart / form-data parser
+ * ═══════════════════════════════════════════ */
+
+/* Parse multipart/form-data body into a struct { fields: {...}, files: [...] }.
+ * Returns val_nil() when the content-type is not multipart or body is empty.
+ * Fields are a struct of name->value pairs (string keys, string values).
+ * Files are an array of structs { fieldname, filename, content_type, data }. */
+static Value parse_multipart(VM *vm, const char *body, int body_len, const char *content_type) {
+    /* Locate boundary= in Content-Type */
+    const char *bstart = strstr(content_type, "boundary=");
+    if (!bstart) return val_nil();
+    bstart += 9;
+    if (*bstart == '"') bstart++;
+
+    char boundary[256];
+    int bn = 0;
+    while (*bstart && *bstart != ';' && *bstart != '"' && *bstart != '\r' && *bstart != '\n' && bn < 255) {
+        boundary[bn++] = *bstart++;
+    }
+    boundary[bn] = '\0';
+    if (bn == 0) return val_nil();
+
+    char part_delim[280];
+    snprintf(part_delim, sizeof(part_delim), "--%s", boundary);
+    int pdlen = (int)strlen(part_delim);
+
+    /* Dynamic arrays for field keys, field values, and file structs */
+    int fk_count = 0, fk_cap = 0;
+    Value *fk = NULL;
+    int fv_count = 0, fv_cap = 0;
+    Value *fv = NULL;
+    int fl_count = 0, fl_cap = 0;
+    Value *fl = NULL;
+
+    const char *pos = body;
+    const char *end = body + body_len;
+
+    /* Skip opening boundary */
+    const char *first = strstr(pos, part_delim);
+    if (!first) { free(fk); free(fv); free(fl); return val_nil(); }
+    pos = first + pdlen;
+    if (pos + 2 <= end && pos[0] == '\r' && pos[1] == '\n') pos += 2;
+
+    while (pos < end) {
+        const char *next = strstr(pos, part_delim);
+        if (!next) break;
+
+        /* Parse part headers */
+        const char *h = pos;
+        const char *body_start = NULL;
+        char name_buf[256] = "";
+        char filename_buf[256] = "";
+        char pct_buf[128] = "";
+
+        while (h < next) {
+            const char *eol = strstr(h, "\r\n");
+            if (!eol || eol > next) break;
+            if (eol == h) {
+                body_start = eol + 2;
+                break;
+            }
+            size_t hdrlen = (size_t)(eol - h);
+            if (hdrlen > 19 && strncasecmp(h, "Content-Disposition:", 20) == 0) {
+                const char *np = strstr(h, "name=\"");
+                if (np) {
+                    np += 6;
+                    int nn = 0;
+                    while (*np && *np != '"' && nn < 255) name_buf[nn++] = *np++;
+                    name_buf[nn] = '\0';
+                }
+                const char *fp = strstr(h, "filename=\"");
+                if (fp) {
+                    fp += 10;
+                    int fn = 0;
+                    while (*fp && *fp != '"' && fn < 255) filename_buf[fn++] = *fp++;
+                    filename_buf[fn] = '\0';
+                }
+            }
+            if (hdrlen > 12 && strncasecmp(h, "Content-Type:", 13) == 0) {
+                const char *ct = h + 13;
+                while (*ct == ' ') ct++;
+                int cn = 0;
+                while (*ct && *ct != '\r' && *ct != '\n' && cn < 127) pct_buf[cn++] = *ct++;
+                pct_buf[cn] = '\0';
+            }
+            h = eol + 2;
+        }
+
+        if (body_start && body_start < next) {
+            int raw_len = (int)(next - body_start);
+            /* Strip trailing \r\n (the CRLF before the next boundary) */
+            if (raw_len >= 2 && body_start[raw_len - 2] == '\r' && body_start[raw_len - 1] == '\n')
+                raw_len -= 2;
+
+            if (filename_buf[0] != '\0') {
+                /* File upload part */
+                ObjStruct *fs = new_struct(vm, 4, false);
+                if (fs->field_names) free(fs->field_names);
+                char *file_fnames[] = {"fieldname", "filename", "content_type", "data"};
+                struct_attach_shape(vm, fs, NULL, (char *const *)file_fnames, 4);
+                fs->fields[0] = val_string(allocate_string(vm, name_buf, (int)strlen(name_buf)));
+                fs->fields[1] = val_string(allocate_string(vm, filename_buf, (int)strlen(filename_buf)));
+                fs->fields[2] = val_string(allocate_string(vm, pct_buf, (int)strlen(pct_buf)));
+                fs->fields[3] = val_string(allocate_string(vm, body_start, raw_len));
+
+                fl_count++;
+                if (fl_count > fl_cap) {
+                    fl_cap = fl_cap ? fl_cap * 2 : 8;
+                    fl = (Value *)realloc(fl, (size_t)fl_cap * sizeof(Value));
+                }
+                fl[fl_count - 1] = val_struct(fs);
+            } else {
+                /* Regular form field */
+                fk_count++;
+                if (fk_count > fk_cap) {
+                    fk_cap = fk_cap ? fk_cap * 2 : 8;
+                    fk = (Value *)realloc(fk, (size_t)fk_cap * sizeof(Value));
+                }
+                fk[fk_count - 1] = val_string(allocate_string(vm, name_buf, (int)strlen(name_buf)));
+                fv_count++;
+                if (fv_count > fv_cap) {
+                    fv_cap = fv_cap ? fv_cap * 2 : 8;
+                    fv = (Value *)realloc(fv, (size_t)fv_cap * sizeof(Value));
+                }
+                fv[fv_count - 1] = val_string(allocate_string(vm, body_start, raw_len));
+            }
+        }
+
+        pos = next + pdlen;
+        /* Check for closing boundary "--" */
+        if (pos + 2 <= end && pos[0] == '-' && pos[1] == '-') {
+            pos += 2;
+            break;
+        }
+        if (pos + 2 <= end && pos[0] == '\r' && pos[1] == '\n') pos += 2;
+    }
+
+    /* Build fields struct */
+    ObjStruct *fields_s = new_struct(vm, fk_count, false);
+    if (fields_s->field_names) free(fields_s->field_names);
+    if (fk_count > 0) {
+        char **fnames = (char **)malloc((size_t)fk_count * sizeof(char *));
+        for (int i = 0; i < fk_count; i++)
+            fnames[i] = fk[i].as.string->chars;
+        struct_attach_shape(vm, fields_s, NULL, (char *const *)fnames, fk_count);
+        for (int i = 0; i < fk_count; i++)
+            fields_s->fields[i] = fv[i];
+        free(fnames);
+    }
+    free(fk);
+    free(fv);
+
+    /* Build files array */
+    ObjArray *files_a = new_array();
+    for (int i = 0; i < fl_count; i++) {
+        files_a->count++;
+        files_a->elements = (Value *)realloc(files_a->elements, (size_t)files_a->count * sizeof(Value));
+        files_a->elements[files_a->count - 1] = fl[i];
+    }
+    free(fl);
+
+    /* Build result struct { fields, files } */
+    char *mp_names[] = {"fields", "files"};
+    ObjStruct *mp_s = new_struct(vm, 2, false);
+    if (mp_s->field_names) free(mp_s->field_names);
+    struct_attach_shape(vm, mp_s, NULL, (char *const *)mp_names, 2);
+    mp_s->fields[0] = val_struct(fields_s);
+    mp_s->fields[1] = val_array(files_a);
+
+    return val_struct(mp_s);
+}
+
 static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_str,
                                const char *buf, int buf_len, int request_count,
                                Value handler_or_routes_val, bool is_routed,
@@ -935,6 +1205,10 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
         json_buf[body_len] = '\0';
         json_val = json_decode(vm, json_buf);
         free(json_buf);
+    }
+    Value multipart_val = val_nil();
+    if (ct && body_len > 0 && strstr(ct, "multipart/form-data")) {
+        multipart_val = parse_multipart(vm, body_str, body_len, ct);
     }
     Value result = val_nil();
     bool deferred = false;
@@ -1012,7 +1286,7 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
                 }
                 params_val = val_struct(ps);
             }
-            Value req_val = make_request(vm, method, path, query, body_val, json_val, params_val, headers_val, ip_str, client_fd);
+            Value req_val = make_request(vm, method, path, query, body_val, json_val, params_val, headers_val, ip_str, client_fd, multipart_val);
             result = call_handler(vm, route_handler, req_val, client_fd, ssl, &deferred);
             free_request(vm, req_val);
         } else {
@@ -1024,7 +1298,7 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
             return keep_alive;
         }
     } else {
-        Value req_val = make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, ip_str, client_fd);
+        Value req_val = make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, ip_str, client_fd, multipart_val);
         result = call_handler(vm, handler_or_routes_val, req_val, client_fd, ssl, &deferred);
         free_request(vm, req_val);
     }
@@ -1563,6 +1837,19 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
 static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool is_routed, const char *fn_name) {
     PendingConnPool *pool = get_pending_pool(t);
 
+    /* Check for graceful shutdown */
+    if (g_shutdown_flag) {
+        if (t->http_listen_fd >= 0) {
+            printf("  http: graceful shutdown requested, closing listen socket\n");
+            fflush(stdout);
+            close(t->http_listen_fd);
+            t->http_listen_fd = -1;
+            pool->listen_fd = -1;
+        }
+        http_cleanup_pending_conns(t);
+        return false;
+    }
+
     /* Phase 4: submit accept SQEs to io_uring if available */
     if (pool->use_io_uring) {
         for (int i = 0; i < 8; i++) {
@@ -1722,6 +2009,14 @@ static void spawn_cluster_workers(int worker_count, int port) {
  * ═══════════════════════════════════════════ */
 
 static Value lib_http_serve(VM *vm, int arg_count, Value *args) {
+    if (!g_signals_registered) {
+        signal(SIGINT, sigint_handler);
+        signal(SIGTERM, sigint_handler);
+        g_signals_registered = true;
+    }
+    if (g_shutdown_flag) {
+        return val_nil();
+    }
     bool is_dispatch = (arg_count >= 3 && args[0].type == VAL_MODULE);
     int port;
     Value handler_val;
@@ -1776,6 +2071,14 @@ static Value lib_http_serve(VM *vm, int arg_count, Value *args) {
  * ═══════════════════════════════════════════ */
 
 static Value lib_http_serve_tls(VM *vm, int arg_count, Value *args) {
+    if (!g_signals_registered) {
+        signal(SIGINT, sigint_handler);
+        signal(SIGTERM, sigint_handler);
+        g_signals_registered = true;
+    }
+    if (g_shutdown_flag) {
+        return val_nil();
+    }
     bool is_dispatch = (arg_count >= 5 && args[0].type == VAL_MODULE);
     int port;
     Value handler_val;
@@ -1826,6 +2129,14 @@ static Value lib_http_serve_tls(VM *vm, int arg_count, Value *args) {
  * ═══════════════════════════════════════════ */
 
 static Value lib_http_serve_with_routes(VM *vm, int arg_count, Value *args) {
+    if (!g_signals_registered) {
+        signal(SIGINT, sigint_handler);
+        signal(SIGTERM, sigint_handler);
+        g_signals_registered = true;
+    }
+    if (g_shutdown_flag) {
+        return val_nil();
+    }
     bool is_dispatch = (arg_count >= 3 && args[0].type == VAL_MODULE);
     int port;
     Value routes_val;
@@ -1917,6 +2228,19 @@ static Value lib_http_create_struct(VM *vm, int arg_count, Value *args) {
     return val_struct(s);
 }
 
+/* ─── http.parse_multipart(body, content_type) ─── */
+static Value lib_http_parse_multipart(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 2 || args[base].type != VAL_STRING || args[base + 1].type != VAL_STRING) {
+        runtime_error(vm, "http.parse_multipart(body, content_type) requires two strings");
+        return val_nil();
+    }
+    const char *body = args[base].as.string->chars;
+    const char *ct = args[base + 1].as.string->chars;
+    int body_len = args[base].as.string->length;
+    return parse_multipart(vm, body, body_len, ct);
+}
+
 /* ─── http.test_request(method, path, body) ─── */
 /* Builds the same request shape handle_connection() builds from a real
  * socket, so app.handle(http.test_request(...)) exercises the exact route +
@@ -1946,7 +2270,7 @@ static Value lib_http_test_request(VM *vm, int arg_count, Value *args) {
         snprintf(query, sizeof(query), "%s", qmark + 1);
         *qmark = '\0';
     }
-    return make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, "127.0.0.1", -1);
+    return make_request(vm, method, path, query, body_val, json_val, val_nil(), headers_val, "127.0.0.1", -1, val_nil());
 }
 
 /* ─── http.write_socket(fd, data) ─── */
@@ -1984,15 +2308,15 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
     int fd = (int)args[base].as.integer;
     int max_bytes = (int)args[base + 1].as.integer;
     if (max_bytes <= 0) return val_string(allocate_string(vm, "", 0));
-    
+
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
-    
+
     char *buf = malloc((size_t)max_bytes);
     if (!buf) return val_nil();
-    
+
     int n = (int)recv(fd, buf, (size_t)max_bytes, 0);
     if (n < 0) {
         free(buf);
@@ -2004,7 +2328,7 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
         free(buf);
         return val_nil();
     }
-    
+
     ObjString *result = allocate_string(vm, buf, n);
     free(buf);
     return val_string(result);
@@ -2018,6 +2342,7 @@ void lib_http_init(VM *vm) {
     define_global(vm, copy_string("http", 4), val_module(mod));
     vm_register_dispatch(vm, "http", "get",    val_native_fn((void *)lib_http_get));
     vm_register_dispatch(vm, "http", "post",   val_native_fn((void *)lib_http_post));
+    vm_register_dispatch(vm, "http", "post_stream", val_native_fn((void *)lib_http_post_stream));
     vm_register_dispatch(vm, "http", "serve",  val_native_fn((void *)lib_http_serve));
     vm_register_dispatch(vm, "http", "serve_tls", val_native_fn((void *)lib_http_serve_tls));
     vm_register_dispatch(vm, "http", "serve_with_routes", val_native_fn((void *)lib_http_serve_with_routes));
@@ -2026,4 +2351,5 @@ void lib_http_init(VM *vm) {
     vm_register_dispatch(vm, "http", "write_socket", val_native_fn((void *)lib_http_write_socket));
     vm_register_dispatch(vm, "http", "close_socket", val_native_fn((void *)lib_http_close_socket));
     vm_register_dispatch(vm, "http", "read_socket",  val_native_fn((void *)lib_http_read_socket));
+    vm_register_dispatch(vm, "http", "parse_multipart", val_native_fn((void *)lib_http_parse_multipart));
 }

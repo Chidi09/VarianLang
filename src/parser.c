@@ -29,6 +29,7 @@ static AstNode *parse_enum_literal(Parser *parser, const char *enum_name, Source
 
 static AstNode *parse_trait_decl(Parser *parser);
 static AstNode *parse_actor_decl(Parser *parser);
+static AstNode *parse_schema_decl(Parser *parser);
 
 /* ─── Token string extraction (not null-terminated, use length) ─── */
 static char *token_str(Parser *parser, Token *token) {
@@ -543,8 +544,9 @@ static AstNode *parse_let_decl(Parser *parser) {
     }
 
     /* Optional type annotation: only for single-name declarations */
+    Type *type = NULL;
     if (name_count == 1 && match(parser, TOKEN_COLON)) {
-        parse_type(parser);  /* consume type, but we don't store it in AST for now */
+        type = parse_type(parser);
     }
 
     AstNode *initializer = NULL;
@@ -555,7 +557,7 @@ static AstNode *parse_let_decl(Parser *parser) {
     }
 
     match(parser, TOKEN_SEMICOLON); /* optional semicolon */
-    AstNode *result = ast_let_decl(parser->arena, loc, names, name_count, initializer, is_mutable);
+    AstNode *result = ast_let_decl(parser->arena, loc, names, name_count, initializer, is_mutable, type);
     for (int i = 0; i < name_count; i++)
         free(names[i]);
     return result;
@@ -993,6 +995,161 @@ static AstNode *parse_struct_decl(Parser *parser) {
     }
 
     AstNode *result = ast_struct_decl(parser->arena, loc, name, field_names, field_count,
+                                      type_params, type_param_count,
+                                      decorator_keys, decorator_values, decorator_count,
+                                      fdk_ptrs, fdv_ptrs, fdc_ptr);
+
+    for (int i = 0; i < field_count; i++)
+        free(field_names[i]);
+    for (int i = 0; i < type_param_count; i++)
+        free(type_params[i]);
+    for (int i = 0; i < decorator_count; i++)
+        free(decorator_keys[i]);
+    for (int i = 0; i < field_count; i++) {
+        for (int j = 0; j < field_decorator_counts[i]; j++) {
+            free(field_decorator_keys[i][j]);
+        }
+    }
+
+    return result;
+}
+
+static AstNode *parse_schema_decl(Parser *parser) {
+    SourceLoc loc = current_loc(parser);
+
+    /* Collect decorators before schema */
+    char *decorator_keys[32];
+    AstNode *decorator_values[32];
+    int decorator_count = 0;
+
+    while (check(parser, TOKEN_AT)) {
+        advance(parser); /* consume @ */
+        if (check(parser, TOKEN_IDENTIFIER)) {
+            advance(parser);
+            char *key = token_strdup(&parser->previous);
+            if (decorator_count >= 32) {
+                parser_error(parser, "Too many decorators on schema");
+                free(key);
+                break;
+            }
+            decorator_keys[decorator_count] = key;
+            if (match(parser, TOKEN_LPAREN)) {
+                decorator_values[decorator_count] = parse_expr(parser);
+                consume(parser, TOKEN_RPAREN, "Expected ')' after decorator argument");
+            } else {
+                decorator_values[decorator_count] = ast_bool_literal(parser->arena, current_loc(parser), true);
+            }
+            decorator_count++;
+        } else {
+            parser_error(parser, "Expected identifier after '@'");
+            break;
+        }
+    }
+
+    if (parser->current.type != TOKEN_IDENTIFIER) {
+        parser_error(parser, "Expected schema name after 'schema'");
+        for (int i = 0; i < decorator_count; i++) free(decorator_keys[i]);
+        return ast_null_literal(parser->arena, loc);
+    }
+    advance(parser);
+    char *name = token_strdup(&parser->previous);
+
+    /* Type parameters: schema Name<T> */
+    char *type_params[8];
+    int type_param_count = 0;
+    if (match(parser, TOKEN_LESS)) {
+        if (!check(parser, TOKEN_GREATER)) {
+            do {
+                if (type_param_count >= 8) {
+                    parser_error(parser, "Too many type parameters on schema");
+                    break;
+                }
+                consume(parser, TOKEN_IDENTIFIER, "Expected type parameter name");
+                type_params[type_param_count++] = token_strdup(&parser->previous);
+            } while (match(parser, TOKEN_COMMA));
+        }
+        consume(parser, TOKEN_GREATER, "Expected '>' after type parameters");
+    }
+
+    consume(parser, TOKEN_LBRACE, "Expected '{' after schema name");
+
+    char *field_names[64];
+    Type *field_types[64];
+    int field_count = 0;
+    char *field_decorator_keys[64][32];
+    AstNode *field_decorator_values[64][32];
+    int field_decorator_counts[64] = {0};
+
+    while (!check(parser, TOKEN_RBRACE) && !check(parser, TOKEN_EOF)) {
+        if (field_count >= 64) {
+            parser_error(parser, "Too many schema fields");
+            break;
+        }
+
+        /* Collect field decorators */
+        int fdeco_count = 0;
+        while (check(parser, TOKEN_AT)) {
+            advance(parser); /* consume @ */
+            if (check(parser, TOKEN_IDENTIFIER)) {
+                advance(parser);
+                char *key = token_strdup(&parser->previous);
+                if (fdeco_count >= 32) {
+                    parser_error(parser, "Too many decorators on field");
+                    free(key);
+                    break;
+                }
+                field_decorator_keys[field_count][fdeco_count] = key;
+                if (match(parser, TOKEN_LPAREN)) {
+                    field_decorator_values[field_count][fdeco_count] = parse_expr(parser);
+                    consume(parser, TOKEN_RPAREN, "Expected ')' after decorator argument");
+                } else {
+                    field_decorator_values[field_count][fdeco_count] = ast_bool_literal(parser->arena, current_loc(parser), true);
+                }
+                fdeco_count++;
+            } else {
+                parser_error(parser, "Expected identifier after '@'");
+                break;
+            }
+        }
+        field_decorator_counts[field_count] = fdeco_count;
+
+        if (parser->current.type != TOKEN_IDENTIFIER) {
+            parser_error(parser, "Expected field name");
+            for (int j = 0; j < fdeco_count; j++) free(field_decorator_keys[field_count][j]);
+            advance(parser);
+            break;
+        }
+        advance(parser);
+        field_names[field_count] = token_strdup(&parser->previous);
+
+        /* Field type is required for schemas: name: Type */
+        consume(parser, TOKEN_COLON, "Expected ':' and type annotation for schema field");
+        field_types[field_count] = parse_type(parser);
+        field_count++;
+
+        if (!match(parser, TOKEN_COMMA))
+            break;
+    }
+    consume(parser, TOKEN_RBRACE, "Expected '}' after schema fields");
+
+    /* Register schema type (same type registration as standard struct so it can be instantiated as one) */
+    parser_register_struct(parser, name, field_names, field_count);
+
+    /* Prepare field decorator arrays for ast_schema_decl */
+    char **fdk_ptrs[64] = {0};
+    AstNode **fdv_ptrs[64] = {0};
+    int *fdc_ptr = field_decorator_counts;
+    for (int i = 0; i < field_count; i++) {
+        if (field_decorator_counts[i] > 0) {
+            fdk_ptrs[i] = field_decorator_keys[i];
+            fdv_ptrs[i] = field_decorator_values[i];
+        }
+    }
+
+    Type **ft_ptrs = (Type **)arena_alloc(parser->arena, sizeof(Type *) * field_count);
+    for (int i = 0; i < field_count; i++) ft_ptrs[i] = field_types[i];
+
+    AstNode *result = ast_schema_decl(parser->arena, loc, name, field_names, ft_ptrs, field_count,
                                       type_params, type_param_count,
                                       decorator_keys, decorator_values, decorator_count,
                                       fdk_ptrs, fdv_ptrs, fdc_ptr);
@@ -1652,6 +1809,10 @@ static AstNode *parse_stmt(Parser *parser) {
 
     if (match(parser, TOKEN_STRUCT)) {
         return parse_struct_decl(parser);
+    }
+
+    if (match(parser, TOKEN_SCHEMA)) {
+        return parse_schema_decl(parser);
     }
 
     if (match(parser, TOKEN_ENUM)) {
@@ -2575,7 +2736,7 @@ AstNode *parser_parse(Parser *parser) {
 
                     AstNode *callee = ast_identifier(parser->arena, loc, mangled_name);
                     AstNode *init_call = ast_call(parser->arena, loc, callee, NULL, 0);
-                    AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false);
+                    AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false, NULL);
 
                     if (stmt_count >= stmt_capacity) {
                         stmt_capacity = stmt_capacity < 8 ? 8 : stmt_capacity * 2;
@@ -2724,7 +2885,7 @@ AstNode *parser_parse(Parser *parser) {
 
                         AstNode *callee = ast_identifier(parser->arena, loc, mangled_name);
                         AstNode *init_call = ast_call(parser->arena, loc, callee, NULL, 0);
-                        AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false);
+                        AstNode *let_stmt = ast_let_decl(parser->arena, loc, let_names, 1, init_call, false, NULL);
 
                         /* Append fn declaration and let binding to main program stmts */
                         if (stmt_count >= stmt_capacity) {

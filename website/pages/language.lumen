@@ -143,21 +143,17 @@
 </style>
 </head>
 <body>
-  <nav class="navbar container" style="position: sticky; top: 0; background: var(--bg-main); z-index: 100;">
-    <a href="/" class="nav-brand">
-      <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
-      Varian
-    </a>
-    <div class="nav-links">
-        <a href="/#language">Language</a>
-        <a href="/#ecosystem">Ecosystem</a>
-        <a href="/aurora">Aurora</a>
-        <a href="/zenith">Zenith</a>
-        <a href="/lumen">Lumen</a>
-        <a href="/the_varian_book">The Book</a>
-        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-      </div>
-  </nav>
+  <Page>
+
+  <Nav brand="Varian">
+      <a href="/#language">Language</a>
+      <a href="/#ecosystem">Ecosystem</a>
+      <a href="/aurora">Aurora</a>
+      <a href="/zenith">Zenith</a>
+      <a href="/lumen">Lumen</a>
+      <a href="/the_varian_book">The Book</a>
+      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+  </Nav>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -466,8 +462,7 @@ types: <code>c_int</code>, <code>c_double</code>, <code>c_float</code>, <code>c_
 <p>See <code>docs/TOOLING.md</code> for <code>vn run</code>/<code>test</code>/<code>lint</code>/<code>fmt</code>.</p>
     </main>
   </div>
-  <footer class="footer-main">
-    <div class="container">
+  <Footer>
       <div class="footer-grid">
         <div class="footer-col">
           <h4>Product</h4>
@@ -501,8 +496,7 @@ types: <code>c_int</code>, <code>c_double</code>, <code>c_float</code>, <code>c_
       <div class="footer-bottom">
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
-    </div>
-  </footer>
+  </Footer>
 <script>  var navToggle = document.getElementById('nav-toggle');
   var navLinks = document.querySelector('.nav-links');
   if (navToggle && navLinks) {
@@ -520,6 +514,7 @@ types: <code>c_int</code>, <code>c_double</code>, <code>c_float</code>, <code>c_
     });
   }
 </script>
+  </Page>
 </body>
 </html>
 </template>

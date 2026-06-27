@@ -80,7 +80,7 @@ void ast_program_add_stmt(AstNode *program, AstNode *stmt) {
 }
 
 AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
-                      AstNode *initializer, bool is_mutable) {
+                      AstNode *initializer, bool is_mutable, Type *type) {
     AstNode *node = alloc_node(arena, is_mutable ? NODE_LET_DECL : NODE_CONST_DECL, loc);
     if (name_count > 0) {
         node->let_decl.names = (char **)arena_alloc(arena, sizeof(char *) * name_count);
@@ -94,6 +94,7 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
     node->let_decl.name_count = name_count;
     node->let_decl.initializer = initializer;
     node->let_decl.is_mutable = is_mutable;
+    node->let_decl.type = type;
     return node;
 }
 
@@ -437,6 +438,84 @@ AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
         node->struct_decl.field_decorator_keys = NULL;
         node->struct_decl.field_decorator_values = NULL;
         node->struct_decl.field_decorator_counts = NULL;
+    }
+
+    return node;
+}
+
+AstNode *ast_schema_decl(Arena *arena, SourceLoc loc, const char *name,
+                         char **field_names, Type **field_types, int field_count,
+                         char **type_params, int type_param_count,
+                         char **decorator_keys, AstNode **decorator_values, int decorator_count,
+                         char ***field_decorator_keys, AstNode ***field_decorator_values, int *field_decorator_counts) {
+    AstNode *node = alloc_node(arena, NODE_SCHEMA_DECL, loc);
+    node->schema_decl.name = (char *)arena_alloc(arena, strlen(name) + 1);
+    strcpy(node->schema_decl.name, name);
+    if (field_count > 0) {
+        node->schema_decl.field_names = (char **)arena_alloc(arena, sizeof(char *) * field_count);
+        node->schema_decl.field_types = (Type **)arena_alloc(arena, sizeof(Type *) * field_count);
+        for (int i = 0; i < field_count; i++) {
+            node->schema_decl.field_names[i] = (char *)arena_alloc(arena, strlen(field_names[i]) + 1);
+            strcpy(node->schema_decl.field_names[i], field_names[i]);
+            node->schema_decl.field_types[i] = field_types[i];
+        }
+    } else {
+        node->schema_decl.field_names = NULL;
+        node->schema_decl.field_types = NULL;
+    }
+    node->schema_decl.field_count = field_count;
+
+    if (type_param_count > 0) {
+        node->schema_decl.type_params = (char **)arena_alloc(arena, sizeof(char *) * type_param_count);
+        for (int i = 0; i < type_param_count; i++) {
+            node->schema_decl.type_params[i] = (char *)arena_alloc(arena, strlen(type_params[i]) + 1);
+            strcpy(node->schema_decl.type_params[i], type_params[i]);
+        }
+    } else {
+        node->schema_decl.type_params = NULL;
+    }
+    node->schema_decl.type_param_count = type_param_count;
+
+    /* Schema-level decorators */
+    if (decorator_count > 0) {
+        node->schema_decl.decorator_keys = (char **)arena_alloc(arena, sizeof(char *) * decorator_count);
+        node->schema_decl.decorator_values = (AstNode **)arena_alloc(arena, sizeof(AstNode *) * decorator_count);
+        for (int i = 0; i < decorator_count; i++) {
+            node->schema_decl.decorator_keys[i] = (char *)arena_alloc(arena, strlen(decorator_keys[i]) + 1);
+            strcpy(node->schema_decl.decorator_keys[i], decorator_keys[i]);
+            node->schema_decl.decorator_values[i] = decorator_values[i];
+        }
+    } else {
+        node->schema_decl.decorator_keys = NULL;
+        node->schema_decl.decorator_values = NULL;
+    }
+    node->schema_decl.decorator_count = decorator_count;
+
+    /* Field-level decorators */
+    if (field_count > 0 && field_decorator_keys) {
+        node->schema_decl.field_decorator_keys = (char ***)arena_alloc(arena, sizeof(char **) * field_count);
+        node->schema_decl.field_decorator_values = (AstNode ***)arena_alloc(arena, sizeof(AstNode **) * field_count);
+        node->schema_decl.field_decorator_counts = (int *)arena_alloc(arena, sizeof(int) * field_count);
+        for (int i = 0; i < field_count; i++) {
+            int fcount = field_decorator_counts ? field_decorator_counts[i] : 0;
+            node->schema_decl.field_decorator_counts[i] = fcount;
+            if (fcount > 0 && field_decorator_keys[i]) {
+                node->schema_decl.field_decorator_keys[i] = (char **)arena_alloc(arena, sizeof(char *) * fcount);
+                node->schema_decl.field_decorator_values[i] = (AstNode **)arena_alloc(arena, sizeof(AstNode *) * fcount);
+                for (int j = 0; j < fcount; j++) {
+                    node->schema_decl.field_decorator_keys[i][j] = (char *)arena_alloc(arena, strlen(field_decorator_keys[i][j]) + 1);
+                    strcpy(node->schema_decl.field_decorator_keys[i][j], field_decorator_keys[i][j]);
+                    node->schema_decl.field_decorator_values[i][j] = field_decorator_values[i][j];
+                }
+            } else {
+                node->schema_decl.field_decorator_keys[i] = NULL;
+                node->schema_decl.field_decorator_values[i] = NULL;
+            }
+        }
+    } else {
+        node->schema_decl.field_decorator_keys = NULL;
+        node->schema_decl.field_decorator_values = NULL;
+        node->schema_decl.field_decorator_counts = NULL;
     }
 
     return node;
@@ -892,6 +971,13 @@ void ast_print(AstNode *node, int indent) {
             printf("(struct %s", node->struct_decl.name);
             for (int i = 0; i < node->struct_decl.field_count; i++)
                 printf(" %s", node->struct_decl.field_names[i]);
+            printf(")\n");
+            break;
+
+        case NODE_SCHEMA_DECL:
+            printf("(schema %s", node->schema_decl.name);
+            for (int i = 0; i < node->schema_decl.field_count; i++)
+                printf(" %s", node->schema_decl.field_names[i]);
             printf(")\n");
             break;
 

@@ -96,6 +96,7 @@ typedef enum {
 
     /* Structs */
     NODE_STRUCT_DECL,
+    NODE_SCHEMA_DECL,
     NODE_STRUCT_LITERAL,
 
     /* Actor */
@@ -168,6 +169,7 @@ struct AstNode {
             int name_count;
             AstNode *initializer;
             bool is_mutable;
+            Type *type;  /* parsed type annotation, may be NULL */
         } let_decl;
 
         /* Function declaration */
@@ -339,6 +341,20 @@ struct AstNode {
             AstNode ***field_decorator_values;
             int *field_decorator_counts;
         } struct_decl;
+        struct {
+            char *name;
+            char **field_names;
+            Type **field_types;
+            int field_count;
+            char **type_params;
+            int type_param_count;
+            char **decorator_keys;
+            AstNode **decorator_values;
+            int decorator_count;
+            char ***field_decorator_keys;
+            AstNode ***field_decorator_values;
+            int *field_decorator_counts;
+        } schema_decl;
 
         /* Struct literal */
         struct {
@@ -448,7 +464,7 @@ AstNode *ast_program(Arena *arena, SourceLoc loc);
 void ast_program_add_stmt(AstNode *program, AstNode *stmt);
 
 AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
-                      AstNode *initializer, bool is_mutable);
+                      AstNode *initializer, bool is_mutable, Type *type);
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
                      char **type_params, int type_param_count,
@@ -495,6 +511,10 @@ AstNode *ast_continue(Arena *arena, SourceLoc loc);
 
 AstNode *ast_struct_decl(Arena *arena, SourceLoc loc, const char *name,
                          char **field_names, int field_count,
+                         char **type_params, int type_param_count,
+                         char **decorator_keys, AstNode **decorator_values, int decorator_count,
+                         char ***field_decorator_keys, AstNode ***field_decorator_values, int *field_decorator_counts);
+AstNode *ast_schema_decl(Arena *arena, SourceLoc loc, const char *name, char **field_names, Type **field_types, int field_count,
                          char **type_params, int type_param_count,
                          char **decorator_keys, AstNode **decorator_values, int decorator_count,
                          char ***field_decorator_keys, AstNode ***field_decorator_values, int *field_decorator_counts);

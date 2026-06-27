@@ -3,6 +3,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#ifdef _WIN32
+#define setenv(key, val, overwrite) _putenv_s(key, val)
+#endif
+
 static int env_arg_base(int arg_count, Value *args) {
     return (arg_count >= 1 && args[0].type == VAL_MODULE) ? 1 : 0;
 }

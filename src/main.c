@@ -13,13 +13,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <dirent.h>
-#include <unistd.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+#endif
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <signal.h>
-#include <time.h>
+#ifndef VN_NO_HTTP
 #include <curl/curl.h>
+#endif
 
 /* Set before vm_run() for "vn <file>"/"vn run <file>" so lib_http.c's
  * cluster worker threads can independently re-load the same script. */
@@ -1721,7 +1723,9 @@ int main(int argc, char *argv[]) {
      * spawned later by lib_http.c) can call into libcurl -- curl_easy_init()
      * does this lazily on first use otherwise, which is not safe if two
      * threads race to be the "first" caller. */
+#ifndef VN_NO_HTTP
     curl_global_init(CURL_GLOBAL_ALL);
+#endif
 #ifdef VARIAN_AOT_STANDALONE
     (void)argc; (void)argv;
     VM vm;

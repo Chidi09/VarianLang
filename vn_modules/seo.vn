@@ -1,15 +1,16 @@
-// seo.vn — Sitemap, robots.txt, JSON-LD structured data
+// seo.vn — Complete SEO module: sitemaps, robots, JSON-LD, Open Graph,
+//          Twitter Cards, canonical URLs, hreflang, analytics, RSS,
+//          performance & security helpers
 //
 //   let s = new_sitemap("https://example.com")
 //   s.add("/", "2024-06-01", "daily", 1.0)
-//   s.add("/about", "2024-05-15", "monthly", 0.8)
 //   let xml = s.render()
 //
 //   let robots = seo_robots("https://example.com/sitemap.xml")
 //
 //   let ld = seo_ld_breadcrumb(["Home", "/", "Products", "/products"])
-//   // Or use the builder:
 //   let org = seo_ld_org("My Corp", "https://example.com/logo.png")
+//   let product = seo_ld_product("Widget", "A great widget", "img.png", "SKU123", 9.99, "USD", "InStock")
 
 struct Sitemap {
     base_url: string,
@@ -60,43 +61,370 @@ fn seo_robots(sitemap_url) {
     return "User-agent: *\nAllow: /\n\nSitemap: " + sitemap_url + "\n"
 }
 
-fn seo_ld_breadcrumb(items) {
-    // items = ["Home", "/", "Products", "/products", ...]
-    let item_list = []
-    for i in 0..items.len() / 2 {
-        let name = items[i * 2]
-        let url = items[i * 2 + 1]
-        item_list = item_list.push(http.create_struct(
-            ["@type", "position", "name", "item"],
-            ["ListItem", i + 1, name, url]
+fn seo_robots_custom(rules) {
+    let out = ""
+    for i in 0..rules.len() {
+        out = out + rules[i] + "\n"
+    }
+    return out
+}
+
+// ─── Canonical URL ───
+
+fn seo_canonical(url) {
+    return "<link rel=\"canonical\" href=\"" + _escape_xml(url) + "\">\n"
+}
+
+// ─── Hreflang ───
+
+fn seo_hreflang(lang, url) {
+    return "<link rel=\"alternate\" hreflang=\"" + _escape_xml(lang) + "\" href=\"" + _escape_xml(url) + "\">\n"
+}
+
+fn seo_hreflangs(langs_array) {
+    let out = ""
+    for i in 0..langs_array.len() {
+        let pair = langs_array[i]
+        out = out + seo_hreflang(pair[0], pair[1])
+    }
+    return out
+}
+
+// ─── Open Graph ───
+
+fn seo_og_tag(property, content) {
+    return "<meta property=\"og:" + _escape_xml(property) + "\" content=\"" + _escape_xml(content) + "\">\n"
+}
+
+fn seo_og_all(title, description, image, url, site_name, locale, type) {
+    if type == null or type == "" { type = "website" }
+    let out = ""
+    out = out + seo_og_tag("title", title)
+    out = out + seo_og_tag("description", description)
+    out = out + seo_og_tag("image", image)
+    if url != null and url != "" { out = out + seo_og_tag("url", url) }
+    if site_name != null and site_name != "" { out = out + seo_og_tag("site_name", site_name) }
+    if locale != null and locale != "" { out = out + seo_og_tag("locale", locale) }
+    out = out + seo_og_tag("type", type)
+    return out
+}
+
+// ─── Twitter Cards ───
+
+fn seo_twitter_all(card, site, title, description, image, creator) {
+    if card == null or card == "" { card = "summary_large_image" }
+    let out = ""
+    out = out + "<meta name=\"twitter:card\" content=\"" + _escape_xml(card) + "\">\n"
+    if site != null and site != "" { out = out + "<meta name=\"twitter:site\" content=\"" + _escape_xml(site) + "\">\n" }
+    if title != null and title != "" { out = out + "<meta name=\"twitter:title\" content=\"" + _escape_xml(title) + "\">\n" }
+    if description != null and description != "" { out = out + "<meta name=\"twitter:description\" content=\"" + _escape_xml(description) + "\">\n" }
+    if image != null and image != "" { out = out + "<meta name=\"twitter:image\" content=\"" + _escape_xml(image) + "\">\n" }
+    if creator != null and creator != "" { out = out + "<meta name=\"twitter:creator\" content=\"" + _escape_xml(creator) + "\">\n" }
+    return out
+}
+
+// ─── JSON-LD Structured Data ───
+
+fn seo_ld_product(name, description, image, sku, price, currency, availability) {
+    let offers = http.create_struct(
+        ["@type", "price", "priceCurrency", "availability"],
+        ["Offer", "" + price, currency, "http://schema.org/" + availability]
+    )
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "description", "image", "sku", "offers"],
+        ["https://schema.org", "Product", name, description, image, sku, offers]
+    ))
+}
+
+fn seo_ld_faq(questions) {
+    let main_entity = []
+    for i in 0..questions.len() {
+        let q = questions[i]
+        let answer = http.create_struct(
+            ["@type", "text"],
+            ["Answer", q[1]]
+        )
+        main_entity = main_entity.push(http.create_struct(
+            ["@type", "name", "acceptedAnswer"],
+            ["Question", q[0], answer]
         ))
     }
     return json_encode(http.create_struct(
-        ["@context", "@type", "itemListElement"],
-        ["https://schema.org", "BreadcrumbList", item_list]
+        ["@context", "@type", "mainEntity"],
+        ["https://schema.org", "FAQPage", main_entity]
     ))
 }
 
-fn seo_ld_org(name, logo_url) {
+fn seo_ld_howto(name, description, steps) {
+    let step_list = []
+    for i in 0..steps.len() {
+        let s = steps[i]
+        step_list = step_list.push(http.create_struct(
+            ["@type", "name", "text"],
+            ["HowToStep", s[0], s[1]]
+        ))
+    }
     return json_encode(http.create_struct(
-        ["@context", "@type", "name", "logo"],
-        ["https://schema.org", "Organization", name, logo_url]
+        ["@context", "@type", "name", "description", "step"],
+        ["https://schema.org", "HowTo", name, description, step_list]
     ))
 }
 
-fn seo_ld_article(headline, author, date_published, date_modified) {
+fn seo_ld_local_business(name, address, phone, url, image, rating, review_count) {
+    let obj_keys = ["@context", "@type", "name", "address", "telephone", "url", "image"]
+    let obj_vals = ["https://schema.org", "LocalBusiness", name, address, phone, url, image]
+    if rating != null and rating != "" and review_count != null and review_count != "" {
+        let agg_rating = http.create_struct(
+            ["@type", "ratingValue", "reviewCount"],
+            ["AggregateRating", "" + rating, "" + review_count]
+        )
+        obj_keys = obj_keys.push("aggregateRating")
+        obj_vals = obj_vals.push(agg_rating)
+    }
+    return json_encode(http.create_struct(obj_keys, obj_vals))
+}
+
+fn seo_ld_event(name, start_date, location_name, location_url, description, image) {
+    let location = http.create_struct(
+        ["@type", "name", "url"],
+        ["Place", location_name, location_url]
+    )
     return json_encode(http.create_struct(
-        ["@context", "@type", "headline", "author", "datePublished", "dateModified"],
-        ["https://schema.org", "Article", headline, author, date_published, date_modified]
+        ["@context", "@type", "name", "startDate", "location", "description", "image"],
+        ["https://schema.org", "Event", name, start_date, location, description, image]
     ))
 }
 
-fn seo_ld_webapp(name, url, description) {
+fn seo_ld_review(item_name, author, review_body, rating_value) {
+    let review_rating = http.create_struct(
+        ["@type", "ratingValue"],
+        ["Rating", "" + rating_value]
+    )
+    let item_reviewed = http.create_struct(
+        ["@type", "name"],
+        ["Thing", item_name]
+    )
+    let author_obj = http.create_struct(
+        ["@type", "name"],
+        ["Person", author]
+    )
     return json_encode(http.create_struct(
-        ["@context", "@type", "name", "url", "description"],
-        ["https://schema.org", "WebApplication", name, url, description]
+        ["@context", "@type", "itemReviewed", "author", "reviewBody", "reviewRating"],
+        ["https://schema.org", "Review", item_reviewed, author_obj, review_body, review_rating]
     ))
 }
+
+fn seo_ld_video(name, description, thumbnail_url, upload_date, duration) {
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "description", "thumbnailUrl", "uploadDate", "duration"],
+        ["https://schema.org", "VideoObject", name, description, thumbnail_url, upload_date, duration]
+    ))
+}
+
+fn seo_ld_search_action(target_url) {
+    let potential_action = http.create_struct(
+        ["@type", "target", "query-input"],
+        ["SearchAction", target_url, "required name=search_term_string"]
+    )
+    return json_encode(http.create_struct(
+        ["@context", "@type", "potentialAction"],
+        ["https://schema.org", "WebSite", potential_action]
+    ))
+}
+
+fn seo_ld_webpage(name, description, url, image) {
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "description", "url", "image"],
+        ["https://schema.org", "WebPage", name, description, url, image]
+    ))
+}
+
+fn seo_ld_person(name, given_name, family_name, job_title, url, image) {
+    let obj_keys = ["@context", "@type", "name", "givenName", "familyName", "url", "image"]
+    let obj_vals = ["https://schema.org", "Person", name, given_name, family_name, url, image]
+    if job_title != null and job_title != "" {
+        obj_keys = obj_keys.push("jobTitle")
+        obj_vals = obj_vals.push(job_title)
+    }
+    return json_encode(http.create_struct(obj_keys, obj_vals))
+}
+
+fn seo_ld_blog_posting(headline, author, date_published, description, image) {
+    let author_obj = http.create_struct(
+        ["@type", "name"],
+        ["Person", author]
+    )
+    return json_encode(http.create_struct(
+        ["@context", "@type", "headline", "author", "datePublished", "description", "image"],
+        ["https://schema.org", "BlogPosting", headline, author_obj, date_published, description, image]
+    ))
+}
+
+fn seo_ld_software_app(name, description, url, image, offers) {
+    let offer_obj = http.create_struct(
+        ["@type", "price", "priceCurrency"],
+        ["Offer", "" + offers[0], offers[1]]
+    )
+    return json_encode(http.create_struct(
+        ["@context", "@type", "name", "description", "url", "image", "offers"],
+        ["https://schema.org", "SoftwareApplication", name, description, url, image, offer_obj]
+    ))
+}
+
+// ─── Sitemap Index (for >50k URLs) ───
+
+struct SitemapIndex {
+    sitemaps: any,
+}
+
+impl SitemapIndex {
+    fn add(self, sitemap_url, lastmod) {
+        let entry = http.create_struct(
+            ["loc", "lastmod"],
+            [sitemap_url, lastmod]
+        )
+        self.sitemaps = self.sitemaps.push(entry)
+    }
+
+    fn render(self) {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml = xml + "<sitemapindex xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        for i in 0..self.sitemaps.len() {
+            let s = self.sitemaps[i]
+            xml = xml + "  <sitemap>\n"
+            xml = xml + "    <loc>" + _escape_xml(_validate.get_field(s, "loc")) + "</loc>\n"
+            let lm = _validate.get_field(s, "lastmod")
+            if lm != null and lm != "" {
+                xml = xml + "    <lastmod>" + lm + "</lastmod>\n"
+            }
+            xml = xml + "  </sitemap>\n"
+        }
+        xml = xml + "</sitemapindex>\n"
+        return xml
+    }
+}
+
+fn seo_sitemap_index(sitemaps_array) {
+    let idx = SitemapIndex { sitemaps: [] }
+    for i in 0..sitemaps_array.len() {
+        let entry = sitemaps_array[i]
+        idx.add(entry[0], entry[1])
+    }
+    return idx
+}
+
+// ─── RSS Feed ───
+
+struct RssFeed {
+    title: string,
+    link: string,
+    description: string,
+    items: any,
+}
+
+impl RssFeed {
+    fn add(self, title, link, description, pub_date, author) {
+        let item = http.create_struct(
+            ["title", "link", "description", "pubDate", "author"],
+            [title, link, description, pub_date, author]
+        )
+        self.items = self.items.push(item)
+    }
+
+    fn render(self) {
+        let xml = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+        xml = xml + "<rss version=\"2.0\" xmlns:atom=\"http://www.w3.org/2005/Atom\">\n"
+        xml = xml + "  <channel>\n"
+        xml = xml + "    <title>" + _escape_xml(self.title) + "</title>\n"
+        xml = xml + "    <link>" + _escape_xml(self.link) + "</link>\n"
+        xml = xml + "    <description>" + _escape_xml(self.description) + "</description>\n"
+        xml = xml + "    <atom:link href=\"" + _escape_xml(self.link) + "\" rel=\"self\" type=\"application/rss+xml\"/>\n"
+        for i in 0..self.items.len() {
+            let item = self.items[i]
+            xml = xml + "    <item>\n"
+            xml = xml + "      <title>" + _escape_xml(_validate.get_field(item, "title")) + "</title>\n"
+            xml = xml + "      <link>" + _escape_xml(_validate.get_field(item, "link")) + "</link>\n"
+            xml = xml + "      <description>" + _escape_xml(_validate.get_field(item, "description")) + "</description>\n"
+            let pd = _validate.get_field(item, "pubDate")
+            if pd != null and pd != "" {
+                xml = xml + "      <pubDate>" + pd + "</pubDate>\n"
+            }
+            let au = _validate.get_field(item, "author")
+            if au != null and au != "" {
+                xml = xml + "      <author>" + _escape_xml(au) + "</author>\n"
+            }
+            xml = xml + "    </item>\n"
+        }
+        xml = xml + "  </channel>\n"
+        xml = xml + "</rss>\n"
+        return xml
+    }
+}
+
+fn seo_rss_feed(channel_title, channel_link, channel_desc) {
+    return RssFeed {
+        title: channel_title,
+        link: channel_link,
+        description: channel_desc,
+        items: []
+    }
+}
+
+// ─── Analytics ───
+
+fn seo_analytics_gtag(measurement_id) {
+    let id = _escape_xml(measurement_id)
+    return "<script async src=\"https://www.googletagmanager.com/gtag/js?id=" + id + "\"></script>\n" +
+           "<script>window.dataLayer=window.dataLayer||[];function gtag()\{dataLayer.push(arguments)\}gtag('js',new Date());gtag('config','" + id + "');</script>\n"
+}
+
+fn seo_analytics_plausible(domain, script_url) {
+    if script_url == null or script_url == "" { script_url = "https://plausible.io/js/script.js" }
+    return "<script defer data-domain=\"" + _escape_xml(domain) + "\" src=\"" + _escape_xml(script_url) + "\"></script>\n"
+}
+
+fn seo_analytics_umami(website_id, script_url) {
+    if script_url == null or script_url == "" { script_url = "https://cloud.umami.is/script.js" }
+    return "<script defer src=\"" + _escape_xml(script_url) + "\" data-website-id=\"" + _escape_xml(website_id) + "\"></script>\n"
+}
+
+fn seo_analytics_custom(script_html) {
+    return script_html + "\n"
+}
+
+// ─── Performance helpers ───
+
+fn seo_preconnect(url) {
+    return "<link rel=\"preconnect\" href=\"" + _escape_xml(url) + "\">\n"
+}
+
+fn seo_prefetch(url) {
+    return "<link rel=\"prefetch\" href=\"" + _escape_xml(url) + "\">\n"
+}
+
+fn seo_preload(url, as_type) {
+    return "<link rel=\"preload\" href=\"" + _escape_xml(url) + "\" as=\"" + _escape_xml(as_type) + "\">\n"
+}
+
+fn seo_lazy_img(src, alt, cls) {
+    if cls == null { cls = "" }
+    if cls != "" { cls = " class=\"" + cls + "\"" }
+    return "<img src=\"" + _escape_xml(src) + "\" alt=\"" + _escape_xml(alt) + "\" loading=\"lazy\"" + cls + ">\n"
+}
+
+// ─── Security / meta helpers ───
+
+fn seo_meta_charset(charset) {
+    if charset == null or charset == "" { charset = "utf-8" }
+    return "<meta charset=\"" + charset + "\">\n"
+}
+
+fn seo_meta_viewport(content) {
+    if content == null or content == "" { content = "width=device-width, initial-scale=1" }
+    return "<meta name=\"viewport\" content=\"" + content + "\">\n"
+}
+
+// ─── Internal helpers ───
 
 fn _escape_xml(s) {
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;")

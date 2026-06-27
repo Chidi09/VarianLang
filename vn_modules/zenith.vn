@@ -195,9 +195,9 @@ fn upgrade_websocket(req) {
                    "Upgrade: websocket\r\n" +
                    "Connection: Upgrade\r\n" +
                    "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
-    
+
     http.write_socket(req.socket_fd, response)
-    
+
     return WebSocket {
         socket_fd: req.socket_fd,
         _buffer: ""
@@ -281,9 +281,11 @@ fn radix_lookup(root, route_key) {
     let node = root
     let param_names = []
     let param_values = []
+    let dir_segs = []
     for i in 0..segs.len() {
         let seg = segs[i]
         let next = null
+        let is_param = false
         for j in 0..node.static_keys.len() {
             if node.static_keys[j] == seg {
                 next = node.static_children[j]
@@ -294,9 +296,17 @@ fn radix_lookup(root, route_key) {
             next = node.param_child
             param_names = param_names.push(next.param_name)
             param_values = param_values.push(seg)
+            is_param = true
         }
         if next == null {
             return null
+        }
+        if i > 0 {
+            if is_param {
+                dir_segs = dir_segs.push("[" + next.param_name + "]")
+            } else {
+                dir_segs = dir_segs.push(seg)
+            }
         }
         node = next
     }
@@ -304,8 +314,8 @@ fn radix_lookup(root, route_key) {
         return null
     }
     return http.create_struct(
-        ["handler", "summary", "param_names", "param_values"],
-        [node.handler, node.summary, param_names, param_values]
+        ["handler", "summary", "param_names", "param_values", "dir_segs"],
+        [node.handler, node.summary, param_names, param_values, dir_segs]
     )
 }
 
@@ -322,11 +332,19 @@ struct ZenithApp {
     schema_names: array,
     schema_values: array,
     port: int,
-    error_handler
+    error_handler,
+    _sitemap_instance,
+    _robots_content: string,
+    _cors_enabled: bool,
+    _cors_origins: string,
+    _cors_methods: string,
+    _cors_headers: string,
+    _compress_enabled: bool,
+    _compress_threshold: int
 }
 
 fn new_app() {
-    return ZenithApp {
+    let app = ZenithApp {
         root: new_radix_node(),
         middlewares: [],
         route_list: [],
@@ -337,8 +355,45 @@ fn new_app() {
         schema_names: [],
         schema_values: [],
         port: 8080,
-        error_handler: null
+        error_handler: null,
+        _sitemap_instance: null,
+        _robots_content: "",
+        _cors_enabled: false,
+        _cors_origins: "*",
+        _cors_methods: "GET,POST,PUT,PATCH,DELETE,OPTIONS",
+        _cors_headers: "Content-Type,Authorization",
+        _compress_enabled: false,
+        _compress_threshold: 1024
     }
+    radix_insert(app.root, "GET/admin/jobs", _admin_jobs_handler, "LiveDashboard GET")
+    radix_insert(app.root, "POST/admin/jobs", _admin_jobs_handler, "LiveDashboard POST")
+    // Auto-register SEO routes
+    app.get("/sitemap.xml", |req| {
+        if app._sitemap_instance == null {
+            return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+        }
+        let body = app._sitemap_instance.render()
+        return Response { status: 200, body: body, content_type: "application/xml" }
+    }, "Sitemap XML", null)
+    app.get("/robots.txt", |req| {
+        if app._robots_content != null and app._robots_content != "" {
+            return Response { status: 200, body: app._robots_content, content_type: "text/plain" }
+        }
+        let sitemap_url = ""
+        if app._sitemap_instance != null {
+            sitemap_url = _validate.get_field(app._sitemap_instance, "base_url")
+            if sitemap_url == null { sitemap_url = "" }
+            if sitemap_url != "" {
+                sitemap_url = sitemap_url + "sitemap.xml"
+            }
+        }
+        if sitemap_url == "" {
+            sitemap_url = req.scheme + "://" + req.host + "/sitemap.xml"
+        }
+        let robots = "User-agent: *\nAllow: /\n\nSitemap: " + sitemap_url + "\n"
+        return Response { status: 200, body: robots, content_type: "text/plain" }
+    }, "Robots.txt", null)
+    return app
 }
 
 // ─── Static file serving ───
@@ -354,10 +409,18 @@ fn _ends_with(s, suffix) {
     return s.substring(s_len - suf_len, s_len) == suffix
 }
 
+fn _ts_strip(code) {
+    code = regex.replace("interface[[:space:]]+[^{]+\\{[^}]*\\}", code, "")
+    code = regex.replace("type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[^;]+;", code, "")
+    code = regex.replace(":[[:space:]]*(string|number|boolean|any|void|unknown)", code, "")
+    code = regex.replace("[[:space:]]+as[[:space:]]+[A-Za-z0-9_]+", code, "")
+    return code
+}
+
 fn _mime_type_for_path(path) {
     if _ends_with(path, ".html") { return "text/html" }
     if _ends_with(path, ".css") { return "text/css" }
-    if _ends_with(path, ".js") { return "application/javascript" }
+    if _ends_with(path, ".ts") { return "application/javascript" }
     if _ends_with(path, ".json") { return "application/json" }
     if _ends_with(path, ".png") { return "image/png" }
     if _ends_with(path, ".jpg") { return "image/jpeg" }
@@ -402,6 +465,15 @@ fn _static_handler_for(app, path) {
             }
             let full_path = mount.directory + "/" + rel
             return | req | {
+                if _ends_with(full_path, ".ts") {
+                    let ts_text = io.read_text(full_path)
+                    if ts_text == null {
+                        return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+                    }
+                    let js_code = _ts_strip(ts_text)
+                    return Response { status: 200, body: js_code, content_type: "application/javascript" }
+                }
+
                 let bytes = io.read_bytes(full_path)
                 if bytes == null {
                     return Response { status: 404, body: "Not Found", content_type: "text/plain" }
@@ -468,6 +540,14 @@ impl ZenithApp {
         self.static_mounts = self.static_mounts.push(StaticMount { prefix: prefix, directory: directory })
     }
 
+    fn seo_register(self, sitemap_instance) {
+        self._sitemap_instance = sitemap_instance
+    }
+
+    fn robots_txt(self, content) {
+        self._robots_content = content
+    }
+
     fn enable_docs(self, endpoint) {
         self.docs_enabled = true
         self.docs_endpoint = endpoint
@@ -486,15 +566,76 @@ impl ZenithApp {
         return self
     }
 
+    // ─── Auth Middleware Registration ───
+
+    // Register JWT middleware for the whole app.
+    fn use_auth(self, secret) {
+        self.add_middleware(auth.zenith_auth.jwt(secret))
+        return self
+    }
+
+    // Register JWT middleware with RS256 (asymmetric).
+    fn use_auth_rs256(self, public_key) {
+        self.add_middleware(auth.zenith_auth.jwt_rs256(public_key))
+        return self
+    }
+
+    // Register session middleware.
+    fn use_session(self, store_pid, cookie_name) {
+        self.add_middleware(auth.zenith_auth.session(store_pid, cookie_name))
+        return self
+    }
+
+    // Register security headers middleware (CSP, HSTS, XFO, etc.).
+    fn use_security_headers(self) {
+        self.add_middleware(auth.zenith_auth.security_headers)
+        return self
+    }
+
+    // Register CORS middleware.
+    fn use_cors(self, allow_origins, allow_methods, allow_headers) {
+        if allow_methods == null {
+            allow_methods = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+        }
+        if allow_headers == null {
+            allow_headers = ["Content-Type", "Authorization", "X-CSRF-Token", "X-MFA-Code"]
+        }
+        self.add_middleware(shield.cors(allow_origins, allow_methods, allow_headers))
+        return self
+    }
+
+    // Register audit middleware that logs all requests.
+    fn use_audit_logging(self, db) {
+        self.add_middleware(auth.zenith_auth.audit_middleware(db))
+        return self
+    }
+
     // Synchronous request handling — usable directly in tests without a
     // running socket: app.handle(fake_req).
     fn handle(self, req) {
+        // CORS preflight
+        if self._cors_enabled and req.method == "OPTIONS" {
+            let cors_resp = Response {
+                status: 204,
+                body: "",
+                content_type: "text/plain",
+                _keep_open: false
+            }
+            cors_resp = with_header(cors_resp, "Access-Control-Allow-Origin", self._cors_origins)
+            cors_resp = with_header(cors_resp, "Access-Control-Allow-Methods", self._cors_methods)
+            cors_resp = with_header(cors_resp, "Access-Control-Allow-Headers", self._cors_headers)
+            cors_resp = with_header(cors_resp, "Access-Control-Max-Age", "86400")
+            return cors_resp
+        }
+
         let m = radix_lookup(self.root, req.method + req.path)
         let handler = null
         let params = null
+        let dir_segs = []
         if m != null {
             handler = m.handler
             params = http.create_struct(m.param_names, m.param_values)
+            dir_segs = m.dir_segs
         } else if req.method == "GET" {
             handler = _static_handler_for(self, req.path)
         }
@@ -504,25 +645,55 @@ impl ZenithApp {
         let ip = _get_req_field(req, "ip", "127.0.0.1")
         let socket_fd = _get_req_field(req, "socket_fd", -1)
         let query = _get_req_field(req, "query", "")
+        let _multipart = _get_req_field(req, "_multipart", null)
 
         let req2 = http.create_struct(
-            ["method", "path", "query", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd"],
-            [req.method, req.path, query, body, json, params, 0, handler, headers, ip, socket_fd]
+            ["method", "path", "query", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
+            [req.method, req.path, query, body, json, params, 0, handler, headers, ip, socket_fd, dir_segs, _multipart]
         )
+        let result = null
         try {
-            return _run_middleware(self, req2)
+            result = _run_middleware(self, req2)
         } catch e {
             print("CRASHED:", e)
             let info = errors.make(errors.kind(e), "" + e, "")
             if self.error_handler != null {
-                return self.error_handler(info, req)
+                result = self.error_handler(info, req)
+            } else {
+                // default: clean JSON 500, never leak internals to the client
+                result = http.create_struct(
+                    ["status", "body", "content_type"],
+                    [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
+                )
             }
-            // default: clean JSON 500, never leak internals to the client
-            return http.create_struct(
-                ["status", "body", "content_type"],
-                [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
-            )
         }
+
+        // Inject CORS response headers for non-preflight responses
+        if self._cors_enabled and result != null {
+            result = with_header(result, "Access-Control-Allow-Origin", self._cors_origins)
+        }
+
+        // Compression middleware placeholder — will be a native middleware
+        // once a native gzip/compress function is available. The middleware
+        // checks Accept-Encoding: gzip and would compress the body.
+        if self._compress_enabled and result != null {
+            let resp_body = _get_req_field(result, "body", "")
+            if resp_body != null and resp_body.len() > self._compress_threshold {
+                // Check Accept-Encoding header for gzip support
+                let req_headers = _get_req_field(req, "headers", null)
+                let accept_enc = ""
+                if req_headers != null {
+                    accept_enc = _validate.get_field(req_headers, "accept_encoding")
+                }
+                if accept_enc != null and accept_enc.index_of("gzip") >= 0 {
+                    // Future: result = with_header(result, "Content-Encoding", "gzip")
+                    // For now, compression requires a native C binding (zlib).
+                    // The response is passed through uncompressed.
+                }
+            }
+        }
+
+        return result
     }
 
     fn listen(self, port) {
@@ -566,6 +737,27 @@ impl ZenithApp {
     }
 
     // listen_tls() + listen_cluster()'s multi-process scaling combined.
+    fn enable_cors(self, origins, methods, headers) {
+        self._cors_enabled = true
+        if origins != null { self._cors_origins = origins }
+        if methods != null { self._cors_methods = methods }
+        if headers != null { self._cors_headers = headers }
+        return self
+    }
+
+    fn compress(self, threshold) {
+        self._compress_enabled = true
+        if threshold != null and threshold > 0 {
+            self._compress_threshold = threshold
+        }
+        // NOTE: gzip compression requires a native C zlib binding which is a
+        // future feature. For now, this enables the compression middleware that
+        // checks Accept-Encoding and will delegate to the native compressor.
+        // Responses > threshold bytes will be compressed when the native
+        // function is available.
+        return self
+    }
+
     fn listen_tls_cluster(self, port, cert_path, key_path, workers) {
         self.port = port
         print("Zenith running on https://localhost:", port, "with", workers, "worker process(es)")
@@ -580,8 +772,8 @@ fn _run_middleware(app, req) {
     if idx < app.middlewares.len() {
         let mw = app.middlewares[idx]
         let next_req = http.create_struct(
-            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd"],
-            [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler, req.headers, req.ip, req.socket_fd]
+            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
+            [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler, req.headers, req.ip, req.socket_fd, req.dir_segs, req._multipart]
         )
         return mw(next_req, |r| {
             return _run_middleware(app, r)
@@ -590,6 +782,25 @@ fn _run_middleware(app, req) {
         let handler = req._route_handler
         if handler == null {
             return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+        }
+        let dir_segs = req.dir_segs
+        if dir_segs != null {
+            let current_dir = "pages"
+            let guard_paths = [current_dir + "/+guard.vn"]
+            for s in 0..dir_segs.len() {
+                current_dir = current_dir + "/" + dir_segs[s]
+                guard_paths = guard_paths.push(current_dir + "/+guard.vn")
+            }
+            for gp in 0..guard_paths.len() {
+                let guard_file = guard_paths[gp]
+                let guard_code = io.read_text(guard_file)
+                if guard_code != null {
+                    let guard_res = _execute_guard_file(guard_file, guard_code, req)
+                    if guard_res != null {
+                        return guard_res
+                    }
+                }
+            }
         }
         return handler(req)
     }
@@ -793,14 +1004,14 @@ fn build_openapi_spec(app, base_url) {
 
     let info = OpenApiInfo { title: app.title, version: "1.0.0" }
     let servers = [http.create_struct(["url"], [base_url])]
-    
+
     let spec_keys = ["openapi", "info", "paths", "servers"]
     let spec_vals = ["3.0.0", info, http.create_struct(path_keys, path_vals), servers]
     if components != null {
         spec_keys = spec_keys.push("components")
         spec_vals = spec_vals.push(components)
     }
-    
+
     let spec = http.create_struct(spec_keys, spec_vals)
     return json_encode(spec)
 }
@@ -973,6 +1184,72 @@ fn cookie(req, name, default) {
     let v = _validate.get_field(cookies(req), name)
     if v == null { return default }
     return v
+}
+
+// ============================================================================
+//  File upload helpers — multipart/form-data accessors
+//
+//  These functions read the _multipart field that the HTTP parser populates
+//  when Content-Type is multipart/form-data. The field is a struct with:
+//    .fields  — struct of regular form field name → value
+//    .files   — array of { fieldname, filename, content_type, data }
+// ============================================================================
+
+fn _get_multipart(req) {
+    let mp = _get_req_field(req, "_multipart", null)
+    if mp == null { return null }
+    return mp
+}
+
+// Returns the files array from a multipart request, or null if none.
+fn uploaded_files(req) {
+    let mp = _get_multipart(req)
+    if mp == null { return null }
+    let files = _validate.get_field(mp, "files")
+    return files
+}
+
+// Returns a single file struct by fieldname, or null if not found.
+fn uploaded_file(req, fieldname) {
+    let mp = _get_multipart(req)
+    if mp == null { return null }
+    let files = _validate.get_field(mp, "files")
+    if files == null { return null }
+    for i in 0..files.len() {
+        let f = files[i]
+        let fn_field = _validate.get_field(f, "fieldname")
+        if fn_field == fieldname {
+            return f
+        }
+    }
+    return null
+}
+
+// Returns a form field value from a multipart request, or default if absent.
+// This is for fields that were part of a multipart form (not urlencoded).
+fn form_field(req, name, default) {
+    let mp = _get_multipart(req)
+    if mp == null { return default }
+    let fields = _validate.get_field(mp, "fields")
+    if fields == null { return default }
+    let v = _validate.get_field(fields, name)
+    if v == null { return default }
+    return v
+}
+
+// Saves an uploaded file struct to disk. `file` is a struct returned from
+// uploaded_files() or uploaded_file() with { fieldname, filename, content_type, data }.
+// Returns the full path to the saved file, or null on failure.
+fn save_upload(file, directory) {
+    let filename = _validate.get_field(file, "filename")
+    let data = _validate.get_field(file, "data")
+    if filename == null or data == null { return null }
+    // Sanitize filename — strip directory separators for safety
+    let safe_name = filename.replace("/", "_").replace("\\", "_")
+    let full_path = directory + "/" + safe_name
+    let result = io.write_bytes(full_path, data)
+    if result == null { return null }
+    return full_path
 }
 
 // ============================================================================
@@ -1328,4 +1605,101 @@ fn render_response(template, ctx) {
         content_type: "text/html",
         _keep_open: false
     }
+}
+
+fn _execute_guard_file(file_path, guard_code, req) {
+    let rand = crypto.random_string(8)
+    if rand == null { rand = "xyz" }
+    let req_file = "temp_req_" + rand + ".json"
+    let guard_vn_file = "temp_guard_" + rand + ".vn"
+    let req_data = http.create_struct(
+        ["method", "path", "query", "body", "json", "params", "headers", "ip"],
+        [req.method, req.path, req.query, req.body, req.json, req.params, req.headers, req.ip]
+    )
+    io.write_text(req_file, json_encode(req_data))
+    let runner_code = guard_code + "\n\n" +
+        "fn _run_guard_bootstrap() {\n" +
+        "    let req_str = io.read_text(\"" + req_file + "\")\n" +
+        "    if req_str == null or req_str == \"\" { return }\n" +
+        "    let req = json_decode(req_str)\n" +
+        "    let res = guard(req)\n" +
+        "    if res != null {\n" +
+        "        print(json_encode(res))\n" +
+        "    }\n" +
+        "}\n" +
+        "_run_guard_bootstrap()\n"
+    io.write_text(guard_vn_file, runner_code)
+    let out = null
+    try {
+        let cmd = "vn " + guard_vn_file
+        let result_str = python.run("subprocess", "getoutput", [cmd])
+        if result_str != null and result_str != "" {
+            out = json_decode(result_str)
+        }
+    } catch e {
+        print("Guard execution error on " + file_path + ":", e)
+    }
+    io.remove(req_file)
+    io.remove(guard_vn_file)
+    return out
+}
+
+fn _admin_jobs_handler(req) {
+    let conn = sqlite.connect("aurora.db")
+    let action = _get_req_field(req.query, "action", "")
+    if req.method == "POST" {
+        let body_action = _get_req_field(req.json, "action", "")
+        if body_action == "" { body_action = action }
+        if body_action == "retry_all" {
+            sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE status = 'failed'")
+        } else if body_action == "clear_all" {
+            sqlite.query(conn, "DELETE FROM vn_jobs")
+        } else if body_action == "retry_one" {
+            let jid = _get_req_field(req.json, "id", "")
+            if jid != "" {
+                sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE id = ?", [jid])
+            }
+        }
+    }
+    let total = 0
+    let pending = 0
+    let running = 0
+    let completed = 0
+    let failed = 0
+    try {
+        let total_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs")
+        if total_res != null and total_res.len() > 0 { total = total_res[0].count }
+        let pending_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'pending'")
+        if pending_res != null and pending_res.len() > 0 { pending = pending_res[0].count }
+        let running_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'running'")
+        if running_res != null and running_res.len() > 0 { running = running_res[0].count }
+        let completed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'completed'")
+        if completed_res != null and completed_res.len() > 0 { completed = completed_res[0].count }
+        let failed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'failed'")
+        if failed_res != null and failed_res.len() > 0 { failed = failed_res[0].count }
+    } catch e {
+        sqlite.query(conn, "CREATE TABLE IF NOT EXISTS vn_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, attempts INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
+    }
+    let jobs = []
+    try {
+        jobs = sqlite.query(conn, "SELECT id, name, status, attempts, error, created_at FROM vn_jobs ORDER BY id DESC LIMIT 20")
+    } catch e {}
+    if jobs == null { jobs = [] }
+    let rows_html = ""
+    for i in 0..jobs.len() {
+        let job = jobs[i]
+        let err_str = ""
+        if job.error != null { err_str = job.error }
+        let badge_color = "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
+        if job.status == "running" { badge_color = "bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse" }
+        else if job.status == "completed" { badge_color = "bg-green-500/10 text-green-500 border-green-500/20" }
+        else if job.status == "failed" { badge_color = "bg-red-500/10 text-red-500 border-red-500/20" }
+        let action_btn = ""
+        if job.status == "failed" {
+            action_btn = "<button onclick=\"retryJob(" + job.id + ")\" class=\"px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition\">Retry</button>"
+        }
+        rows_html = rows_html + "<tr class=\"border-b border-slate-800 hover:bg-slate-900/50 transition-colors\"><td class=\"py-3 px-4 text-slate-400 font-mono text-xs\">#" + job.id + "</td><td class=\"py-3 px-4 font-semibold text-slate-200\">" + job.name + "</td><td class=\"py-3 px-4\"><span class=\"px-2.5 py-1 text-xs font-medium rounded-full border " + badge_color + "\">" + job.status + "</span></td><td class=\"py-3 px-4 text-slate-400 text-sm\">" + job.attempts + "</td><td class=\"py-3 px-4 text-red-400 text-xs font-mono max-w-xs truncate\" title=\"" + err_str + "\">" + err_str + "</td><td class=\"py-3 px-4 text-slate-500 text-xs\">" + job.created_at + "</td><td class=\"py-3 px-4 text-right\">" + action_btn + "</td></tr>"
+    }
+    let html = "<!DOCTYPE html><html lang=\"en\" class=\"dark\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>vn_jobs LiveDashboard</title><script src=\"https://cdn.tailwindcss.com\"></script><style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap'); body { font-family: 'Outfit', sans-serif; } pre, code { font-family: 'JetBrains Mono', monospace; }</style></head><body class=\"bg-[#0B1020] text-slate-200 min-h-screen\"><div class=\"max-w-7xl mx-auto px-4 py-8\"><div class=\"flex justify-between items-center mb-8 border-b border-slate-800 pb-6\"><div><h1 class=\"text-3xl font-bold tracking-tight text-white flex items-center gap-3\"><span class=\"h-3 w-3 rounded-full bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.5)]\"></span>vn_jobs LiveDashboard</h1><p class=\"text-slate-400 text-sm mt-1\">Stateful, SQLite-backed background task pipeline metrics</p></div><div class=\"flex gap-3\"><button onclick=\"postAction('retry_all')\" class=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition shadow-lg shadow-indigo-600/20\">Retry All Failed</button><button onclick=\"postAction('clear_all')\" class=\"px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-lg border border-slate-700 transition\">Clear Queue</button></div></div><div class=\"grid grid-cols-2 md:grid-cols-5 gap-4 mb-8\"><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Total Tasks</p><p class=\"text-3xl font-bold text-white mt-1\">" + total + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Pending</p><p class=\"text-3xl font-bold text-yellow-500 mt-1\">" + pending + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Running</p><p class=\"text-3xl font-bold text-blue-500 mt-1\">" + running + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Completed</p><p class=\"text-3xl font-bold text-green-500 mt-1\">" + completed + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Failed</p><p class=\"text-3xl font-bold text-red-500 mt-1\">" + failed + "</p></div></div><div class=\"bg-slate-900/20 border border-slate-800/80 rounded-xl overflow-hidden backdrop-blur-sm\"><div class=\"px-6 py-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/40\"><h2 class=\"font-semibold text-lg text-white\">Active Job Queue (Last 20)</h2><span class=\"text-xs text-slate-500 animate-pulse flex items-center gap-1.5\"><span class=\"h-2 w-2 rounded-full bg-green-500\"></span>Live updating</span></div><div class=\"overflow-x-auto\"><table class=\"w-full text-left border-collapse\"><thead><tr class=\"border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase bg-slate-900/10\"><th class=\"py-3 px-4\">ID</th><th class=\"py-3 px-4\">Job Type</th><th class=\"py-3 px-4\">Status</th><th class=\"py-3 px-4\">Attempts</th><th class=\"py-3 px-4\">Error Logs</th><th class=\"py-3 px-4\">Created At</th><th class=\"py-3 px-4 text-right\">Actions</th></tr></thead><tbody>" + (rows_html == "" ? "<tr><td colspan=\"7\" class=\"text-center py-8 text-slate-500\">No tasks in pipeline.</td></tr>" : rows_html) + "</tbody></table></div></div></div><script>function postAction(act) { fetch('/admin/jobs?action=' + act, { method: 'POST' }).then(() => location.reload()); } function retryJob(id) { fetch('/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retry_one', id: id }) }).then(() => location.reload()); } setTimeout(() => location.reload(), 3000);</script></body></html>"
+    return http.create_struct(["status", "body", "content_type"], [200, html, "text/html"])
 }

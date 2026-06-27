@@ -129,6 +129,52 @@ impl FetchRequest {
         return self._do()
     }
 
+    fn _do_stream(self) {
+        let hdr = self._build_headers()
+        let result = null
+        try {
+            if self._timeout > 0 {
+                result = http.post_stream(self.url, self._build_headers_array(), self.body, self._timeout)
+            } else {
+                result = http.post_stream(self.url, self._build_headers_array(), self.body)
+            }
+        } catch e {
+            if self._parse_json {
+                try { return json_decode(result) } catch e2 { return result }
+            }
+            return result
+        }
+        if self._parse_json {
+            try { return json_decode(result) } catch e { return result }
+        }
+        return result
+    }
+
+    fn _build_headers_array(self) {
+        let keys = _validate.get_keys(self.headers)
+        if keys.len() == 0 { return [] }
+        let arr = []
+        for i in 0..keys.len() {
+            let v = _validate.get_field(self.headers, keys[i])
+            arr = arr.push(keys[i] + ": " + v)
+        }
+        return arr
+    }
+
+    fn stream(self) {
+        self.method = "POST"
+        return self._do_stream()
+    }
+
+    fn stream_with(self, fn) {
+        let chunks = self.stream()
+        if chunks == null { return null }
+        for i in 0..chunks.len() {
+            fn(chunks[i])
+        }
+        return chunks
+    }
+
     fn post(self, body) {
         self.method = "POST"
         self.body = json_encode(body)

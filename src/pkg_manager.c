@@ -6,6 +6,14 @@
 #include <unistd.h>
 #include <stdbool.h>
 #include <dirent.h>
+#ifdef _WIN32
+#include <direct.h>
+#define mkdir(path, mode) _mkdir(path)
+static inline ssize_t readlink(const char *path, char *buf, size_t bufsiz) {
+    (void)path; (void)buf; (void)bufsiz;
+    return -1;
+}
+#endif
 
 /* ═══════════════════════════════════════════
  *  Minimal JSON parser for Python introspection output
