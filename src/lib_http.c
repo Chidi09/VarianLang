@@ -6,25 +6,46 @@
 #include <stdatomic.h>
 #include <curl/curl.h>
 #include <stdio.h>
-#include <sys/uio.h>
 #include "platform_io.h"
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <unistd.h>
 #include <errno.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <fcntl.h>
 #include <stdbool.h>
 #include <ctype.h>
 #include <signal.h>
-#include <sys/wait.h>
 #include <sys/time.h>
 #include <pthread.h>
 #include <openssl/ssl.h>
 #include <openssl/err.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#include <io.h>
+#define close_socket(s) closesocket(s)
+#define getpid _getpid
+#define isatty _isatty
+#define STDOUT_FILENO 1
+static int g_winsock_inited = 0;
+static void winsock_init(void) {
+    if (!g_winsock_inited) {
+        WSADATA wsa;
+        WSAStartup(MAKEWORD(2, 2), &wsa);
+        g_winsock_inited = 1;
+    }
+}
+#else
+#include <unistd.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <fcntl.h>
+#include <sys/wait.h>
+#define close_socket(s) close(s)
+#endif
 
 #ifndef SO_REUSEPORT
 #define SO_REUSEPORT 15 /* Linux value; not exposed under strict _POSIX_C_SOURCE */
@@ -327,8 +348,13 @@ static int conn_io_recv(int fd, SSL *ssl, char *buf, int want) {
     int r = (int)recv(fd, buf, (size_t)want, 0);
     if (r > 0) return r;
     if (r == 0) return 0;
+#ifdef _WIN32
+    int err = WSAGetLastError();
+    if (err == WSAEWOULDBLOCK) return -1;
+#else
     int err = errno;
     if (err == EAGAIN || err == EWOULDBLOCK) return -1;
+#endif
     return -2;
 }
 
@@ -387,7 +413,11 @@ static void conn_io_send_all(int fd, SSL *ssl, const char *buf, int len) {
         } else {
             n = (int)send(fd, buf + sent, (size_t)(len - sent), 0);
             if (n <= 0) {
+#ifdef _WIN32
+                if (WSAGetLastError() == WSAEWOULDBLOCK) {
+#else
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#endif
                     stall_guard++;
                     continue;
                 }
@@ -600,6 +630,10 @@ static void send_http_response(int client_fd, SSL *ssl, Value result, bool keep_
         conn_io_send_all(client_fd, ssl, resp_buf, hn);
         if (body_len > 0) conn_io_send_all(client_fd, ssl, body, body_len);
     } else {
+#ifdef _WIN32
+        conn_io_send_all(client_fd, NULL, resp_buf, hn);
+        if (body_len > 0) conn_io_send_all(client_fd, NULL, body, body_len);
+#else
         struct iovec iov[2];
         int iovcnt = 0;
         iov[iovcnt].iov_base = resp_buf;
@@ -633,6 +667,7 @@ static void send_http_response(int client_fd, SSL *ssl, Value result, bool keep_
             else if (errno == EAGAIN || errno == EWOULDBLOCK) { stall_guard++; }
             else break;
         }
+#endif
     }
 }
 
@@ -748,7 +783,7 @@ void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
             copy_string("Internal Server Error", 22));
         send_http_response(fd, ssl, rv, false);
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
-        close(fd);
+        close_socket(fd);
         return;
     }
     Value result = val_nil();
@@ -758,7 +793,7 @@ void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
         send_http_response(fd, ssl, result, false);
     }
     if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
-    close(fd);
+    close_socket(fd);
 }
 
 /* ═══════════════════════════════════════════
@@ -1412,7 +1447,7 @@ static PendingConnPool *get_pending_pool(Task *t) {
 static void pending_pool_add(PendingConnPool *pool, int fd, const char *ip) {
     pthread_mutex_lock(&pool->lock);
     if (pool->count >= MAX_PENDING_CONNS) {
-        close(fd);
+        close_socket(fd);
         pthread_mutex_unlock(&pool->lock);
         return;
     }
@@ -1458,10 +1493,9 @@ static void pending_pool_remove(PendingConnPool *pool, int i, bool transferred) 
     PendingConn *pc = &pool->conns[i];
     if (!transferred) {
         if (pc->ssl) { SSL_shutdown(pc->ssl); SSL_free(pc->ssl); }
-        /* Phase 2: remove from epoll before closing */
         if (pool->epoll_fd >= 0)
             epoll_ctl(pool->epoll_fd, EPOLL_CTL_DEL, pc->fd, NULL);
-        close(pc->fd);
+        close_socket(pc->fd);
     }
     conn_buffer_free(&pc->buf);
     pool->conns[i] = pool->conns[pool->count - 1];
@@ -1472,12 +1506,14 @@ static void pending_pool_remove(PendingConnPool *pool, int i, bool transferred) 
 void http_cleanup_pending_conns(Task *t) {
     PendingConnPool *pool = (PendingConnPool *)t->http_pending_conns;
     if (!pool) return;
+#ifndef _WIN32
     if (pool->epoll_fd >= 0) close(pool->epoll_fd);
+#endif
     /* Phase 4: tear down io_uring */
     if (pool->use_io_uring) io_uring_queue_exit(&pool->ring);
     for (int i = 0; i < pool->count; i++) {
         if (pool->conns[i].ssl) { SSL_shutdown(pool->conns[i].ssl); SSL_free(pool->conns[i].ssl); }
-        close(pool->conns[i].fd);
+        close_socket(pool->conns[i].fd);
         conn_buffer_free(&pool->conns[i].buf);
     }
     if (pool->route_trie) radix_node_free(pool->route_trie);
@@ -1520,8 +1556,13 @@ static void poll_pending_connections(VM *vm, PendingConnPool *pool, Value handle
                 /* Accept completion */
                 if (res >= 0) {
                     int client_fd = res;
+#ifdef _WIN32
+                    u_long mode = 1;
+                    ioctlsocket(client_fd, FIONBIO, &mode);
+#else
                     int flags = fcntl(client_fd, F_GETFL, 0);
                     if (flags >= 0) fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+#endif
                     int nodelay = 1;
                     setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
                     char ip_str[64] = "127.0.0.1";
@@ -1793,9 +1834,14 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
      * spawn_cluster_workers) runs its own fully independent VM and binds
      * its OWN socket on this same port rather than sharing one fd -- the
      * kernel load-balances incoming connections across all of them. */
+#ifndef _WIN32
     setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &opt, sizeof(opt));
     int flags = fcntl(fd, F_GETFL, 0);
     fcntl(fd, F_SETFL, flags | O_NONBLOCK);
+#else
+    u_long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#endif
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -1803,7 +1849,13 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
     addr.sin_port = htons((uint16_t)port);
     if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
         runtime_error(vm, "%s(): bind() failed on port %d", fn_name, port);
-        close(fd);
+        close_socket(fd);
+        if (tls_ctx) SSL_CTX_free(tls_ctx);
+        return false;
+    }
+    if (listen(fd, 4096) < 0) {
+        runtime_error(vm, "%s(): listen() failed", fn_name);
+        close_socket(fd);
         if (tls_ctx) SSL_CTX_free(tls_ctx);
         return false;
     }
@@ -1812,7 +1864,7 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
      * a small backlog drops connections at saturation. */
     if (listen(fd, 4096) < 0) {
         runtime_error(vm, "%s(): listen() failed", fn_name);
-        close(fd);
+        close_socket(fd);
         if (tls_ctx) SSL_CTX_free(tls_ctx);
         return false;
     }
@@ -1842,7 +1894,7 @@ static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool i
         if (t->http_listen_fd >= 0) {
             printf("  http: graceful shutdown requested, closing listen socket\n");
             fflush(stdout);
-            close(t->http_listen_fd);
+            close_socket(t->http_listen_fd);
             t->http_listen_fd = -1;
             pool->listen_fd = -1;
         }
@@ -1865,8 +1917,13 @@ static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool i
             socklen_t addr_len = sizeof(client_addr);
             int client_fd = accept(t->http_listen_fd, (struct sockaddr *)&client_addr, &addr_len);
             if (client_fd >= 0) {
+#ifdef _WIN32
+                u_long mode = 1;
+                ioctlsocket(client_fd, FIONBIO, &mode);
+#else
                 int flags = fcntl(client_fd, F_GETFL, 0);
                 fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
+#endif
                 int nodelay = 1;
                 setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
                 char ip_str[64] = "127.0.0.1";
@@ -1874,11 +1931,15 @@ static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool i
                 snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
                 pending_pool_add(pool, client_fd, ip_str);
                 vm->io_activity_this_tick = true;
-            } else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                break;
-            } else {
+            }
+#ifdef _WIN32
+            else if (WSAGetLastError() == WSAEWOULDBLOCK) { break; }
+#else
+            else if (errno == EAGAIN || errno == EWOULDBLOCK) { break; }
+#endif
+            else {
                 runtime_error(vm, "%s(): accept() error", fn_name);
-                close(t->http_listen_fd);
+                close_socket(t->http_listen_fd);
                 t->http_listen_fd = -1;
                 return false;
             }
@@ -2294,7 +2355,7 @@ static Value lib_http_close_socket(VM *vm, int arg_count, Value *args) {
         return val_nil();
     }
     int fd = (int)args[base].as.integer;
-    close(fd);
+    close_socket(fd);
     return val_nil();
 }
 
@@ -2309,10 +2370,15 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
     int max_bytes = (int)args[base + 1].as.integer;
     if (max_bytes <= 0) return val_string(allocate_string(vm, "", 0));
 
+#ifdef _WIN32
+    u_long mode = 1;
+    ioctlsocket(fd, FIONBIO, &mode);
+#else
     int flags = fcntl(fd, F_GETFL, 0);
     if (flags != -1) {
         fcntl(fd, F_SETFL, flags | O_NONBLOCK);
     }
+#endif
 
     char *buf = malloc((size_t)max_bytes);
     if (!buf) return val_nil();
@@ -2320,7 +2386,11 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
     int n = (int)recv(fd, buf, (size_t)max_bytes, 0);
     if (n < 0) {
         free(buf);
+#ifdef _WIN32
+        if (WSAGetLastError() == WSAEWOULDBLOCK) {
+#else
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
+#endif
             return val_string(allocate_string(vm, "", 0));
         }
         return val_nil();
@@ -2336,6 +2406,9 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
 
 /* ─── Registration ─── */
 void lib_http_init(VM *vm) {
+#ifdef _WIN32
+    winsock_init();
+#endif
     ObjModule *mod = new_module("http");
     mod->obj.next = vm->objects;
     vm->objects = (Obj *)mod;

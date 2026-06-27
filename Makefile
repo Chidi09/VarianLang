@@ -25,6 +25,12 @@ else ifeq ($(PLATFORM),Darwin)
     USE_SQLITE  ?= 1
     USE_REDIS   ?= 1
     USE_FFI     ?= 1
+else ifeq ($(PLATFORM),Windows)
+    USE_HTTP    ?= 1
+    USE_POSTGRES?= 1
+    USE_SQLITE  ?= 1
+    USE_REDIS   ?= 1
+    USE_FFI     ?= 1
 else
     USE_HTTP    ?= 0
     USE_POSTGRES?= 1
@@ -132,8 +138,7 @@ BUILDDIR = build
 
 SRCS = $(wildcard $(SRCDIR)/*.c)
 ifneq ($(filter Windows,$(PLATFORM)),)
-    SRCS := $(filter-out $(SRCDIR)/main.c, $(SRCS))
-    SRCS += $(SRCDIR)/main_win32.c
+    SRCS := $(filter-out $(SRCDIR)/main_win32.c, $(SRCS))
 endif
 
 ifeq ($(USE_HTTP),0)

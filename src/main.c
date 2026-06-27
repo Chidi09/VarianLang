@@ -18,7 +18,12 @@
 #define mkdir(path, mode) _mkdir(path)
 #endif
 #include <sys/stat.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <process.h>
+#else
 #include <sys/wait.h>
+#endif
 #ifndef VN_NO_HTTP
 #include <curl/curl.h>
 #endif
@@ -215,10 +220,18 @@ static const char *resolve_vn_modules_dir(void) {
     }
 
     char exe[2048];
+#ifdef _WIN32
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+    if (n > 0 && n < sizeof(exe)) { exe[n] = '\0'; }
+#else
     ssize_t n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+    if (n > 0) { exe[n] = '\0'; }
+#endif
     if (n > 0) {
-        exe[n] = '\0';
         char *slash = strrchr(exe, '/');
+#ifdef _WIN32
+        if (!slash) slash = strrchr(exe, '\\');
+#endif
         if (slash) {
             *slash = '\0';
             snprintf(found, sizeof(found), "%s/vn_modules", exe);
@@ -433,13 +446,30 @@ static long lumen_pages_fingerprint(const char *dir) {
 
 /* Spawn the generated app as a child process (this same binary, `run <app>`). */
 static pid_t lumen_spawn_server(const char *app) {
+#ifdef _WIN32
+    char exe[2048];
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+    if (n <= 0 || n >= sizeof(exe)) return -1;
+    exe[n] = '\0';
+    char cmd[4096];
+    snprintf(cmd, sizeof(cmd), "\"%s\" run \"%s\"", exe, app);
+    STARTUPINFOA si;
+    PROCESS_INFORMATION pi;
+    memset(&si, 0, sizeof(si));
+    si.cb = sizeof(si);
+    memset(&pi, 0, sizeof(pi));
+    SetEnvironmentVariableA("LUMEN_QUIET", "1");
+    SetEnvironmentVariableA("LUMEN_DEV", "aurora");
+    SetEnvironmentVariableA("VN_VERSION", VARIAN_VERSION);
+    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) {
+        return -1;
+    }
+    CloseHandle(pi.hThread);
+    return (pid_t)(intptr_t)pi.hProcess;
+#else
     pid_t pid = fork();
     if (pid == 0) {
-        setenv("LUMEN_QUIET", "1", 1);  /* silence the child's own listen banner */
-        /* Dev-mode marker so the prelude injects the browser devtools overlay.
-         * Default "aurora" (the fullstack badge, matching the `vn dev` banner);
-         * a user can `LUMEN_DEV=lumen vn dev` to get the Lumen-only badge, so we
-         * don't overwrite an existing value (overwrite flag = 0). */
+        setenv("LUMEN_QUIET", "1", 1);
         setenv("LUMEN_DEV", "aurora", 0);
         setenv("VN_VERSION", VARIAN_VERSION, 1);
         char exe[2048];
@@ -447,8 +477,11 @@ static pid_t lumen_spawn_server(const char *app) {
         if (n <= 0) { _exit(127); }
         exe[n] = '\0';
         execl(exe, exe, "run", app, (char *)NULL);
-        _exit(127); /* exec failed */
+        _exit(127);
     }
+    return pid;
+#endif
+}
     return pid;
 }
 
@@ -470,9 +503,16 @@ static int lumen_color(void) {
 }
 
 static double lumen_now_ms(void) {
+#ifdef _WIN32
+    LARGE_INTEGER freq, counter;
+    QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&counter);
+    return (double)counter.QuadPart * 1000.0 / (double)freq.QuadPart;
+#else
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return (double)ts.tv_sec * 1000.0 + (double)ts.tv_nsec / 1.0e6;
+#endif
 }
 
 static int lumen_name_cmp(const void *a, const void *b) {
@@ -608,14 +648,35 @@ static int lumen_dev(const char *pages, const char *port) {
     const char *R  = color ? LUM_RESET  : "";
 
     long last = lumen_pages_fingerprint(pages);
-    struct timespec poll = { 0, 400L * 1000000L }; /* 400ms */
+#ifdef _WIN32
+    HANDLE hChild = (HANDLE)(intptr_t)child;
+    for (;;) {
+        Sleep(400);
+        if (WaitForSingleObject(hChild, 0) == WAIT_OBJECT_0) break;
+        long now = lumen_pages_fingerprint(pages);
+        if (now != last && now != -1) {
+            last = now;
+            double rt0 = lumen_now_ms();
+            if (lumen_build(pages, app, port) == 0) {
+                TerminateProcess(hChild, 0);
+                WaitForSingleObject(hChild, INFINITE);
+                CloseHandle(hChild);
+                child = lumen_spawn_server(app);
+                hChild = (HANDLE)(intptr_t)child;
+                printf("  %s↻%s %shot-reloaded%s %sin %.0f ms%s\n",
+                       A, R, GR, R, D, lumen_now_ms() - rt0, R);
+            } else {
+                printf("  %s✖%s build error — %skeeping the last good page up%s\n", RED, R, D, R);
+            }
+            fflush(stdout);
+        }
+    }
+#else
+    struct timespec poll = { 0, 400L * 1000000L };
     for (;;) {
         nanosleep(&poll, NULL);
-
-        /* Did the server exit on its own (e.g. Ctrl-C / crash)? */
         int status;
         if (waitpid(child, &status, WNOHANG) == child) break;
-
         long now = lumen_pages_fingerprint(pages);
         if (now != last && now != -1) {
             last = now;
@@ -632,6 +693,7 @@ static int lumen_dev(const char *pages, const char *port) {
             fflush(stdout);
         }
     }
+#endif
     return 0;
 }
 
@@ -648,7 +710,11 @@ static int lumen_new(const char *name) {
     snprintf(pub, sizeof(pub), "%s/public", name);
     snprintf(lib_dir, sizeof(lib_dir), "%s/lib", name);
     char cmd[2400];
+#ifdef _WIN32
+    snprintf(cmd, sizeof(cmd), "if not exist \"%s\" mkdir \"%s\" & if not exist \"%s\" mkdir \"%s\" & if not exist \"%s\" mkdir \"%s\"", dir, dir, pub, pub, lib_dir, lib_dir);
+#else
     snprintf(cmd, sizeof(cmd), "mkdir -p '%s' '%s' '%s'", dir, pub, lib_dir);
+#endif
     if (system(cmd) != 0) { fprintf(stderr, "lumen: cannot create %s\n", dir); return 1; }
 
     /* ── constellation.toml ── */
@@ -773,7 +839,11 @@ static int lumen_add(const char *comp) {
     char dir[1024];
     snprintf(dir, sizeof(dir), "pages/components");
     char cmd[2048];
+#ifdef _WIN32
+    snprintf(cmd, sizeof(cmd), "if not exist \"%s\" mkdir \"%s\"", dir, dir);
+#else
     snprintf(cmd, sizeof(cmd), "mkdir -p '%s'", dir);
+#endif
     if (system(cmd) != 0) {
         fprintf(stderr, "Lumen UI: cannot create directory %s\n", dir);
         return 1;
@@ -1661,6 +1731,20 @@ static int process_fmt_file(const char *path, bool check_only, bool show_diff) {
         }
         if (show_diff) {
             char temp_path[] = "/tmp/vn_fmt_XXXXXX";
+#ifdef _WIN32
+            char win_temp[MAX_PATH];
+            GetTempFileNameA(".", "vnf", 0, win_temp);
+            FILE *tf = fopen(win_temp, "wb");
+            if (tf) {
+                fwrite(out, 1, (size_t)out_pos, tf);
+                fclose(tf);
+                char cmd[2048];
+                snprintf(cmd, sizeof(cmd), "diff -u \"%s\" \"%s\"", path, win_temp);
+                int rc = system(cmd);
+                (void)rc;
+                _unlink(win_temp);
+            }
+#else
             int temp_fd = mkstemp(temp_path);
             if (temp_fd != -1) {
                 ssize_t written = write(temp_fd, out, (size_t)out_pos);
@@ -1672,6 +1756,7 @@ static int process_fmt_file(const char *path, bool check_only, bool show_diff) {
                 (void)rc;
                 unlink(temp_path);
             }
+#endif
         }
         if (!check_only && !show_diff) {
             FILE *outfile = fopen(path, "wb");
@@ -1723,6 +1808,9 @@ int main(int argc, char *argv[]) {
      * spawned later by lib_http.c) can call into libcurl -- curl_easy_init()
      * does this lazily on first use otherwise, which is not safe if two
      * threads race to be the "first" caller. */
+#ifdef _WIN32
+    { WSADATA wsa; WSAStartup(MAKEWORD(2, 2), &wsa); }
+#endif
 #ifndef VN_NO_HTTP
     curl_global_init(CURL_GLOBAL_ALL);
 #endif
@@ -2132,10 +2220,18 @@ int main(int argc, char *argv[]) {
             
             char exe_dir[2048] = ".";
             char exe[2048];
+#ifdef _WIN32
+            DWORD exe_n = GetModuleFileNameA(NULL, exe, sizeof(exe));
+            if (exe_n > 0 && exe_n < sizeof(exe)) { exe[exe_n] = '\0'; }
+#else
             ssize_t exe_n = readlink("/proc/self/exe", exe, sizeof(exe) - 1);
+            if (exe_n > 0) { exe[exe_n] = '\0'; }
+#endif
             if (exe_n > 0) {
-                exe[exe_n] = '\0';
                 char *slash = strrchr(exe, '/');
+#ifdef _WIN32
+                if (!slash) slash = strrchr(exe, '\\');
+#endif
                 if (slash) {
                     *slash = '\0';
                     strncpy(exe_dir, exe, sizeof(exe_dir) - 1);

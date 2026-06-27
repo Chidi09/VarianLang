@@ -3,9 +3,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <windows.h>
+#define close_socket(s) closesocket(s)
+#else
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#define close_socket(s) close(s)
+#endif
 
 /* ─── Minimal plaintext SMTP client ───
  * Talks the SMTP submission dialogue (EHLO/MAIL FROM/RCPT TO/DATA/QUIT)
@@ -28,7 +36,7 @@ static int smtp_connect(const char *host, int port) {
         fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol);
         if (fd < 0) continue;
         if (connect(fd, p->ai_addr, p->ai_addrlen) == 0) break;
-        close(fd);
+        close_socket(fd);
         fd = -1;
     }
     freeaddrinfo(res);
@@ -117,7 +125,7 @@ static Value lib_smtp_send(VM *vm, int arg_count, Value *args) {
     int n = smtp_read_response(fd, buf, sizeof(buf));
 
     smtp_send_cmd(fd, "QUIT\r\n");
-    close(fd);
+    close_socket(fd);
 
     /* A real SMTP server responds "250 ..." once the message is accepted. */
     bool ok = (n > 0 && strncmp(buf, "250", 3) == 0);
