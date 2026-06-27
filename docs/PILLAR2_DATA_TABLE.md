@@ -1,11 +1,23 @@
 # Pillar 2 — Server-driven, live, windowed `<Table>`
 
-STATUS: Chunks 1 & 2 DONE (uncommitted→committed this round). Live, sortable, OFFSET-paginated
-data table landed: `db.vn` gained `QueryBuilder.order_by` + ORDER BY in `compile_select`;
-`lumen.vn` gained `data_table(opts)` (headless core), `_data_table_html(core)` (renderer), and
-`data_table_component(opts)` (mountable live component). Example: `examples/lumen_data_table.vn`.
-Untested at runtime (Windows is LSP-only / `.vn` interpreted — needs Linux/WSL). Chunk 3 (keyset
-+ windowed virtual scroll) deferred.
+STATUS: Chunks 1, 2 & 3 DONE.
+- Chunk 1/2: live, sortable, OFFSET-paginated data table — `db.vn` `QueryBuilder.order_by` + ORDER
+  BY in `compile_select`; `lumen.vn` `data_table(opts)` (headless core), `_data_table_html(core)`
+  (renderer), `data_table_component(opts)` (mountable live component). Example:
+  `examples/lumen_data_table.vn`.
+- Chunk 3: windowed virtual scroll — `data_table_virtual(opts)` (window state `first/count` +
+  live `COUNT(*)` total), `_data_table_virtual_html(core)` (fixed-height scroller; tbody = top
+  spacer row + visible window + bottom spacer row, so the scrollbar reflects the full dataset
+  while the DOM stays ~40 rows), `data_table_virtual_component(opts)` (handler `dt_window` takes
+  `{f,c}`). Client: a scroll listener appended to `_lumen_client_core()` reads
+  `[data-lumen-vtable]` scrollTop/clientHeight, computes the overscan window, and sends
+  `{t:'event',h:'dt_window',v:{f,c}}` via `__lumen_ws` (dedup via `__lf/__lc`). `reconcile()`
+  patches the scroller in place so scrollTop survives morphs. Example:
+  `examples/lumen_data_table_virtual.vn`.
+
+NOTE: windowing uses OFFSET (random scroll-access needs it; keyset is sequential-only) — the
+plan's "keyset" goal applies to the `next_page` load-more path, not random scroll. Untested at
+runtime (Windows is LSP-only / `.vn` interpreted — real test needs Linux/WSL).
 
 
 Goal: a built-in data table that does **server-side sort / filter / paginate + windowed

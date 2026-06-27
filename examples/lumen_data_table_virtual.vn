@@ -1,0 +1,40 @@
+// examples/lumen_data_table_virtual.vn — Aurora Pillar 2 Chunk 3: windowed table.
+// A virtual-scroll table over a large DB table: only the rows scrolled into view
+// are shipped to the browser (plus spacer rows that fake the full scroll height),
+// so 100k rows render with ~40 <tr> in the DOM. Still live (auto-updates on DB
+// change) and sortable. The client scroll position drives the server window.
+//
+// Run:   ./vn run examples/lumen_data_table_virtual.vn
+// Open:  http://localhost:8092
+
+let conn = db.connect("sqlite", "events.db")
+
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT, message TEXT)", [])
+// Seed a chunk of rows once so there's something to scroll through.
+let seeded = (conn.query)("SELECT COUNT(*) AS n FROM events", [])
+if seeded[0].n == 0 {
+    let i = 0
+    while i < 5000 {
+        let _ = (conn.execute)("INSERT INTO events (kind, message) VALUES (?, ?)",
+            ["info", "event number " + (i + 1)])
+        i = i + 1
+    }
+}
+
+let events = data_table_virtual_component({
+    conn: conn,
+    table: "events",
+    columns: [
+        { name: "id",      label: "ID",      sortable: true },
+        { name: "kind",    label: "Kind",    sortable: true },
+        { name: "message", label: "Message", sortable: false }
+    ],
+    row_height: 36,
+    viewport_height: 520,
+    order_by: "id",
+    order_dir: "asc"
+})
+
+let app = new_app()
+lumen_mount(app, "/", events)
+app.listen(8092)

@@ -1678,6 +1678,226 @@ fn data_table_component(opts) {
     return lumen_component(state_fn, render_fn, handler_names, handler_fns)
 }
 
+// ─── Pillar 2 Chunk 3: VIRTUAL (windowed) data table. Renders only the rows
+// scrolled into view (limit/offset driven by the client's scroll position) plus
+// spacer rows that fake the full scroll height — so a million-row table ships
+// only ~40 <tr> at a time. Live via live_query; a live COUNT(*) tracks height.
+fn data_table_virtual(opts) {
+    let conn = _validate.get_field(opts, "conn")
+    let table = _validate.get_field(opts, "table")
+    let columns = _validate.get_field(opts, "columns")
+    if columns == null { columns = [] }
+    let row_height = _validate.get_field(opts, "row_height")
+    if row_height == null { row_height = 36 }
+    let viewport_height = _validate.get_field(opts, "viewport_height")
+    if viewport_height == null { viewport_height = 480 }
+
+    let st_sort = [_validate.get_field(opts, "order_by")]
+    let st_dir = ["asc"]
+    let init_dir = _validate.get_field(opts, "order_dir")
+    if init_dir != null { st_dir[0] = init_dir }
+    let st_filters = [_validate.get_field(opts, "filters")]
+    if st_filters[0] == null { st_filters[0] = [] }
+    let st_first = [0]
+    let st_count = [40]
+    let initc = _validate.get_field(opts, "window_count")
+    if initc != null { st_count[0] = initc }
+
+    let col_names = []
+    let ci = 0
+    while ci < columns.len() {
+        let cn = _validate.get_field(columns[ci], "name")
+        if cn != null { col_names = col_names.push(cn) }
+        ci = ci + 1
+    }
+    if col_names.len() == 0 { col_names = ["*"] }
+
+    // apply current filters to a builder; returns { q, params }
+    let _apply_filters = |q| {
+        let params = []
+        let fs = st_filters[0]
+        let fi = 0
+        while fi < fs.len() {
+            let f = fs[fi]
+            q = q.where(_validate.get_field(f, "field"), _validate.get_field(f, "op"))
+            params = params.push(_validate.get_field(f, "value"))
+            fi = fi + 1
+        }
+        return http.create_struct(["q", "params"], [q, params])
+    }
+
+    let fetcher = | | {
+        let q0 = db.select(table).fields(col_names)
+        let bound = (_apply_filters)(q0)
+        let q = bound.q
+        if st_sort[0] != null { q = q.order_by(st_sort[0], st_dir[0]) }
+        q = q.limit(st_count[0])
+        q = q.offset(st_first[0])
+        let compiled = q.build()
+        return (conn.query)(compiled.sql, bound.params)
+    }
+    let res = live_query(fetcher)
+
+    let count_fetcher = | | {
+        let q0 = db.select(table).fields(["COUNT(*) AS n"])
+        let bound = (_apply_filters)(q0)
+        let cc = bound.q.build()
+        return (conn.query)(cc.sql, bound.params)
+    }
+    let count_res = live_query(count_fetcher)
+
+    let rows = | | {
+        let s = (res.state)()
+        if s.data == null { return [] }
+        return s.data
+    }
+    let total = | | {
+        let s = (count_res.state)()
+        if s.data == null { return 0 }
+        if s.data.len() == 0 { return 0 }
+        let n = _validate.get_field(s.data[0], "n")
+        if n == null { return 0 }
+        return n
+    }
+    let meta = | | {
+        return http.create_struct(
+            ["first", "count", "row_height", "viewport_height", "sort", "dir", "total", "loading", "error"],
+            [st_first[0], st_count[0], row_height, viewport_height, st_sort[0], st_dir[0], (total)(), (res.state)().loading, (res.state)().error]
+        )
+    }
+    let _wake = | | {
+        let _ = (res.refetch)()
+        let _ = _lumen_async_updates <- true
+        return null
+    }
+    let _wake_all = | | {
+        let _ = (res.refetch)()
+        let _ = (count_res.refetch)()
+        let _ = _lumen_async_updates <- true
+        return null
+    }
+    let set_window = |first, count| {
+        if first < 0 { first = 0 }
+        st_first[0] = first
+        if count != null and count > 0 { st_count[0] = count }
+        return (_wake)()
+    }
+    let set_sort = |field| {
+        if st_sort[0] == field {
+            if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
+        } else {
+            st_sort[0] = field
+            st_dir[0] = "asc"
+        }
+        st_first[0] = 0
+        return (_wake)()
+    }
+    let set_filter = |filters| {
+        st_filters[0] = filters
+        st_first[0] = 0
+        return (_wake_all)()
+    }
+    let reload = | | { return (_wake_all)() }
+
+    return http.create_struct(
+        ["rows", "meta", "columns", "total", "set_window", "set_sort", "set_filter", "reload"],
+        [rows, meta, columns, total, set_window, set_sort, set_filter, reload]
+    )
+}
+
+// Render a virtual data_table core to live HTML: a fixed-height scroller whose
+// <tbody> holds a top spacer row (height = first*row_height), the visible window
+// of rows, and a bottom spacer row — so the scrollbar reflects the full dataset
+// while the DOM stays small. data-lumen-vtable + data-row-h drive the client JS.
+fn _data_table_virtual_html(core) {
+    let cols = core.columns
+    let rows = (core.rows)()
+    let m = (core.meta)()
+    let rh = m.row_height
+    let first = m.first
+    let total = m.total
+    let ncols = cols.len()
+
+    let head = "<thead><tr>"
+    let ci = 0
+    while ci < ncols {
+        let col = cols[ci]
+        let cname = _validate.get_field(col, "name")
+        let clabel = _validate.get_field(col, "label")
+        if clabel == null { clabel = cname }
+        let sortable = _validate.get_field(col, "sortable")
+        if sortable {
+            let arrow = ""
+            if m.sort == cname {
+                if m.dir == "desc" { arrow = " ▼" } else { arrow = " ▲" }
+            }
+            head = head + "<th class=\"lmn-th\"><button class=\"lmn-th-btn\" @click=\"dt_sort\" value=\"" + cname + "\">" + _sanitize.escape_html(clabel) + arrow + "</button></th>"
+        } else {
+            head = head + "<th class=\"lmn-th\">" + _sanitize.escape_html(clabel) + "</th>"
+        }
+        ci = ci + 1
+    }
+    head = head + "</tr></thead>"
+
+    let body = "<tbody>"
+    let top_h = first * rh
+    if top_h > 0 {
+        body = body + "<tr class=\"lmn-vspace\" style=\"height:" + top_h + "px\"><td colspan=\"" + ncols + "\"></td></tr>"
+    }
+    if m.loading and rows.len() == 0 {
+        body = body + "<tr><td class=\"lmn-td lmn-td-msg\" colspan=\"" + ncols + "\">Loading…</td></tr>"
+    } else {
+        if m.error != null {
+            body = body + "<tr><td class=\"lmn-td lmn-td-msg\" colspan=\"" + ncols + "\">" + _sanitize.escape_html("" + m.error) + "</td></tr>"
+        } else {
+            let ri = 0
+            while ri < rows.len() {
+                let row = rows[ri]
+                body = body + "<tr style=\"height:" + rh + "px\">"
+                let cj = 0
+                while cj < ncols {
+                    let cn = _validate.get_field(cols[cj], "name")
+                    let cell = _validate.get_field(row, cn)
+                    let txt = ""
+                    if cell != null { txt = _sanitize.escape_html("" + cell) }
+                    body = body + "<td class=\"lmn-td\">" + txt + "</td>"
+                    cj = cj + 1
+                }
+                body = body + "</tr>"
+                ri = ri + 1
+            }
+        }
+    }
+    let shown = rows.len()
+    let bottom_rows = total - first - shown
+    if bottom_rows > 0 {
+        let bottom_h = bottom_rows * rh
+        body = body + "<tr class=\"lmn-vspace\" style=\"height:" + bottom_h + "px\"><td colspan=\"" + ncols + "\"></td></tr>"
+    }
+    body = body + "</tbody>"
+
+    let wrap = "<div class=\"lmn-table-wrap lmn-vtable\" data-lumen-vtable data-row-h=\"" + rh + "\" style=\"height:" + m.viewport_height + "px;overflow:auto\"><table class=\"lmn-table\">" + head + body + "</table></div>"
+    return lumen_render(wrap, {})
+}
+
+// Build a live, mountable VIRTUAL (windowed) data-table component. Same usage as
+// data_table_component but for huge tables — only the scrolled window is shipped.
+//   let big = data_table_virtual_component({ conn: conn, table: "events",
+//       columns: [...], row_height: 36, viewport_height: 480 })
+//   lumen_mount(app, "/events", big)
+fn data_table_virtual_component(opts) {
+    let core = data_table_virtual(opts)
+    let state_fn = | | { return {} }
+    let render_fn = |s| { return _data_table_virtual_html(core) }
+    let handler_names = ["dt_window", "dt_sort", "dt_reload"]
+    let handler_fns = [
+        |s, v| { let _ = (core.set_window)(_validate.get_field(v, "f"), _validate.get_field(v, "c")); return s },
+        |s, v| { let _ = (core.set_sort)(v); return s },
+        |s, v| { let _ = (core.reload)(); return s }
+    ]
+    return lumen_component(state_fn, render_fn, handler_names, handler_fns)
+}
+
 // ─── Lumen async resource: off-thread fetch with live re-render ───
 // Same surface as lumen_resource but `refetch()` spawns a background task
 // that runs the fetcher off the render thread. When the fetch completes,
@@ -2769,6 +2989,8 @@ fn _lumen_design_css() {
         ".lmn-pager\{display:flex;align-items:center;gap:.75rem;justify-content:flex-end;padding:.75rem .9rem;border-top:1px solid var(--lumen-border)\}" +
         ".lmn-pager-info\{color:var(--lumen-muted);font-size:.82rem\}" +
         ".lmn-pager-btn\{font:inherit;font-size:.82rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--lumen-border);background:transparent;color:var(--lumen-fg);cursor:pointer\}.lmn-pager-btn:hover\{border-color:var(--lumen-primary);color:var(--lumen-primary)\}" +
+        ".lmn-vtable\{position:relative\}.lmn-vtable thead th\{position:sticky;top:0;z-index:2;background:var(--lumen-surface-2)\}" +
+        ".lmn-vspace td\{padding:0;border:0\}" +
         "</style>"
 }
 
@@ -3252,7 +3474,7 @@ fn _lumen_scan_directives(tpl) {
 
 // Core runtime — always included.
 fn _lumen_client_core() {
-    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,eq=[],bf=250,co=0;function cn()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='log')\{if(window.__lumen_onlog)window.__lumen_onlog(m.lines);return\}if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}bf=250;r.classList.remove('lumen-pending');var pe=r.querySelector('[data-lumen-pending]');if(pe)pe.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(cn,bf);bf=Math.min(bf*2,5e3)\};w.onopen=function()\{if(window.__LUMEN_DEV__&&co)\{try\{sessionStorage.setItem('__lumen_hot','1')\}catch(e)\{\}location.reload();return\}co=1;bf=250;var d=document.getElementById('__LUMEN_DATA__');if(d)w.send(JSON.stringify(\{t:'init',state:JSON.parse(d.textContent)\}));for(var i=0;i<eq.length;i++)\{if(w.readyState===1)w.send(eq[i])\}eq=[]\}\}var EV=['click','input','change','submit','keydown','keyup','blur','focus'];EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;var mod=el.getAttribute('data-lumen-mod');if(mod)\{var ms=mod.split(' ');for(var mi=0;mi<ms.length;mi++)\{var kv=ms[mi].split(':'),k=kv[0],v=kv[1];if(k==='prevent'&&e.preventDefault)e.preventDefault();if(k==='stop'&&e.stopPropagation)e.stopPropagation();if(k==='once'&&el.getAttribute('data-lumen-once'))return;if(k==='once')el.setAttribute('data-lumen-once','1');if(k==='confirm'&&!confirm(v||'Are you sure?'))return;if(k==='debounce'||k==='throttle')\{var t=parseInt(v||300),n=Date.now(),l=el.getAttribute('data-lumen-'+k);if(k==='debounce')\{if(el._lumen_d)clearTimeout(el._lumen_d);el._lumen_d=setTimeout(function()\{el.removeAttribute('data-lumen-debounce')\},t);if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-debounce',n)\}else\{if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-throttle',n)\}\}if(k==='key')\{var c=e.key||e.code;if(c!==(v||'Enter'))return\}\}\}if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;var msg=JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\});if(w&&w.readyState===1)\{w.send(msg);if(window.__LUMEN_LOADING__)morph(r,window.__LUMEN_LOADING__)\}else eq.push(msg);el.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\},true)\});function morph(a,h)\{var f=document.activeElement,sa,ss,se,sx,sy;if(f&&(f===a||a.contains(f)))\{ss=f.selectionStart;se=f.selectionEnd;sx=f.scrollLeft;sy=f.scrollTop\}var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=ss;f.selectionEnd=se\}catch(e)\{\}f.scrollLeft=sx;f.scrollTop=sy\}\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}cn()\})();"
+    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,eq=[],bf=250,co=0;function cn()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='log')\{if(window.__lumen_onlog)window.__lumen_onlog(m.lines);return\}if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}bf=250;r.classList.remove('lumen-pending');var pe=r.querySelector('[data-lumen-pending]');if(pe)pe.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(cn,bf);bf=Math.min(bf*2,5e3)\};w.onopen=function()\{if(window.__LUMEN_DEV__&&co)\{try\{sessionStorage.setItem('__lumen_hot','1')\}catch(e)\{\}location.reload();return\}co=1;bf=250;var d=document.getElementById('__LUMEN_DATA__');if(d)w.send(JSON.stringify(\{t:'init',state:JSON.parse(d.textContent)\}));for(var i=0;i<eq.length;i++)\{if(w.readyState===1)w.send(eq[i])\}eq=[]\}\}var EV=['click','input','change','submit','keydown','keyup','blur','focus'];EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;var mod=el.getAttribute('data-lumen-mod');if(mod)\{var ms=mod.split(' ');for(var mi=0;mi<ms.length;mi++)\{var kv=ms[mi].split(':'),k=kv[0],v=kv[1];if(k==='prevent'&&e.preventDefault)e.preventDefault();if(k==='stop'&&e.stopPropagation)e.stopPropagation();if(k==='once'&&el.getAttribute('data-lumen-once'))return;if(k==='once')el.setAttribute('data-lumen-once','1');if(k==='confirm'&&!confirm(v||'Are you sure?'))return;if(k==='debounce'||k==='throttle')\{var t=parseInt(v||300),n=Date.now(),l=el.getAttribute('data-lumen-'+k);if(k==='debounce')\{if(el._lumen_d)clearTimeout(el._lumen_d);el._lumen_d=setTimeout(function()\{el.removeAttribute('data-lumen-debounce')\},t);if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-debounce',n)\}else\{if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-throttle',n)\}\}if(k==='key')\{var c=e.key||e.code;if(c!==(v||'Enter'))return\}\}\}if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;var msg=JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\});if(w&&w.readyState===1)\{w.send(msg);if(window.__LUMEN_LOADING__)morph(r,window.__LUMEN_LOADING__)\}else eq.push(msg);el.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\},true)\});function morph(a,h)\{var f=document.activeElement,sa,ss,se,sx,sy;if(f&&(f===a||a.contains(f)))\{ss=f.selectionStart;se=f.selectionEnd;sx=f.scrollLeft;sy=f.scrollTop\}var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=ss;f.selectionEnd=se\}catch(e)\{\}f.scrollLeft=sx;f.scrollTop=sy\}\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}document.addEventListener('scroll',function(e)\{var el=e.target;if(!el||!el.hasAttribute||!el.hasAttribute('data-lumen-vtable'))return;var rh=parseInt(el.getAttribute('data-row-h'))||36;var first=Math.floor(el.scrollTop/rh);var vis=Math.ceil(el.clientHeight/rh);var over=8;var f=Math.max(0,first-over);var c=vis+over*2;if(el.__lf===f&&el.__lc===c)return;el.__lf=f;el.__lc=c;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:'dt_window',v:\{f:f,c:c\}\}))\},true);cn()\})();"
 }
 
 fn _lumen_client_js_with_manifest_and_loading(manifest, loading_html) {
