@@ -1,0 +1,29 @@
+// examples/lumen_perf_cache.vn — Aurora Pillar 5: shared reactive query cache.
+// cached_query memoizes a query's result keyed by SQL+params across ALL callers;
+// a write bumps the affected tables' versions so the next read re-runs once.
+// With live components the sqlite update-hook (Pillar 1 tick) bumps versions
+// automatically; outside that, call lumen_cache_invalidate() after a write.
+//
+// Run:   ./vn run examples/lumen_perf_cache.vn
+
+let conn = db.connect("sqlite", "metrics.db")
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS events (id INTEGER PRIMARY KEY, kind TEXT)", [])
+let _ = (conn.execute)("INSERT INTO events (kind) VALUES (?)", ["click"])
+
+// A (pretend-expensive) aggregate, served through the shared cache.
+let agg = | | {
+    return cached_query(conn, "SELECT COUNT(*) AS n FROM events", [], ["events"])
+}
+
+let r1 = (agg)()   // MISS — runs the query, caches it
+let r2 = (agg)()   // HIT  — same version, returns the cached rows
+print("count: " + r1[0].n)
+print("after 2 reads: " + json_encode(lumen_perf_stats()))   // hits:1 misses:1 entries:1
+
+// A write to `events` must invalidate the cached aggregate.
+let _ = (conn.execute)("INSERT INTO events (kind) VALUES (?)", ["view"])
+lumen_cache_invalidate(["events"])
+
+let r3 = (agg)()   // MISS — entry is stale, re-runs once
+print("count after insert: " + r3[0].n)
+print("final: " + json_encode(lumen_perf_stats()))          // hits:1 misses:2 entries:1

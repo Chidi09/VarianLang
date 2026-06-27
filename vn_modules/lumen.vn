@@ -195,6 +195,9 @@ let _lumen_async_updates = task.channel(64)
 let _lumen_pubsub_data = http.create_struct([], [])
 let _lumen_query_deps = http.create_struct([], [])
 let _lumen_reactive_started = [false]
+let _lumen_table_version = [http.create_struct([], [])]
+let _lumen_qcache = [http.create_struct([], [])]
+let _lumen_cache_stats = [http.create_struct(["hits", "misses"], [0, 0])]
 
 let _lumen_presence_data = http.create_struct([], [])
 let _lumen_active_connections = []
@@ -1433,6 +1436,7 @@ fn _lumen_reactive_tick() {
     let tables = sqlite.drain_changes()
     if tables == null { return null }
     if tables.len() == 0 { return null }
+    _lumen_bump_versions(tables)
     let any = false
     let ti = 0
     while ti < tables.len() {
@@ -2246,6 +2250,73 @@ fn lumen_search_to_qs(values) {
 fn _lumen_url_marker(values) {
     let qs = lumen_search_to_qs(values)
     return "<div data-lumen-url=\"" + _sanitize.escape_html(qs) + "\" style=\"display:none\"></div>"
+}
+
+// ─── Pillar 5: shared reactive query cache. Identical queries across all
+// connections share one execution; a DB write bumps the affected tables'
+// versions (from the reactive tick), staling matching cache entries. Opt-in:
+// route a hot read through cached_query(conn, sql, params, tables). ───
+
+fn _lumen_bump_versions(tables) {
+    let ti = 0
+    while ti < tables.len() {
+        let t = tables[ti]
+        let cur = _validate.get_field(_lumen_table_version[0], t)
+        if cur == null { cur = 0 }
+        _lumen_table_version[0] = _tpl_bind(_lumen_table_version[0], t, cur + 1)
+        ti = ti + 1
+    }
+    return null
+}
+
+fn _lumen_version_sig(tables) {
+    let sig = ""
+    let ti = 0
+    while ti < tables.len() {
+        let t = tables[ti]
+        let v = _validate.get_field(_lumen_table_version[0], t)
+        if v == null { v = 0 }
+        sig = sig + t + ":" + v + ";"
+        ti = ti + 1
+    }
+    return sig
+}
+
+// Run a query through the shared cache. `tables` = the table name(s) the query
+// reads (so a write to any of them invalidates this entry). Returns the rows.
+fn cached_query(conn, sql, params, tables) {
+    if params == null { params = [] }
+    if tables == null { tables = [] }
+    let key = sql + "||" + json_encode(params)
+    let cur_sig = _lumen_version_sig(tables)
+    let entry = _validate.get_field(_lumen_qcache[0], key)
+    if entry != null {
+        if entry.sig == cur_sig {
+            let h = _validate.get_field(_lumen_cache_stats[0], "hits")
+            _lumen_cache_stats[0] = _tpl_bind(_lumen_cache_stats[0], "hits", h + 1)
+            return entry.result
+        }
+    }
+    let result = (conn.query)(sql, params)
+    let new_entry = http.create_struct(["result", "sig", "tables"], [result, cur_sig, tables])
+    _lumen_qcache[0] = _tpl_bind(_lumen_qcache[0], key, new_entry)
+    let m = _validate.get_field(_lumen_cache_stats[0], "misses")
+    _lumen_cache_stats[0] = _tpl_bind(_lumen_cache_stats[0], "misses", m + 1)
+    return result
+}
+
+// Manually invalidate cached queries reading these tables (for Postgres /
+// external writes that don't trip the sqlite update hook).
+fn lumen_cache_invalidate(tables) {
+    _lumen_bump_versions(tables)
+    return null
+}
+
+fn lumen_perf_stats() {
+    let h = _validate.get_field(_lumen_cache_stats[0], "hits")
+    let m = _validate.get_field(_lumen_cache_stats[0], "misses")
+    let entries = _validate.get_keys(_lumen_qcache[0]).len()
+    return http.create_struct(["cache_hits", "cache_misses", "cache_entries"], [h, m, entries])
 }
 
 // ─── Lumen async resource: off-thread fetch with live re-render ───
