@@ -5,6 +5,26 @@
 #include <inttypes.h>
 #include <sqlite3.h>
 
+// Process-global deduped set of changed table names from sqlite3_update_hook
+// TODO: guard with a mutex if the VM ever becomes multi-threaded
+static char **g_changed_tables = NULL;
+static int g_changed_count = 0;
+static int g_changed_cap = 0;
+
+static void _sqlite_change_cb(void *ctx, int op, const char *dbname, const char *table, sqlite3_int64 rowid) {
+    (void)ctx; (void)op; (void)dbname; (void)rowid;
+    if (!table || strncmp(table, "sqlite_", 7) == 0) return;
+    for (int i = 0; i < g_changed_count; i++) {
+        if (strcmp(g_changed_tables[i], table) == 0) return;
+    }
+    if (g_changed_count >= g_changed_cap) {
+        int new_cap = g_changed_cap ? g_changed_cap * 2 : 8;
+        g_changed_tables = realloc(g_changed_tables, sizeof(char *) * (size_t)new_cap);
+        g_changed_cap = new_cap;
+    }
+    g_changed_tables[g_changed_count++] = strdup(table);
+}
+
 static Value lib_sqlite_connect(VM *vm, int arg_count, Value *args) {
     bool is_dispatch = (arg_count >= 2 && args[0].type == VAL_MODULE);
     Value path_val = is_dispatch ? args[1] : args[0];
@@ -20,6 +40,7 @@ static Value lib_sqlite_connect(VM *vm, int arg_count, Value *args) {
         sqlite3_close(db);
         return val_nil();
     }
+    sqlite3_update_hook(db, _sqlite_change_cb, NULL);
     return val_int((int64_t)(intptr_t)db);
 }
 
@@ -144,6 +165,34 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
     return val_array(result_arr);
 }
 
+static Value lib_sqlite_drain_changes(VM *vm, int arg_count, Value *args) {
+    (void)arg_count; (void)args;
+    Task *self = vm->current_task;
+    ObjArray *arr = (ObjArray *)calloc(1, sizeof(ObjArray));
+    arr->obj.type = VAL_ARRAY;
+    arr->obj.next = vm->objects;
+    vm->objects = (Obj *)arr;
+    arr->capacity = g_changed_count > 0 ? g_changed_count : 1;
+    arr->elements = malloc(sizeof(Value) * (size_t)arr->capacity);
+    arr->count = 0;
+    self->stack[self->stack_top++] = val_array(arr);
+
+    for (int i = 0; i < g_changed_count; i++) {
+        ObjString *s = allocate_string(vm, g_changed_tables[i], (int)strlen(g_changed_tables[i]));
+        if (arr->count >= arr->capacity) {
+            arr->capacity *= 2;
+            arr->elements = realloc(arr->elements, sizeof(Value) * (size_t)arr->capacity);
+        }
+        arr->elements[arr->count++] = val_string(s);
+        free(g_changed_tables[i]);
+        g_changed_tables[i] = NULL;
+    }
+    g_changed_count = 0;
+
+    self->stack_top--;
+    return val_array(arr);
+}
+
 static Value lib_sqlite_close(VM *vm, int arg_count, Value *args) {
     bool is_dispatch = (arg_count >= 2 && args[0].type == VAL_MODULE);
     Value conn_val = is_dispatch ? args[1] : args[0];
@@ -162,7 +211,8 @@ void lib_sqlite_init(VM *vm) {
     mod->obj.next = vm->objects;
     vm->objects = (Obj *)mod;
     define_global(vm, copy_string("sqlite", 6), val_module(mod));
-    vm_register_dispatch(vm, "sqlite", "connect", val_native_fn((void *)lib_sqlite_connect));
-    vm_register_dispatch(vm, "sqlite", "query",   val_native_fn((void *)lib_sqlite_query));
-    vm_register_dispatch(vm, "sqlite", "close",   val_native_fn((void *)lib_sqlite_close));
+    vm_register_dispatch(vm, "sqlite", "connect",       val_native_fn((void *)lib_sqlite_connect));
+    vm_register_dispatch(vm, "sqlite", "query",         val_native_fn((void *)lib_sqlite_query));
+    vm_register_dispatch(vm, "sqlite", "close",         val_native_fn((void *)lib_sqlite_close));
+    vm_register_dispatch(vm, "sqlite", "drain_changes", val_native_fn((void *)lib_sqlite_drain_changes));
 }
