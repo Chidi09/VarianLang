@@ -1,0 +1,84 @@
+// examples/store_app.vn — Aurora Pillars 2+3 demo: live products table + add-product form.
+// One SQLite DB, two routes. The table auto-updates when a product is added (or stock
+// is changed from another tab) because it uses Pillar 1's live_query under the hood.
+// Each browser gets its own sort/page state (per-connection state).
+//
+// Run:   ./vn run examples/store_app.vn
+// Open:  http://localhost:8096  (form)  and  http://localhost:8096/products  (live table)
+
+let conn = db.connect("sqlite", "store.db")
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY, name TEXT, category TEXT, price INTEGER, stock INTEGER)", [])
+
+let rows = (conn.query)("SELECT COUNT(*) AS n FROM products", [])
+if rows[0].n == 0 {
+    let categories = ["Coffee", "Tea", "Bakery", "Merch"]
+    let seeds = [
+        ["Ethiopian Yirgacheffe", "Coffee", 1495, 40],
+        ["Colombia Supremo", "Coffee", 1295, 35],
+        ["Guatemala Antigua", "Coffee", 1395, 28],
+        ["Kenya AA", "Coffee", 1595, 22],
+        ["Sumatra Mandheling", "Coffee", 1445, 18],
+        ["Costa Rica Tarrazu", "Coffee", 1345, 30],
+        ["Brazil Santos", "Coffee", 1195, 45],
+        ["Matcha Green Tea", "Tea", 1895, 25],
+        ["Earl Grey", "Tea", 895, 50],
+        ["Jasmine Green", "Tea", 995, 40],
+        ["Chai Masala", "Tea", 1095, 35],
+        ["Oolong Ti Kuan Yin", "Tea", 1495, 20],
+        ["Sencha", "Tea", 1245, 30],
+        ["Croissant", "Bakery", 450, 60],
+        ["Blueberry Muffin", "Bakery", 395, 45],
+        ["Sourdough Loaf", "Bakery", 695, 25],
+        ["Cinnamon Roll", "Bakery", 495, 35],
+        ["Chocolate Chip Cookie", "Bakery", 295, 80],
+        ["Banana Bread Slice", "Bakery", 395, 30],
+        ["Tote Bag", "Merch", 1495, 20],
+        ["Ceramic Mug", "Merch", 1295, 35],
+        ["Coffee Beans 1lb", "Merch", 1695, 15],
+        ["French Press", "Merch", 2495, 10],
+        ["Reusable Straw Set", "Merch", 695, 50],
+        ["Apron", "Merch", 1995, 12],
+    ]
+    for s in seeds {
+        let _ = (conn.execute)("INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)", s)
+    }
+}
+
+let products = data_table_component({
+    conn: conn,
+    table: "products",
+    columns: [
+        { name: "id",       label: "ID",       sortable: true },
+        { name: "name",     label: "Name",     sortable: true },
+        { name: "category", label: "Category", sortable: true },
+        { name: "price",    label: "Price",    sortable: true },
+        { name: "stock",    label: "Stock",    sortable: true },
+    ],
+    page_size: 10,
+    order_by: "id",
+    order_dir: "asc"
+})
+
+let add_product = data_form_component({
+    submit_label: "Add product",
+    fields: [
+        { name: "name",     label: "Name",     type: "text",   placeholder: "Cold Brew Concentrate",
+          validator: validate.str().min(2) },
+        { name: "category", label: "Category", type: "text",   placeholder: "Coffee",
+          validator: validate.str().min(2) },
+        { name: "price",    label: "Price",    type: "number", placeholder: "995",
+          validator: validate.num().min(0) },
+        { name: "stock",    label: "Stock",    type: "number", placeholder: "50",
+          validator: validate.num().min(0) },
+    ],
+    on_submit: |values| {
+        let _ = (conn.execute)("INSERT INTO products (name, category, price, stock) VALUES (?, ?, ?, ?)",
+                               [values.name, values.category, values.price, values.stock])
+        return true
+    }
+})
+
+let app = new_app()
+lumen_mount(app, "/", add_product)
+lumen_mount(app, "/products", products)
+app.listen(8096)
