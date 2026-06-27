@@ -1898,6 +1898,196 @@ fn data_table_virtual_component(opts) {
     return lumen_component(state_fn, render_fn, handler_names, handler_fns)
 }
 
+// ─── Pillar 3: schema-bound forms — declare fields + validators once, get a
+// live, server-validated form. Per-field @input gives inline validation as the
+// user types; @submit validates all via lumen_form then calls on_submit(values).
+// Because a successful on_submit writes the DB, any Pillar-1 live_query / Pillar-2
+// table on that table auto-updates. ───
+
+// Helper: build a per-field setter handler (separate fn so each closure captures
+// its own field name — avoids loop-variable capture bugs).
+fn _df_make_setter(core, name) {
+    return |s, v| { let _ = (core.set_field)(name, v); return s }
+}
+
+fn data_form(opts) {
+    let fields = _validate.get_field(opts, "fields")
+    if fields == null { fields = [] }
+    let on_submit = _validate.get_field(opts, "on_submit")
+    let submit_label = _validate.get_field(opts, "submit_label")
+    if submit_label == null { submit_label = "Submit" }
+
+    // field-name list + name->validator schema for lumen_form
+    let names = []
+    let sch_keys = []
+    let sch_vals = []
+    let fi = 0
+    while fi < fields.len() {
+        let f = fields[fi]
+        let nm = _validate.get_field(f, "name")
+        names = names.push(nm)
+        let v = _validate.get_field(f, "validator")
+        if v != null {
+            sch_keys = sch_keys.push(nm)
+            sch_vals = sch_vals.push(v)
+        }
+        fi = fi + 1
+    }
+    let schema = http.create_struct(sch_keys, sch_vals)
+    let form = lumen_form(schema)
+
+    let st_values = [http.create_struct([], [])]
+    let st_errors = [http.create_struct([], [])]
+    let st_status = ["idle"]
+    let st_message = [null]
+
+    let values = | | { return st_values[0] }
+    let errors = | | { return st_errors[0] }
+    let status = | | { return st_status[0] }
+    let message = | | { return st_message[0] }
+
+    let _wake = | | { let _ = _lumen_async_updates <- true; return null }
+
+    // live-validate a single field; returns an error string or null
+    let _validate_one = |name, val| {
+        let validator = _validate.get_field(schema, name)
+        if validator == null { return null }
+        let res = _validate_parse(validator, val)
+        if res.success { return null }
+        return res.error
+    }
+
+    let set_field = |name, val| {
+        st_values[0] = _tpl_bind(st_values[0], name, val)
+        let err = (_validate_one)(name, val)
+        st_errors[0] = _tpl_bind(st_errors[0], name, err)
+        return (_wake)()
+    }
+
+    let submit = | | {
+        st_status[0] = "saving"
+        let r = (form.validate)(st_values[0])
+        if r.ok {
+            st_errors[0] = http.create_struct([], [])
+            if on_submit != null {
+                try {
+                    let _ = on_submit(r.values)
+                    st_status[0] = "saved"
+                    st_message[0] = null
+                } catch e {
+                    st_status[0] = "error"
+                    st_message[0] = "" + e
+                }
+            } else {
+                st_status[0] = "saved"
+                st_message[0] = null
+            }
+        } else {
+            st_errors[0] = r.errors
+            st_status[0] = "error"
+            st_message[0] = null
+        }
+        return (_wake)()
+    }
+
+    let reset = | | {
+        st_values[0] = http.create_struct([], [])
+        st_errors[0] = http.create_struct([], [])
+        st_status[0] = "idle"
+        st_message[0] = null
+        return (_wake)()
+    }
+
+    return http.create_struct(
+        ["fields", "names", "submit_label", "values", "errors", "status", "message", "set_field", "submit", "reset"],
+        [fields, names, submit_label, values, errors, status, message, set_field, submit, reset]
+    )
+}
+
+// Render a data_form core to live HTML (label + input/textarea + inline error per
+// field, submit button, status message). Run through lumen_render so events bind.
+fn _data_form_html(core) {
+    let fields = core.fields
+    let vals = (core.values)()
+    let errs = (core.errors)()
+
+    let body = "<form class=\"lmn-form\" @submit=\"df_submit\">"
+    let fi = 0
+    while fi < fields.len() {
+        let f = fields[fi]
+        let name = _validate.get_field(f, "name")
+        let label = _validate.get_field(f, "label")
+        if label == null { label = name }
+        let ftype = _validate.get_field(f, "type")
+        if ftype == null { ftype = "text" }
+        let placeholder = _validate.get_field(f, "placeholder")
+        if placeholder == null { placeholder = "" }
+        let hint = _validate.get_field(f, "hint")
+        let cur = _validate.get_field(vals, name)
+        if cur == null { cur = "" }
+        let err = _validate.get_field(errs, name)
+
+        let hh = "df_set_" + name
+        body = body + "<div class=\"lmn-field\"><label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>"
+        if ftype == "textarea" {
+            body = body + "<textarea class=\"lmn-input\" @input=\"" + hh + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\">" + _sanitize.escape_html("" + cur) + "</textarea>"
+        } else {
+            body = body + "<input class=\"lmn-input\" type=\"" + _sanitize.escape_html("" + ftype) + "\" value=\"" + _sanitize.escape_html("" + cur) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\" @input=\"" + hh + "\" />"
+        }
+        if err != null {
+            body = body + "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + err) + "</p>"
+        } else {
+            if hint != null {
+                body = body + "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
+            }
+        }
+        body = body + "</div>"
+        fi = fi + 1
+    }
+
+    let st = (core.status)()
+    let msg = (core.message)()
+    let msg_html = ""
+    if st == "saved" {
+        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">Saved.</p>"
+    } else {
+        if st == "error" and msg != null {
+            msg_html = "<p class=\"lmn-form-msg\" data-tone=\"danger\">" + _sanitize.escape_html("" + msg) + "</p>"
+        }
+    }
+
+    body = body + "<div class=\"lmn-form-actions\"><button class=\"lmn-btn\" data-variant=\"primary\" type=\"submit\">" + _sanitize.escape_html("" + core.submit_label) + "</button>" + msg_html + "</div>"
+    body = body + "</form>"
+    return lumen_render(body, {})
+}
+
+// Build a live, mountable schema-bound form component.
+//   let f = data_form_component({ fields: [
+//       {name:"email", label:"Email", type:"email", validator: validate.str().is_email()},
+//       {name:"name",  label:"Name",  validator: validate.str().min(2)} ],
+//       on_submit: |values| { (conn.execute)("INSERT INTO users (email,name) VALUES (?,?)",
+//                                             [values.email, values.name]) } })
+//   lumen_mount(app, "/signup", f)
+fn data_form_component(opts) {
+    let core = data_form(opts)
+    let state_fn = | | { return {} }
+    let render_fn = |s| { return _data_form_html(core) }
+    let handler_names = ["df_submit", "df_reset"]
+    let handler_fns = [
+        |s, v| { let _ = (core.submit)(); return s },
+        |s, v| { let _ = (core.reset)(); return s }
+    ]
+    let names = core.names
+    let i = 0
+    while i < names.len() {
+        let nm = names[i]
+        handler_names = handler_names.push("df_set_" + nm)
+        handler_fns = handler_fns.push(_df_make_setter(core, nm))
+        i = i + 1
+    }
+    return lumen_component(state_fn, render_fn, handler_names, handler_fns)
+}
+
 // ─── Lumen async resource: off-thread fetch with live re-render ───
 // Same surface as lumen_resource but `refetch()` spawns a background task
 // that runs the fetcher off the render thread. When the fetch completes,
@@ -2991,6 +3181,11 @@ fn _lumen_design_css() {
         ".lmn-pager-btn\{font:inherit;font-size:.82rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--lumen-border);background:transparent;color:var(--lumen-fg);cursor:pointer\}.lmn-pager-btn:hover\{border-color:var(--lumen-primary);color:var(--lumen-primary)\}" +
         ".lmn-vtable\{position:relative\}.lmn-vtable thead th\{position:sticky;top:0;z-index:2;background:var(--lumen-surface-2)\}" +
         ".lmn-vspace td\{padding:0;border:0\}" +
+        ".lmn-form\{display:flex;flex-direction:column;gap:1.1rem\}" +
+        ".lmn-input\{width:100%;box-sizing:border-box;font:inherit;font-size:.9rem;padding:.6rem .8rem;border:1px solid var(--lumen-border);border-radius:10px;background:var(--lumen-bg);color:var(--lumen-fg);outline:none;transition:border-color .15s ease\}.lmn-input:focus\{border-color:var(--lumen-primary)\}" +
+        "textarea.lmn-input\{min-height:96px;resize:vertical\}" +
+        ".lmn-form-actions\{display:flex;align-items:center;gap:.9rem\}" +
+        ".lmn-form-msg\{margin:0;font-size:.85rem;font-weight:600\}.lmn-form-msg[data-tone=success]\{color:#0b7a52\}.lmn-form-msg[data-tone=danger]\{color:#b42318\}" +
         "</style>"
 }
 

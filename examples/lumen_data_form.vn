@@ -1,0 +1,44 @@
+// examples/lumen_data_form.vn — Aurora Pillar 3: schema-bound form + live table.
+// Declare the fields + validators once; get a live, server-validated form with
+// inline per-field errors as you type. On submit it inserts into the DB — and
+// because the table below is a Pillar-2 live data_table on the same table, it
+// AUTO-UPDATES the instant the row lands. No manual refresh, no client wiring.
+//
+// Run:   ./vn run examples/lumen_data_form.vn
+// Open:  http://localhost:8093  (form)  and  http://localhost:8093/users  (live table)
+
+let conn = db.connect("sqlite", "signups.db")
+let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)", [])
+
+let signup = data_form_component({
+    submit_label: "Create account",
+    fields: [
+        { name: "name",  label: "Name",  type: "text",  placeholder: "Ada Lovelace",
+          validator: validate.str().min(2) },
+        { name: "email", label: "Email", type: "email", placeholder: "ada@example.com",
+          validator: validate.str().is_email() }
+    ],
+    on_submit: |values| {
+        let _ = (conn.execute)("INSERT INTO users (name, email) VALUES (?, ?)",
+                               [values.name, values.email])
+        return true
+    }
+})
+
+// A Pillar-2 live table over the same table — updates itself when the form submits.
+let users = data_table_component({
+    conn: conn,
+    table: "users",
+    columns: [
+        { name: "id",    label: "ID",    sortable: true },
+        { name: "name",  label: "Name",  sortable: true },
+        { name: "email", label: "Email", sortable: true }
+    ],
+    order_by: "id",
+    order_dir: "desc"
+})
+
+let app = new_app()
+lumen_mount(app, "/", signup)
+lumen_mount(app, "/users", users)
+app.listen(8093)
