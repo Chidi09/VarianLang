@@ -1,0 +1,776 @@
+// ai.vn — AI & LLM Integration Module
+//
+// Multi-provider AI service with automatic fallback chain, health tracking,
+// smart/fast model tiers, streaming, and embedding support.
+//
+// Backed by http.post_stream / fetch for all provider API calls.
+//
+//   let client = ai.client({ provider: "openai", api_key: "sk-...", model: "gpt-4o" })
+//   let conv = ai.conversation("You are a helpful assistant.")
+//   conv.add("user", "Hello!")
+//   let resp = client.chat(conv)
+//   print(resp.message.content)
+//
+//   // Streaming:
+//   client.chat_stream(conv, |token| { print(token) })
+//
+//   // Embedding:
+//   let emb = client.embed("Some text")
+//   print(ai.embed_similarity(emb.embedding, other_emb.embedding))
+
+// ── Structs ──
+
+struct Message {
+    role: string,
+    content: string,
+    name: string,
+}
+
+struct Conversation {
+    messages: any,
+    system_prompt: string,
+}
+
+struct ChatCompletion {
+    message: any,
+    provider: string,
+    model: string,
+    usage: any,
+}
+
+struct EmbeddingResult {
+    embedding: any,
+    usage: any,
+}
+
+struct AIClient {
+    provider: string,
+    api_key: string,
+    base_url: string,
+    model_smart: string,
+    model_fast: string,
+    timeout: int,
+    _headers: any,
+}
+
+// ── Provider Health Tracking ──
+// Module-level store: key = provider name ("openai","deepseek","claude","gemini"),
+// value = "ok" | "failed" | "unknown"
+let _ai_health = { openai: "unknown", deepseek: "unknown", claude: "unknown", gemini: "unknown" }
+
+fn ai_health(provider) {
+    let keys = _validate.get_keys(_ai_health)
+    for i in 0..keys.len() {
+        if keys[i] == provider { return _validate.get_field(_ai_health, provider) }
+    }
+    return "unknown"
+}
+
+fn ai_health_set(provider, status) {
+    let keys = _validate.get_keys(_ai_health)
+    let vals = []
+    let found = false
+    for i in 0..keys.len() {
+        if keys[i] == provider {
+            vals = vals.push(status)
+            found = true
+        } else {
+            vals = vals.push(_validate.get_field(_ai_health, keys[i]))
+        }
+    }
+    if !found {
+        keys = keys.push(provider)
+        vals = vals.push(status)
+    }
+    _ai_health = http.create_struct(keys, vals)
+}
+
+// ── Default provider configs ──
+
+// Known provider base URLs and model defaults
+let AI_PROVIDERS = http.create_struct(
+    ["openai", "deepseek", "anthropic", "gemini"],
+    [
+        http.create_struct(
+            ["base_url", "model_smart", "model_fast", "api_format"],
+            ["https://api.openai.com/v1", "gpt-4o", "gpt-4o-mini", "openai"]
+        ),
+        http.create_struct(
+            ["base_url", "model_smart", "model_fast", "api_format"],
+            ["https://api.deepseek.com", "deepseek-chat", "deepseek-chat", "openai"]
+        ),
+        http.create_struct(
+            ["base_url", "model_smart", "model_fast", "api_format"],
+            ["https://api.anthropic.com/v1", "claude-sonnet-4-20250514", "claude-haiku-4-20251001", "anthropic"]
+        ),
+        http.create_struct(
+            ["base_url", "model_smart", "model_fast", "api_format"],
+            ["https://generativelanguage.googleapis.com/v1beta", "gemini-2.5-pro", "gemini-2.5-flash", "gemini"]
+        ),
+    ]
+)
+
+// ── Conversation ──
+
+fn ai_conversation(system_prompt) {
+    let msgs = []
+    if system_prompt != null and system_prompt != "" {
+        msgs = msgs.push(Message { role: "system", content: system_prompt, name: "" })
+    }
+    return Conversation { messages: msgs, system_prompt: system_prompt }
+}
+
+impl Conversation {
+    fn add(self, role, content) {
+        self.messages = self.messages.push(Message { role: role, content: content, name: "" })
+    }
+
+    fn add_msg(self, msg) {
+        self.messages = self.messages.push(msg)
+    }
+
+    fn add_name(self, role, content, name) {
+        self.messages = self.messages.push(Message { role: role, content: content, name: name })
+    }
+
+    fn last(self) {
+        let n = self.messages.len()
+        if n == 0 { return null }
+        return self.messages[n - 1]
+    }
+
+    fn all(self) {
+        return self.messages
+    }
+
+    fn count(self) {
+        return self.messages.len()
+    }
+}
+
+// ── AIClient Factory ──
+
+fn ai_client(opts) {
+    // opts: { provider, api_key, base_url?, model?, timeout? }
+    let provider = _validate.get_field(opts, "provider")
+    let api_key = _validate.get_field(opts, "api_key")
+    if api_key == null { api_key = "" }
+    if provider == null { provider = "openai" }
+
+    // Look up known provider config
+    let known = _validate.get_field(AI_PROVIDERS, provider)
+    let base_url = _validate.get_field(opts, "base_url")
+    if base_url == null or base_url == "" {
+        if known != null {
+            base_url = _validate.get_field(known, "base_url")
+        } else {
+            base_url = "https://api.openai.com/v1"
+        }
+    }
+
+    let model_smart = _validate.get_field(known, "model_smart")
+    let model_fast = _validate.get_field(known, "model_fast")
+    let custom_model = _validate.get_field(opts, "model")
+    if custom_model != null {
+        model_smart = custom_model
+        model_fast = custom_model
+    }
+
+    let timeout = _validate.get_field(opts, "timeout")
+    if timeout == null { timeout = 60000 }
+
+    return AIClient {
+        provider: provider,
+        api_key: api_key,
+        base_url: base_url,
+        model_smart: model_smart,
+        model_fast: model_fast,
+        timeout: timeout,
+        _headers: http.create_struct([], []),
+    }
+}
+
+// ── Embedding Utilities ──
+
+fn ai_embed_similarity(a, b) {
+    if a == null or b == null { return 0.0 }
+    let dot = 0.0
+    let na = 0.0
+    let nb = 0.0
+    let n = a.len()
+    if b.len() < n { n = b.len() }
+    for i in 0..n {
+        let av = a[i]; if av.type == "int" { av = 0.0 + av }
+        let bv = b[i]; if bv.type == "int" { bv = 0.0 + bv }
+        dot = dot + av * bv
+        na = na + av * av
+        nb = nb + bv * bv
+    }
+    let denom = math.sqrt(na) * math.sqrt(nb)
+    if denom == 0.0 { return 0.0 }
+    return dot / denom
+}
+
+fn ai_embed_dot(a, b) {
+    if a == null or b == null { return 0.0 }
+    let result = 0.0
+    let n = a.len()
+    if b.len() < n { n = b.len() }
+    for i in 0..n {
+        let av = a[i]; if av.type == "int" { av = 0.0 + av }
+        let bv = b[i]; if bv.type == "int" { bv = 0.0 + bv }
+        result = result + av * bv
+    }
+    return result
+}
+
+// ── Internal Helpers ──
+
+fn _ai_build_auth_headers(client) {
+    let h = []
+    h = h.push("Content-Type: application/json")
+    if client.provider == "gemini" {
+        // Gemini uses API key as query param, not Authorization header
+        // Still need the key for the URL construction
+    } else if client.provider == "anthropic" {
+        h = h.push("x-api-key: " + client.api_key)
+        h = h.push("anthropic-version: 2023-06-01")
+    } else {
+        // OpenAI-compatible (openai, deepseek, etc.)
+        h = h.push("Authorization: Bearer " + client.api_key)
+    }
+    // Add custom headers
+    let ckeys = _validate.get_keys(client._headers)
+    if ckeys.len() > 0 {
+        for i in 0..ckeys.len() {
+            h = h.push(ckeys[i] + ": " + _validate.get_field(client._headers, ckeys[i]))
+        }
+    }
+    return h
+}
+
+fn _ai_openai_messages(conv) {
+    let msgs = []
+    for i in 0..conv.messages.len() {
+        let m = conv.messages[i]
+        let entry = { role: m.role, content: m.content }
+        if m.name != null and m.name != "" {
+            entry = http.create_struct(
+                ["role", "content", "name"],
+                [m.role, m.content, m.name]
+            )
+        }
+        msgs = msgs.push(entry)
+    }
+    return msgs
+}
+
+fn _ai_build_req_body(client, conv, opts, is_smart) {
+    let model = client.model_fast
+    if is_smart { model = client.model_smart }
+    let msgs = _ai_openai_messages(conv)
+    let max_tok = 1024
+    let temp = 0.7
+
+    if opts != null {
+        let t = _validate.get_field(opts, "temperature")
+        if t != null { temp = t }
+        let m = _validate.get_field(opts, "max_tokens")
+        if m != null { max_tok = m }
+        if is_smart {
+            let sm = _validate.get_field(opts, "model_smart")
+            if sm != null { model = sm }
+        } else {
+            let fm = _validate.get_field(opts, "model_fast")
+            if fm != null { model = fm }
+        }
+    }
+
+    return http.create_struct(
+        ["model", "messages", "max_tokens", "temperature", "stream"],
+        [model, msgs, max_tok, temp, false]
+    )
+}
+
+// ── Parse OpenAI-style chat response ──
+fn _ai_parse_openai_chat(body) {
+    if body == null { return null }
+    let parsed = json_decode(body)
+    if parsed == null { return null }
+    let choices = _validate.get_field(parsed, "choices")
+    if choices == null or choices.len() == 0 { return null }
+    let first = choices[0]
+    let msg = _validate.get_field(first, "message")
+    let usage_info = _validate.get_field(parsed, "usage")
+    if usage_info == null { usage_info = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 } }
+    let finish = _validate.get_field(first, "finish_reason")
+    return { message: msg, provider: "openai", model: "", usage: usage_info, finish: finish }
+}
+
+// ── Parse Anthropic chat response ──
+fn _ai_parse_anthropic_chat(body) {
+    if body == null { return null }
+    let parsed = json_decode(body)
+    if parsed == null { return null }
+    let content = _validate.get_field(parsed, "content")
+    if content == null or content.len() == 0 { return null }
+    let text = ""
+    for i in 0..content.len() {
+        let block = content[i]
+        let t = _validate.get_field(block, "text")
+        if t != null { text = text + t }
+    }
+    let msg = { role: "assistant", content: text, name: "" }
+    let usage_info = _validate.get_field(parsed, "usage")
+    if usage_info == null { usage_info = { input_tokens: 0, output_tokens: 0, total_tokens: 0 } }
+    return { message: msg, provider: "anthropic", model: "", usage: usage_info }
+}
+
+// ── Parse Gemini chat response ──
+fn _ai_parse_gemini_chat(body) {
+    if body == null { return null }
+    let parsed = json_decode(body)
+    if parsed == null { return null }
+    let candidates = _validate.get_field(parsed, "candidates")
+    if candidates == null or candidates.len() == 0 { return null }
+    let first = candidates[0]
+    let content = _validate.get_field(first, "content")
+    let parts = _validate.get_field(content, "parts")
+    let text = ""
+    if parts != null {
+        for i in 0..parts.len() {
+            let t = _validate.get_field(parts[i], "text")
+            if t != null { text = text + t }
+        }
+    }
+    let msg = { role: "assistant", content: text, name: "" }
+    let usage_info = _validate.get_field(parsed, "usageMetadata")
+    if usage_info == null { usage_info = { promptTokenCount: 0, candidatesTokenCount: 0, totalTokenCount: 0 } }
+    return { message: msg, provider: "gemini", model: "", usage: usage_info }
+}
+
+// ── Streaming chunk parsers ──
+
+fn _ai_parse_openai_chunk(chunk) {
+    if chunk == null or chunk == "" { return null }
+    if chunk.starts_with("data: ") {
+        let json_str = chunk.substring(6, chunk.len())
+        if json_str == "[DONE]" { return null }
+        let parsed = json_decode(json_str)
+        if parsed == null { return null }
+        let choices = _validate.get_field(parsed, "choices")
+        if choices == null or choices.len() == 0 { return null }
+        let delta = _validate.get_field(choices[0], "delta")
+        if delta == null { return null }
+        return _validate.get_field(delta, "content")
+    }
+    return null
+}
+
+fn _ai_parse_anthropic_chunk(chunk) {
+    if chunk == null or chunk == "" { return null }
+    if chunk.starts_with("data: ") {
+        let json_str = chunk.substring(6, chunk.len())
+        let parsed = json_decode(json_str)
+        if parsed == null { return null }
+        let typ = _validate.get_field(parsed, "type")
+        if typ == "content_block_delta" {
+            let delta = _validate.get_field(parsed, "delta")
+            if delta != null { return _validate.get_field(delta, "text") }
+        }
+    }
+    return null
+}
+
+fn _ai_parse_gemini_chunk(chunk) {
+    if chunk == null or chunk == "" { return null }
+    if chunk.starts_with("data: ") {
+        let json_str = chunk.substring(6, chunk.len())
+        let parsed = json_decode(json_str)
+        if parsed == null { return null }
+        let candidates = _validate.get_field(parsed, "candidates")
+        if candidates == null or candidates.len() == 0 { return null }
+        let first = candidates[0]
+        let content = _validate.get_field(first, "content")
+        let parts = _validate.get_field(content, "parts")
+        if parts != null and parts.len() > 0 {
+            return _validate.get_field(parts[0], "text")
+        }
+    }
+    return null
+}
+
+// ── Provider fallback order ──
+// Global primary provider can be set at module level
+let _ai_primary_provider = "openai"
+
+fn ai_set_primary(provider) {
+    _ai_primary_provider = provider
+}
+
+fn _ai_provider_order() {
+    let primary = _ai_primary_provider
+    let all = ["openai", "deepseek", "claude", "gemini"]
+    let order = [primary]
+    for i in 0..all.len() {
+        if all[i] != primary { order = order.push(all[i]) }
+    }
+    return order
+}
+
+// ── AIClient Methods ──
+
+impl AIClient {
+    // ── Provider-specific chat implementations ──
+
+    fn _chat_openai(self, conv, opts) {
+        let msgs = _ai_openai_messages(conv)
+        let max_tok = 1024; let temp = 0.7
+        if opts != null {
+            if _validate.get_field(opts, "temperature") != null { temp = _validate.get_field(opts, "temperature") }
+            if _validate.get_field(opts, "max_tokens") != null { max_tok = _validate.get_field(opts, "max_tokens") }
+        }
+        let model = self.model_fast
+        if _validate.get_field(opts, "tier") == "smart" { model = self.model_smart }
+        if _validate.get_field(opts, "model") != null { model = _validate.get_field(opts, "model") }
+
+        let body = http.create_struct(
+            ["model", "messages", "max_tokens", "temperature"],
+            [model, msgs, max_tok, temp]
+        )
+
+        let headers = _ai_build_auth_headers(self)
+        let resp = fetch(self.base_url + "/chat/completions")
+            .header("Authorization", "Bearer " + self.api_key)
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout)
+            .post(body)
+
+        if resp == null { return null }
+        let result = _ai_parse_openai_chat(resp)
+        if result != null {
+            result.model = model
+            result.provider = self.provider
+        }
+        return result
+    }
+
+    fn _chat_anthropic(self, conv, opts) {
+        let max_tok = 1024; let temp = 0.7
+        if opts != null {
+            if _validate.get_field(opts, "temperature") != null { temp = _validate.get_field(opts, "temperature") }
+            if _validate.get_field(opts, "max_tokens") != null { max_tok = _validate.get_field(opts, "max_tokens") }
+        }
+        let model = self.model_fast
+        if _validate.get_field(opts, "tier") == "smart" { model = self.model_smart }
+        if _validate.get_field(opts, "model") != null { model = _validate.get_field(opts, "model") }
+
+        // Build Anthropic-format messages (filter out system messages, handle separately)
+        let msgs = []
+        let system = ""
+        for i in 0..conv.messages.len() {
+            let m = conv.messages[i]
+            if m.role == "system" {
+                system = system + m.content + "\n"
+            } else {
+                msgs = msgs.push({ role: m.role, content: m.content })
+            }
+        }
+        if system == "" { system = conv.system_prompt }
+
+        let body_fields = []
+        let body_vals = []
+        body_fields = body_fields.push("model")
+        body_vals = body_vals.push(model)
+        body_fields = body_fields.push("max_tokens")
+        body_vals = body_vals.push(max_tok)
+        if system != "" {
+            body_fields = body_fields.push("system")
+            body_vals = body_vals.push(system)
+        }
+        body_fields = body_fields.push("messages")
+        body_vals = body_vals.push(msgs)
+        body_fields = body_fields.push("temperature")
+        body_vals = body_vals.push(temp)
+
+        let body = http.create_struct(body_fields, body_vals)
+
+        let resp = fetch(self.base_url + "/messages")
+            .header("x-api-key", self.api_key)
+            .header("Content-Type", "application/json")
+            .header("anthropic-version", "2023-06-01")
+            .timeout(self.timeout)
+            .post(body)
+
+        if resp == null { return null }
+        let result = _ai_parse_anthropic_chat(resp)
+        if result != null {
+            result.model = model
+            result.provider = "claude"
+        }
+        return result
+    }
+
+    fn _chat_gemini(self, conv, opts) {
+        let max_tok = 1024; let temp = 0.7
+        if opts != null {
+            if _validate.get_field(opts, "temperature") != null { temp = _validate.get_field(opts, "temperature") }
+            if _validate.get_field(opts, "max_tokens") != null { max_tok = _validate.get_field(opts, "max_tokens") }
+        }
+        let model = self.model_fast
+        if _validate.get_field(opts, "tier") == "smart" { model = self.model_smart }
+        if _validate.get_field(opts, "model") != null { model = _validate.get_field(opts, "model") }
+
+        // Build Gemini-format contents array
+        let contents = []
+        for i in 0..conv.messages.len() {
+            let m = conv.messages[i]
+            if m.role != "system" {
+                let gemini_role = "user"
+                if m.role == "assistant" { gemini_role = "model" }
+                contents = contents.push({ role: gemini_role, parts: [{ text: m.content }] })
+            }
+        }
+
+        let body = { contents: contents }
+        let extra_fields = []
+        let extra_vals = []
+        extra_fields = extra_fields.push("maxOutputTokens")
+        extra_vals = extra_vals.push(max_tok)
+        extra_fields = extra_fields.push("temperature")
+        extra_vals = extra_vals.push(temp)
+        body = http.create_struct(
+            ["contents", "generationConfig"],
+            [contents, http.create_struct(extra_fields, extra_vals)]
+        )
+
+        let url = self.base_url + "/models/" + model + ":generateContent?key=" + self.api_key
+
+        let resp = fetch(url)
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout)
+            .post(body)
+
+        if resp == null { return null }
+        let result = _ai_parse_gemini_chat(resp)
+        if result != null {
+            result.model = model
+            result.provider = "gemini"
+        }
+        return result
+    }
+
+    // ── Unified chat with provider dispatch ──
+
+    fn chat(self, conv, opts) {
+        if opts == null { opts = {} }
+        ai_health_set(self.provider, "ok")
+
+        if self.provider == "anthropic" {
+            return self._chat_anthropic(conv, opts)
+        } else if self.provider == "gemini" {
+            return self._chat_gemini(conv, opts)
+        }
+        // Default: OpenAI-compatible (openai, deepseek, custom)
+        return self._chat_openai(conv, opts)
+    }
+
+    // ── Multi-provider fallback chat ──
+    // Tries providers in order until one succeeds. Uses provider health to skip dead ones.
+
+    fn chat_with_fallback(self, conv, opts) {
+        if opts == null { opts = {} }
+        let order = _ai_provider_order()
+        let last_error = null
+
+        for p in order {
+            let health = ai_health(p)
+            if health == "failed" { continue }
+
+            let client = null
+            if p == self.provider {
+                client = self
+            } else {
+                // Create a new client for this provider
+                client = ai_client({ provider: p, api_key: self.api_key, model: self.model_smart, timeout: self.timeout })
+            }
+
+            let result = null
+            try {
+                result = client.chat(conv, opts)
+            } catch e {
+                ai_health_set(p, "failed")
+                last_error = e
+                continue
+            }
+
+            if result != null {
+                ai_health_set(p, "ok")
+                return result
+            } else {
+                ai_health_set(p, "failed")
+            }
+        }
+
+        return null
+    }
+
+    // ── Streaming chat ──
+
+    fn chat_stream(self, conv, on_token, opts) {
+        if opts == null { opts = {} }
+        let msgs = _ai_openai_messages(conv)
+        let max_tok = 1024; let temp = 0.7
+        if _validate.get_field(opts, "temperature") != null { temp = _validate.get_field(opts, "temperature") }
+        if _validate.get_field(opts, "max_tokens") != null { max_tok = _validate.get_field(opts, "max_tokens") }
+
+        let model = self.model_fast
+        if _validate.get_field(opts, "tier") == "smart" { model = self.model_smart }
+        if _validate.get_field(opts, "model") != null { model = _validate.get_field(opts, "model") }
+
+        let body = http.create_struct(
+            ["model", "messages", "max_tokens", "temperature", "stream"],
+            [model, msgs, max_tok, temp, true]
+        )
+
+        let headers_arr = _ai_build_auth_headers(self)
+        let body_json = json_encode(body)
+        let url = self.base_url + "/chat/completions"
+
+        // Use fetch streaming - the stream_with callback fires for each SSE chunk
+        let chunks = fetch(url)
+            .header("Authorization", "Bearer " + self.api_key)
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout * 2)
+            .stream_with(|chunk| {
+                let token = _ai_parse_openai_chunk(chunk)
+                if token != null and token != "" {
+                    on_token(token)
+                }
+            })
+
+        // Get full response for return value
+        let full_body = http.create_struct(
+            ["model", "messages", "max_tokens", "temperature"],
+            [model, msgs, max_tok, temp]
+        )
+        let full_resp = fetch(url)
+            .header("Authorization", "Bearer " + self.api_key)
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout)
+            .post(full_body)
+
+        if full_resp == null { return null }
+        let result = _ai_parse_openai_chat(full_resp)
+        if result != null {
+            result.model = model
+            result.provider = self.provider
+        }
+        return result
+    }
+
+    // ── Embedding ──
+
+    fn embed(self, text) {
+        if text == null or text == "" { return null }
+        if self.provider == "anthropic" or self.provider == "gemini" {
+            // These providers may not support embeddings via this interface
+            return null
+        }
+
+        let model = self.model_fast
+        let body = http.create_struct(
+            ["model", "input"],
+            [model, text]
+        )
+
+        let resp = fetch(self.base_url + "/embeddings")
+            .header("Authorization", "Bearer " + self.api_key)
+            .header("Content-Type", "application/json")
+            .timeout(self.timeout)
+            .post(body)
+
+        if resp == null { return null }
+        let parsed = resp
+        let data = _validate.get_field(parsed, "data")
+        if data == null or data.len() == 0 { return null }
+        let first = data[0]
+        let embedding = _validate.get_field(first, "embedding")
+        let usage_info = _validate.get_field(parsed, "usage")
+        if usage_info == null { usage_info = { prompt_tokens: 0, total_tokens: 0 } }
+        return EmbeddingResult { embedding: embedding, usage: usage_info }
+    }
+
+    fn with_model(self, model) {
+        let c = ai_client({ provider: self.provider, api_key: self.api_key, model: model, timeout: self.timeout })
+        return c
+    }
+
+    fn with_header(self, name, value) {
+        let keys = _validate.get_keys(self._headers)
+        let vals = []
+        let found = false
+        for i in 0..keys.len() {
+            if keys[i] == name { vals = vals.push(value); found = true }
+            else { vals = vals.push(_validate.get_field(self._headers, keys[i])) }
+        }
+        if !found { keys = keys.push(name); vals = vals.push(value) }
+        self._headers = http.create_struct(keys, vals)
+    }
+
+    fn with_timeout(self, ms) {
+        self.timeout = ms
+    }
+}
+
+// ── Provider probe (1-token health check) ──
+
+fn ai_probe(provider) {
+    let client = ai_client({ provider: provider, api_key: "", model: "gpt-4o-mini", timeout: 5000 })
+    let conv = ai_conversation("")
+    conv.add("user", "hi")
+    let result = null
+    try {
+        if provider == "openai" or provider == "deepseek" {
+            let body = { model: "gpt-4o-mini", messages: [{ role: "user", content: "hi" }], max_tokens: 1 }
+            let resp = fetch(client.base_url + "/chat/completions")
+                .header("Authorization", "Bearer " + client.api_key)
+                .header("Content-Type", "application/json")
+                .timeout(5000)
+                .post(body)
+            result = resp != null
+        } else {
+            result = client.chat(conv, { max_tokens: 1 })
+        }
+    } catch e { result = null }
+    if result != null { ai_health_set(provider, "ok"); return true }
+    ai_health_set(provider, "failed"); return false
+}
+
+fn ai_probe_all() {
+    let results = {}
+    let providers = ["openai", "deepseek", "claude", "gemini"]
+    for p in providers {
+        let ok = ai_probe(p)
+        let keys = _validate.get_keys(results)
+        let vals = []
+        for i in 0..keys.len() { vals = vals.push(_validate.get_field(results, keys[i])) }
+        keys = keys.push(p)
+        let status_str = "failed"
+        if ok { status_str = "ok" }
+        vals = vals.push(status_str)
+        results = http.create_struct(keys, vals)
+    }
+    return results
+}
+
+// ── Module-level convenience ──
+
+let conversation = ai_conversation
+let client = ai_client
+let embed_similarity = ai_embed_similarity
+let embed_dot = ai_embed_dot
+let set_primary = ai_set_primary
+let probe = ai_probe
+let probe_all = ai_probe_all
+let health = ai_health

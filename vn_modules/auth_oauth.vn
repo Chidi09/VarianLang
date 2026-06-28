@@ -1,0 +1,880 @@
+// auth_oauth.vn — OAuth2 Provider Integration for Varian & Zenith
+//
+// Supports Google, GitHub, Microsoft, Apple providers with:
+// - HMAC-signed state tokens (CSRF protection)
+// - PKCE S256 code challenge/verifier support
+// - Per-provider user info fetching and normalization
+// - Secure session creation from OAuth identities
+// - Constant-time comparison for all signature verification
+
+// ═══════════════════════════════════════════════════════════════════════
+// OAuthProvider Struct
+// ═══════════════════════════════════════════════════════════════════════
+
+struct OAuthProvider {
+    name: string,
+    authorize_url: string,
+    token_url: string,
+    user_url: string,
+    scopes: string,
+    client_id: string,
+    client_secret: string,
+    redirect_uri: string,
+    tenant: string,          // for Microsoft (default "common")
+    response_mode: string,   // for Apple ("form_post")
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Provider Configurations
+// ═══════════════════════════════════════════════════════════════════════
+
+fn google_oauth(client_id, client_secret, redirect_uri) {
+    return OAuthProvider {
+        name: "google",
+        authorize_url: "https://accounts.google.com/o/oauth2/v2/auth",
+        token_url: "https://oauth2.googleapis.com/token",
+        user_url: "https://www.googleapis.com/oauth2/v2/userinfo",
+        scopes: "openid email profile",
+        client_id: client_id,
+        client_secret: client_secret,
+        redirect_uri: redirect_uri,
+        tenant: "",
+        response_mode: "",
+    }
+}
+
+fn github_oauth(client_id, client_secret, redirect_uri) {
+    return OAuthProvider {
+        name: "github",
+        authorize_url: "https://github.com/login/oauth/authorize",
+        token_url: "https://github.com/login/oauth/access_token",
+        user_url: "https://api.github.com/user",
+        scopes: "read:user user:email",
+        client_id: client_id,
+        client_secret: client_secret,
+        redirect_uri: redirect_uri,
+        tenant: "",
+        response_mode: "",
+    }
+}
+
+fn microsoft_oauth(client_id, client_secret, redirect_uri, tenant) {
+    if tenant == null { tenant = "common" }
+    return OAuthProvider {
+        name: "microsoft",
+        authorize_url: "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/authorize",
+        token_url: "https://login.microsoftonline.com/" + tenant + "/oauth2/v2.0/token",
+        user_url: "https://graph.microsoft.com/v1.0/me",
+        scopes: "User.Read openid email profile",
+        client_id: client_id,
+        client_secret: client_secret,
+        redirect_uri: redirect_uri,
+        tenant: tenant,
+        response_mode: "",
+    }
+}
+
+fn apple_oauth(client_id, client_secret, redirect_uri) {
+    return OAuthProvider {
+        name: "apple",
+        authorize_url: "https://appleid.apple.com/auth/authorize",
+        token_url: "https://appleid.apple.com/auth/token",
+        user_url: "",
+        scopes: "name email",
+        client_id: client_id,
+        client_secret: client_secret,
+        redirect_uri: redirect_uri,
+        tenant: "",
+        response_mode: "form_post",
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Base64url Encoding / Decoding
+// ═══════════════════════════════════════════════════════════════════════
+
+// Base64url alphabet: A-Z a-z 0-9 - _
+let _B64URL_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+
+// Encode a string to base64url without padding
+fn _base64url_encode(data) {
+    if data == null or data == "" { return "" }
+    let len = data.len()
+    let result = ""
+    let i = 0
+    while i < len {
+        let b0 = data.code_at(i)
+        let b1 = null
+        let b2 = null
+        if i + 1 < len { b1 = data.code_at(i + 1) }
+        if i + 2 < len { b2 = data.code_at(i + 2) }
+
+        // c0 = b0 >> 2
+        let c0 = b0 / 4
+        // c1 = ((b0 & 3) << 4) | (b1 >> 4)
+        let c1 = 0
+        if b1 != null {
+            c1 = ((b0 % 4) * 16) + (b1 / 16)
+        } else {
+            c1 = (b0 % 4) * 16
+        }
+
+        result = result + _B64URL_ALPHABET.substring(c0, c0 + 1)
+        result = result + _B64URL_ALPHABET.substring(c1, c1 + 1)
+
+        if b1 != null {
+            // c2 = ((b1 & 15) << 2) | (b2 >> 6)
+            let c2 = 0
+            if b2 != null {
+                c2 = ((b1 % 16) * 4) + (b2 / 64)
+            } else {
+                c2 = (b1 % 16) * 4
+            }
+            result = result + _B64URL_ALPHABET.substring(c2, c2 + 1)
+
+            if b2 != null {
+                // c3 = b2 & 63
+                let c3 = b2 % 64
+                result = result + _B64URL_ALPHABET.substring(c3, c3 + 1)
+            }
+        }
+
+        i = i + 3
+    }
+    return result
+}
+
+// Decode a base64url string (handles missing padding)
+fn _base64url_decode(data) {
+    if data == null or data == "" { return "" }
+    let out_codes = []
+    let len = data.len()
+    let i = 0
+    while i < len {
+        let c0 = _b64url_rev(data.substring(i, i + 1))
+        let c1 = _b64url_rev(data.substring(i + 1, i + 2))
+        let c2 = null
+        let c3 = null
+        if i + 2 < len { c2 = _b64url_rev(data.substring(i + 2, i + 3)) }
+        if i + 3 < len { c3 = _b64url_rev(data.substring(i + 3, i + 4)) }
+
+        // b0 = (c0 << 2) | (c1 >> 4)
+        let b0 = (c0 * 4) + (c1 / 16)
+        out_codes = out_codes.push(b0)
+
+        if c2 != null {
+            // b1 = ((c1 & 15) << 4) | (c2 >> 2)
+            let b1 = ((c1 % 16) * 16) + (c2 / 4)
+            out_codes = out_codes.push(b1)
+        }
+
+        if c3 != null {
+            // b2 = ((c2 & 3) << 6) | c3
+            let b2 = ((c2 % 4) * 64) + c3
+            out_codes = out_codes.push(b2)
+        }
+
+        i = i + 4
+    }
+    return "".from_codes(out_codes)
+}
+
+// Map a base64url character back to its 6-bit value
+fn _b64url_rev(ch) {
+    let code = ch.code_at(0)
+    // A-Z -> 0-25
+    if code >= 65 and code <= 90 { return code - 65 }
+    // a-z -> 26-51
+    if code >= 97 and code <= 122 { return code - 71 }
+    // 0-9 -> 52-61
+    if code >= 48 and code <= 57 { return code + 4 }
+    // - -> 62
+    if code == 45 { return 62 }
+    // _ -> 63
+    if code == 95 { return 63 }
+    return 0
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// HMAC-Signed State Tokens (CSRF Protection)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Sign an OAuth state payload into a tamper-proof token.
+// Payload fields: provider, nonce, exp (unix timestamp), optional beta_ref
+fn oauth_sign_state(payload, secret) {
+    if secret == null { secret = "dev-secret" }
+    let json_str = json_encode(payload)
+    let b64 = _base64url_encode(json_str)
+    let sig = _hmac_hex(secret, b64)
+    if sig.len() > 16 { sig = sig.substring(0, 16) }
+    return b64 + "." + sig
+}
+
+// Verify and decode a signed state token.
+// Raises on tampered signature or expired token.
+// Returns the decoded payload struct.
+fn oauth_verify_state(state, secret) {
+    if state == null { throw("State is null") }
+    if secret == null { secret = "dev-secret" }
+    let dot_pos = state.rfind(".")
+    if dot_pos < 0 { throw("State format invalid") }
+
+    let b64 = state.substring(0, dot_pos)
+    let sig = state.substring(dot_pos + 1, state.len())
+
+    let expected = _hmac_hex(secret, b64)
+    if expected.len() > 16 { expected = expected.substring(0, 16) }
+    if !auth.constant_time_eq(expected, sig) {
+        throw("State signature invalid")
+    }
+
+    let json_str = _base64url_decode(b64)
+    let payload = json_decode(json_str)
+
+    let exp = _validate.get_field(payload, "exp")
+    if exp != null and time.now_ms() / 1000 >= exp {
+        throw("State expired")
+    }
+
+    return payload
+}
+
+// HMAC-SHA256 hex string (via crypto.vn pattern)
+fn _hmac_hex(key, data) {
+    let payload = http.create_struct(["d"], [data])
+    let token = auth.sign_jwt(payload, key)
+    let parts = token.split(".")
+    if parts.len() != 3 { return "" }
+    return parts[2]
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// PKCE Support (S256)
+// ═══════════════════════════════════════════════════════════════════════
+
+// Generate a code verifier (43-128 unreserved chars).
+// Returns 44 hex chars (22 random bytes) — valid per PKCE spec.
+fn oauth_generate_code_verifier() {
+    return auth.generate_token(22)
+}
+
+// Generate a S256 code challenge from a verifier.
+// challenge = base64url(SHA256(verifier)) without padding.
+fn oauth_generate_code_challenge(verifier) {
+    let hash_hex = auth.hash_sha256(verifier)
+    let hash_bytes = _hex_to_string(hash_hex)
+    return _base64url_encode(hash_bytes)
+}
+
+// Convert a hex string (e.g. "a1b2") to raw bytes string
+fn _hex_to_string(hex) {
+    let out_codes = []
+    let len = hex.len()
+    for i in 0..(len / 2) {
+        let hi = _hex_val(hex.substring(i * 2, i * 2 + 1))
+        let lo = _hex_val(hex.substring(i * 2 + 1, i * 2 + 2))
+        out_codes = out_codes.push(hi * 16 + lo)
+    }
+    return "".from_codes(out_codes)
+}
+
+fn _hex_val(c) {
+    if c == "0" { return 0 }
+    if c == "1" { return 1 }
+    if c == "2" { return 2 }
+    if c == "3" { return 3 }
+    if c == "4" { return 4 }
+    if c == "5" { return 5 }
+    if c == "6" { return 6 }
+    if c == "7" { return 7 }
+    if c == "8" { return 8 }
+    if c == "9" { return 9 }
+    if c == "a" or c == "A" { return 10 }
+    if c == "b" or c == "B" { return 11 }
+    if c == "c" or c == "C" { return 12 }
+    if c == "d" or c == "D" { return 13 }
+    if c == "e" or c == "E" { return 14 }
+    if c == "f" or c == "F" { return 15 }
+    return 0
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Enhanced Authorize URL Builder
+// ═══════════════════════════════════════════════════════════════════════
+
+// Build the authorization URL to redirect the user to.
+// Supports optional PKCE code_challenge parameter.
+fn oauth_authorize_url(provider, state, code_challenge) {
+    let url = provider.authorize_url
+    url = url + "?client_id=" + _url_encode(provider.client_id)
+    url = url + "&redirect_uri=" + _url_encode(provider.redirect_uri)
+    url = url + "&response_type=code"
+    url = url + "&scope=" + _url_encode(provider.scopes)
+    url = url + "&state=" + _url_encode(state)
+
+    // Google: request offline refresh token
+    if provider.name == "google" {
+        url = url + "&access_type=offline"
+        url = url + "&prompt=select_account"
+    }
+
+    // Apple: response_mode=form_post
+    if provider.response_mode != null and provider.response_mode != "" {
+        url = url + "&response_mode=" + provider.response_mode
+    }
+
+    // PKCE code_challenge (S256)
+    if code_challenge != null and code_challenge != "" {
+        url = url + "&code_challenge=" + _url_encode(code_challenge)
+        url = url + "&code_challenge_method=S256"
+    }
+
+    return url
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Enhanced Token Exchange
+// ═══════════════════════════════════════════════════════════════════════
+
+// Exchange authorization code for tokens.
+// Supports optional PKCE code_verifier.
+fn oauth_exchange_code(provider, code, code_verifier) {
+    let body = "client_id=" + _url_encode(provider.client_id)
+    body = body + "&client_secret=" + _url_encode(provider.client_secret)
+    body = body + "&code=" + _url_encode(code)
+    body = body + "&redirect_uri=" + _url_encode(provider.redirect_uri)
+    body = body + "&grant_type=authorization_code"
+
+    // PKCE code_verifier
+    if code_verifier != null and code_verifier != "" {
+        body = body + "&code_verifier=" + _url_encode(code_verifier)
+    }
+
+    let header_str = "Content-Type: application/x-www-form-urlencoded\r\nAccept: application/json\r\n"
+
+    let response = null
+    try {
+        response = http.post(provider.token_url, header_str, body)
+    } catch e {
+        return http.create_struct(["success", "error"], [false, "Token exchange request failed: " + e])
+    }
+
+    if response == null {
+        return http.create_struct(["success", "error"], [false, "No response from token endpoint"])
+    }
+
+    let data = null
+    try { data = json_decode(response) } catch e {
+        return http.create_struct(["success", "error"], [false, "Failed to parse token response"])
+    }
+
+    let error = _validate.get_field(data, "error")
+    if error != null {
+        let error_desc = _validate.get_field(data, "error_description")
+        if error_desc == null { error_desc = error }
+        return http.create_struct(["success", "error"], [false, "Provider error: " + error_desc])
+    }
+
+    let access_token = _validate.get_field(data, "access_token")
+    if access_token == null {
+        return http.create_struct(["success", "error"], [false, "No access_token in response"])
+    }
+
+    let refresh_token = _validate.get_field(data, "refresh_token")
+    let expires_in = _validate.get_field(data, "expires_in")
+    if expires_in == null { expires_in = 3600 }
+    let id_token = _validate.get_field(data, "id_token")
+
+    return http.create_struct(
+        ["success", "data"],
+        [true, http.create_struct(
+            ["access_token", "refresh_token", "expires_in", "id_token"],
+            [access_token, refresh_token, expires_in, id_token]
+        )]
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Per-Provider User Info Fetching
+// ═══════════════════════════════════════════════════════════════════════
+
+// Fetch Google user info from access token
+fn oauth_get_google_user(access_token) {
+    let url = "https://www.googleapis.com/oauth2/v2/userinfo"
+    let req = fetch(url)
+    req.header("Authorization", "Bearer " + access_token)
+    req.header("Accept", "application/json")
+
+    let response = null
+    try { response = req.get() } catch e {
+        return http.create_struct(["success", "error"], [false, "Google user info failed: " + e])
+    }
+
+    return _parse_and_normalize(response, "google")
+}
+
+// Fetch Microsoft Graph user info from access token
+fn oauth_get_microsoft_user(access_token) {
+    let url = "https://graph.microsoft.com/v1.0/me"
+    let req = fetch(url)
+    req.header("Authorization", "Bearer " + access_token)
+    req.header("Accept", "application/json")
+
+    let response = null
+    try { response = req.get() } catch e {
+        return http.create_struct(["success", "error"], [false, "Microsoft user info failed: " + e])
+    }
+
+    return _parse_and_normalize(response, "microsoft")
+}
+
+// Fetch GitHub user info from access token.
+// GitHub requires a separate email endpoint call.
+fn oauth_get_github_user(access_token) {
+    // Fetch user profile
+    let user_url = "https://api.github.com/user"
+    let req = fetch(user_url)
+    req.header("Authorization", "Bearer " + access_token)
+    req.header("Accept", "application/json")
+    req.header("User-Agent", "Varian-OAuth/1.0")
+
+    let response = null
+    try { response = req.get() } catch e {
+        return http.create_struct(["success", "error"], [false, "GitHub user info failed: " + e])
+    }
+
+    let data = null
+    try { data = json_decode(response) } catch e {
+        return http.create_struct(["success", "error"], [false, "Failed to parse GitHub user response"])
+    }
+
+    let id = _validate.get_field(data, "id")
+    let email = _validate.get_field(data, "email")
+    let name = _validate.get_field(data, "name")
+    let login = _validate.get_field(data, "login")
+    let avatar_url = _validate.get_field(data, "avatar_url")
+
+    // If primary email is null, fetch the emails endpoint
+    if email == null {
+        let emails_url = "https://api.github.com/user/emails"
+        let emails_req = fetch(emails_url)
+        emails_req.header("Authorization", "Bearer " + access_token)
+        emails_req.header("Accept", "application/json")
+        emails_req.header("User-Agent", "Varian-OAuth/1.0")
+
+        let emails_response = null
+        try { emails_response = emails_req.get() } catch e2 {
+            // Fallback: use login as email surrogate
+            email = login + "@github.com"
+        }
+
+        if emails_response != null {
+            let emails_data = null
+            try { emails_data = json_decode(emails_response) } catch e3 {
+                email = login + "@github.com"
+            }
+            if emails_data != null {
+                // Find primary email
+                for i in 0..emails_data.len() {
+                    let entry = emails_data[i]
+                    let is_primary = _validate.get_field(entry, "primary")
+                    let verified = _validate.get_field(entry, "verified")
+                    if is_primary == true and verified == true {
+                        email = _validate.get_field(entry, "email")
+                        break
+                    }
+                }
+                // Fallback to first verified email
+                if email == null {
+                    for i in 0..emails_data.len() {
+                        let entry = emails_data[i]
+                        let verified = _validate.get_field(entry, "verified")
+                        if verified == true {
+                            email = _validate.get_field(entry, "email")
+                            break
+                        }
+                    }
+                }
+                // Last resort: first email
+                if email == null {
+                    let entry = emails_data[0]
+                    email = _validate.get_field(entry, "email")
+                }
+            }
+        }
+    }
+
+    if id == null {
+        return http.create_struct(["success", "error"], [false, "No user id in GitHub response"])
+    }
+    if name == null { name = login }
+
+    let normalized = http.create_struct(
+        ["id", "email", "name", "avatar_url", "provider"],
+        ["" + id, email, name, avatar_url, "github"]
+    )
+
+    return http.create_struct(["success", "data"], [true, normalized])
+}
+
+// Fetch Apple user info from ID token (JWT).
+// Apple's user info is embedded in the ID token; decode it.
+fn oauth_get_apple_user(id_token) {
+    if id_token == null {
+        return http.create_struct(["success", "error"], [false, "Apple requires id_token for user info"])
+    }
+
+    // Decode the JWT payload (second segment)
+    let parts = id_token.split(".")
+    if parts.len() != 3 {
+        return http.create_struct(["success", "error"], [false, "Invalid Apple id_token format"])
+    }
+
+    let payload_b64 = parts[1]
+    let json_str = _base64url_decode(payload_b64)
+    let data = null
+    try { data = json_decode(json_str) } catch e {
+        return http.create_struct(["success", "error"], [false, "Failed to decode Apple id_token"])
+    }
+
+    let sub = _validate.get_field(data, "sub")
+    let email = _validate.get_field(data, "email")
+    let is_private = _validate.get_field(data, "is_private_email")
+
+    // Apple may return a private relay email; use sub as id
+    if sub == null {
+        return http.create_struct(["success", "error"], [false, "No subject in Apple id_token"])
+    }
+
+    let normalized = http.create_struct(
+        ["id", "email", "name", "avatar_url", "provider", "is_private_email"],
+        [sub, email, null, null, "apple", is_private]
+    )
+
+    return http.create_struct(["success", "data"], [true, normalized])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Smart Dispatch
+// ═══════════════════════════════════════════════════════════════════════
+
+// Route user info fetching to the correct provider implementation.
+// Apple requires id_token (from token exchange) instead of access_token.
+fn oauth_get_user(provider, access_token, id_token) {
+    if provider.name == "google" {
+        return oauth_get_google_user(access_token)
+    }
+    if provider.name == "microsoft" {
+        return oauth_get_microsoft_user(access_token)
+    }
+    if provider.name == "github" {
+        return oauth_get_github_user(access_token)
+    }
+    if provider.name == "apple" {
+        return oauth_get_apple_user(id_token)
+    }
+    return http.create_struct(["success", "error"], [false, "Unknown provider: " + provider.name])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Normalization helper (shared)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn _parse_and_normalize(raw_response, provider_name) {
+    if raw_response == null {
+        return http.create_struct(["success", "error"], [false, "No response from provider"])
+    }
+
+    let data = null
+    try { data = json_decode(raw_response) } catch e {
+        return http.create_struct(["success", "error"], [false, "Failed to parse " + provider_name + " response"])
+    }
+
+    let normalized = _normalize_oauth_user(provider_name, data)
+    if normalized == null {
+        return http.create_struct(["success", "error"], [false, "Failed to normalize " + provider_name + " user data"])
+    }
+
+    return http.create_struct(["success", "data"], [true, normalized])
+}
+
+// Normalize user data from any provider to a standard format.
+// Returns a struct with: id, email, name, avatar_url, provider
+fn _normalize_oauth_user(provider_name, data) {
+    if provider_name == "google" {
+        let id = _validate.get_field(data, "id")
+        let email = _validate.get_field(data, "email")
+        let name = _validate.get_field(data, "name")
+        let picture = _validate.get_field(data, "picture")
+        if id == null { return null }
+        return http.create_struct(
+            ["id", "email", "name", "avatar_url", "provider"],
+            [id, email, name, picture, "google"]
+        )
+    }
+
+    if provider_name == "github" {
+        let id = _validate.get_field(data, "id")
+        let email = _validate.get_field(data, "email")
+        let name = _validate.get_field(data, "name")
+        let avatar_url = _validate.get_field(data, "avatar_url")
+
+        if email == null { email = _validate.get_field(data, "login") + "@github.com" }
+        if name == null { name = _validate.get_field(data, "login") }
+        if id == null { return null }
+
+        return http.create_struct(
+            ["id", "email", "name", "avatar_url", "provider"],
+            ["" + id, email, name, avatar_url, "github"]
+        )
+    }
+
+    if provider_name == "microsoft" {
+        let id = _validate.get_field(data, "id")
+        let email = _validate.get_field(data, "mail")
+        if email == null { email = _validate.get_field(data, "userPrincipalName") }
+        let name = _validate.get_field(data, "displayName")
+        if name == null { name = _validate.get_field(data, "givenName") }
+        if id == null { return null }
+
+        return http.create_struct(
+            ["id", "email", "name", "avatar_url", "provider"],
+            [id, email, name, null, "microsoft"]
+        )
+    }
+
+    if provider_name == "apple" {
+        let id = _validate.get_field(data, "sub")
+        let email = _validate.get_field(data, "email")
+        let name = _validate.get_field(data, "name")
+
+        // Apple may send name as a struct with firstName/lastName
+        if name == null {
+            let name_field = _validate.get_field(data, "name")
+            if name_field != null {
+                let first = _validate.get_field(name_field, "firstName")
+                let last = _validate.get_field(name_field, "lastName")
+                if first != null {
+                    name = first
+                    if last != null { name = name + " " + last }
+                }
+            }
+        }
+        if id == null { return null }
+
+        return http.create_struct(
+            ["id", "email", "name", "avatar_url", "provider"],
+            [id, email, name, null, "apple"]
+        )
+    }
+
+    return null
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Session Creation from OAuth
+// ═══════════════════════════════════════════════════════════════════════
+
+// Create or retrieve a user from OAuth provider data, then create a session.
+// provider_user is the normalized user struct from _normalize_oauth_user.
+// Returns { success, data: { user, session_token, expires_at, is_new } }
+fn oauth_create_session(db, provider_user, ttl_seconds) {
+    let provider_id = _validate.get_field(provider_user, "id")
+    let email = _validate.get_field(provider_user, "email")
+    let name = _validate.get_field(provider_user, "name")
+    let provider_name = _validate.get_field(provider_user, "provider")
+
+    if provider_id == null or email == null {
+        return http.create_struct(["success", "error"], [false, "Invalid provider user data"])
+    }
+    if ttl_seconds == null { ttl_seconds = 86400 } // default 24h
+
+    // Check if this OAuth identity already exists
+    let rows = db.query(
+        "SELECT u.id, u.email, u.role, u.email_verified, u.name, u.created_at, u.updated_at FROM users u JOIN oauth_accounts oa ON u.id = oa.user_id WHERE oa.provider = ? AND oa.provider_user_id = ?",
+        [provider_name, provider_id]
+    )
+
+    if rows.len() > 0 {
+        let row = rows[0]
+        // Update name if provider has more recent info
+        if name != null and name != "" {
+            db.execute("UPDATE users SET name = ?, updated_at = ? WHERE id = ?", [name, time.now_ms() / 1000, row.id])
+        }
+
+        // Create session
+        let session_token = auth.generate_token(32)
+        let expires_at = time.now_ms() / 1000 + ttl_seconds
+        db.execute(
+            "INSERT INTO sessions (user_id, session_token, expires_at, created_at) VALUES (?, ?, ?, ?)",
+            [row.id, session_token, expires_at, time.now_ms() / 1000]
+        )
+
+        return http.create_struct(
+            ["success", "data"],
+            [true, http.create_struct(
+                ["user", "session_token", "expires_at", "is_new"],
+                [http.create_struct(
+                    ["id", "email", "role", "name", "email_verified"],
+                    [row.id, row.email, row.role, name, row.email_verified]
+                ), session_token, expires_at, false]
+            )]
+        )
+    }
+
+    // Check if a user with this email already exists
+    let existing_user = db.query("SELECT id FROM users WHERE email = ?", [email])
+    let user_id = null
+
+    if existing_user.len() > 0 {
+        user_id = existing_user[0].id
+    } else {
+        // Create new user
+        let now = time.now_ms() / 1000
+        db.execute(
+            "INSERT INTO users (email, password_hash, role, email_verified, name, created_at, updated_at) VALUES (?, '', 'user', 1, ?, ?, ?)",
+            [email, name, now, now]
+        )
+        let new_rows = db.query("SELECT last_insert_rowid() as id", [])
+        user_id = new_rows[0].id
+    }
+
+    // Link OAuth account
+    db.execute(
+        "INSERT INTO oauth_accounts (user_id, provider, provider_user_id, created_at) VALUES (?, ?, ?, ?)",
+        [user_id, provider_name, provider_id, time.now_ms() / 1000]
+    )
+
+    // Return user info with session
+    let user_rows = db.query("SELECT id, email, role, email_verified, name FROM users WHERE id = ?", [user_id])
+    if user_rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Failed to create user"])
+    }
+
+    let row = user_rows[0]
+    let session_token = auth.generate_token(32)
+    let expires_at = time.now_ms() / 1000 + ttl_seconds
+    db.execute(
+        "INSERT INTO sessions (user_id, session_token, expires_at, created_at) VALUES (?, ?, ?, ?)",
+        [user_id, session_token, expires_at, time.now_ms() / 1000]
+    )
+
+    let user = http.create_struct(
+        ["id", "email", "role", "name", "email_verified"],
+        [row.id, row.email, row.role, row.name, row.email_verified]
+    )
+
+    return http.create_struct(
+        ["success", "data"],
+        [true, http.create_struct(
+            ["user", "session_token", "expires_at", "is_new"],
+            [user, session_token, expires_at, true]
+        )]
+    )
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Login or Register with OAuth (Legacy — delegates to oauth_create_session)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn oauth_login_or_register(db, provider_user) {
+    let provider_id = _validate.get_field(provider_user, "id")
+    let email = _validate.get_field(provider_user, "email")
+    let name = _validate.get_field(provider_user, "name")
+    let provider_name = _validate.get_field(provider_user, "provider")
+
+    if provider_id == null or email == null {
+        return http.create_struct(["success", "error"], [false, "Invalid provider user data"])
+    }
+
+    // Check if this OAuth identity already exists
+    let rows = db.query(
+        "SELECT u.id, u.email, u.role, u.email_verified, u.created_at, u.updated_at FROM users u JOIN oauth_accounts oa ON u.id = oa.user_id WHERE oa.provider = ? AND oa.provider_user_id = ?",
+        [provider_name, provider_id]
+    )
+
+    if rows.len() > 0 {
+        let row = rows[0]
+        let user = http.create_struct(
+            ["id", "email", "role", "email_verified", "created_at", "updated_at"],
+            [row.id, row.email, row.role, row.email_verified, row.created_at, row.updated_at]
+        )
+        return http.create_struct(["success", "data"], [true, http.create_struct(["user", "is_new"], [user, false])])
+    }
+
+    // Check if a user with this email already exists
+    let existing_user = db.query("SELECT id FROM users WHERE email = ?", [email])
+    let user_id = null
+
+    if existing_user.len() > 0 {
+        user_id = existing_user[0].id
+    } else {
+        // Create new user
+        let now = time.now_ms() / 1000
+        db.execute(
+            "INSERT INTO users (email, password_hash, role, email_verified, created_at, updated_at) VALUES (?, '', 'user', 1, ?, ?)",
+            [email, now, now]
+        )
+        let new_rows = db.query("SELECT last_insert_rowid() as id", [])
+        user_id = new_rows[0].id
+    }
+
+    // Link OAuth account
+    db.execute(
+        "INSERT INTO oauth_accounts (user_id, provider, provider_user_id, created_at) VALUES (?, ?, ?, ?)",
+        [user_id, provider_name, provider_id, time.now_ms() / 1000]
+    )
+
+    // Return user info
+    let user_rows = db.query("SELECT id, email, role, email_verified, created_at, updated_at FROM users WHERE id = ?", [user_id])
+    if user_rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "Failed to create user"])
+    }
+
+    let row = user_rows[0]
+    let user = http.create_struct(
+        ["id", "email", "role", "email_verified", "created_at", "updated_at"],
+        [row.id, row.email, row.role, row.email_verified, row.created_at, row.updated_at]
+    )
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["user", "is_new"], [user, true])])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// OAuth Table Setup
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_oauth_tables(db) {
+    db.execute("CREATE TABLE IF NOT EXISTS oauth_accounts (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, provider TEXT, provider_user_id TEXT, created_at TEXT)", [])
+    return http.create_struct(["success"], [true])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// URL Encoding Helper (percent-encoding for query params)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn _url_encode(s) {
+    if s == null { return "" }
+    let result = ""
+    let len = s.len()
+    for i in 0..len {
+        let c = s.substring(i, i + 1)
+        let code = s.code_at(i)
+        // Unreserved characters: A-Z, a-z, 0-9, -, ., _, ~
+        if (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57) or c == "-" or c == "." or c == "_" or c == "~" {
+            result = result + c
+        } else if c == " " {
+            result = result + "+"
+        } else {
+            result = result + "%" + _hex_byte(code)
+        }
+    }
+    return result
+}
+
+fn _hex_byte(b) {
+    let hex = "0123456789ABCDEF"
+    let hi = hex.substring(b / 16, b / 16 + 1)
+    let lo = hex.substring(b % 16, b % 16 + 1)
+    return hi + lo
+}
