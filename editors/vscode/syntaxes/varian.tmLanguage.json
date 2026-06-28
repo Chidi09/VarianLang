@@ -63,7 +63,7 @@
     },
     "keywords": {
       "patterns": [
-        { "name": "keyword.control.varian", "match": "\\b(return|if|else|while|for|in|loop|match|case|break|continue|try|catch|async|await)\\b" },
+        { "name": "keyword.control.varian", "match": "\\b(return|if|else|while|for|in|loop|match|case|break|continue|try|catch|async|await|self)\\b" },
         { "name": "keyword.declaration.varian", "match": "\\b(let|const|fn|struct|enum|actor|impl|trait|type|use|pub|mut|test|comptime)\\b" },
         { "name": "keyword.operator.word.varian", "match": "\\b(and|or|not|as|assert)\\b" }
       ]
@@ -89,6 +89,13 @@
         },
         {
           "match": "\\b(struct|enum|actor|trait|impl|type)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.varian" },
+            "2": { "name": "entity.name.type.varian" }
+          }
+        },
+        {
+          "match": "\\b(schema)\\s+([A-Z][A-Za-z0-9_]*)\\s*\\{",
           "captures": {
             "1": { "name": "keyword.declaration.varian" },
             "2": { "name": "entity.name.type.varian" }
