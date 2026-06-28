@@ -13,13 +13,22 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <dirent.h>
 #ifdef _WIN32
 #include <direct.h>
 #define mkdir(path, mode) _mkdir(path)
 #endif
 #include <sys/stat.h>
 #ifdef _WIN32
+/* <windows.h> (via winnt.h) defines a TOKEN_TYPE typedef and a TokenType
+ * enumerator that collide with VarianLang's lexer token names. Rename the
+ * Windows symbols across the windows.h include only; our enum/typedef are
+ * restored by the #undef immediately after. */
+#define TOKEN_TYPE WIN_TOKEN_TYPE
+#define TokenType  WIN_TokenType
 #include <windows.h>
+#undef TOKEN_TYPE
+#undef TokenType
 #include <process.h>
 #else
 #include <sys/wait.h>
@@ -481,8 +490,6 @@ static pid_t lumen_spawn_server(const char *app) {
     }
     return pid;
 #endif
-}
-    return pid;
 }
 
 /* ─── Lumen dev console — the interactive Nuxt/Next-style startup banner ─── */

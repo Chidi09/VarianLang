@@ -659,15 +659,15 @@ fn _substr_index(s, find, start) {
     let i = start
     while i <= n - flen {
         let j = 0
-        let match = true
+        let matched = true
         while j < flen {
             if s.substring(i + j, i + j + 1) != find.substring(j, j + 1) {
-                match = false
+                matched = false
                 break
             }
             j = j + 1
         }
-        if match { return i }
+        if matched { return i }
         i = i + 1
     }
     return -1

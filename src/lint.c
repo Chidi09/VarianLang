@@ -238,6 +238,7 @@ static void check_module_usages(LintWalker *walker, AstNode *node) {
         // A. Fetch Module Checks — handled in NODE_EXPR_STMT
 
         // B. Mail Module Checks (SMTP/Resend Arguments & Address Format)
+        AstNode *callee = node->call.callee;
         const char *fn_name = NULL;
         if (callee && callee->kind == NODE_IDENTIFIER) {
             fn_name = callee->identifier.name;

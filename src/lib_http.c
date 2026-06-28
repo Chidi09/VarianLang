@@ -4,7 +4,18 @@
 #include "lexer.h"
 #include "parser.h"
 #include <stdatomic.h>
+/* On Windows, curl.h transitively includes winsock2.h -> windows.h -> winnt.h,
+ * whose TOKEN_TYPE typedef and TokenType enumerator collide with our lexer
+ * token names (already in scope via lexer.h). Rename across this include only. */
+#ifdef _WIN32
+#define TOKEN_TYPE WIN_TOKEN_TYPE
+#define TokenType  WIN_TokenType
+#endif
 #include <curl/curl.h>
+#ifdef _WIN32
+#undef TOKEN_TYPE
+#undef TokenType
+#endif
 #include <stdio.h>
 #include "platform_io.h"
 #include <stdlib.h>
@@ -20,9 +31,17 @@
 #include <openssl/err.h>
 
 #ifdef _WIN32
+/* winnt.h (pulled in by windows.h) defines a TOKEN_TYPE typedef and a
+ * TokenType enumerator that clash with VarianLang's lexer token names which
+ * are already in scope via lexer.h above. Rename the Windows symbols for the
+ * duration of the windows.h include; our names are restored by the #undef. */
+#define TOKEN_TYPE WIN_TOKEN_TYPE
+#define TokenType  WIN_TokenType
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
+#undef TOKEN_TYPE
+#undef TokenType
 #include <io.h>
 #define close_socket(s) closesocket(s)
 #define getpid _getpid
@@ -212,7 +231,13 @@ static Value lib_http_post_stream(VM *vm, int arg_count, Value *args) {
     if (header_list) curl_slist_free_all(header_list);
 
     if (res != CURLE_OK) { free(buf.data); return val_nil(); }
-    if (!buf.data || buf.len == 0) { free(buf.data); return new_array(vm, 0); }
+    if (!buf.data || buf.len == 0) {
+        free(buf.data);
+        ObjArray *empty = new_array();
+        empty->obj.next = vm->objects;
+        vm->objects = (Obj *)empty;
+        return val_array(empty);
+    }
 
     // Count SSE chunks separated by double-newline.
     int chunk_count = 1;
@@ -223,7 +248,13 @@ static Value lib_http_post_stream(VM *vm, int arg_count, Value *args) {
         }
     }
 
-    ObjArray *arr = new_array(vm, chunk_count);
+    ObjArray *arr = new_array();
+    arr->obj.next = vm->objects;
+    vm->objects = (Obj *)arr;
+    arr->elements = (Value *)realloc(arr->elements, (size_t)chunk_count * sizeof(Value));
+    arr->capacity = chunk_count;
+    arr->count = chunk_count;
+    for (int z = 0; z < chunk_count; z++) arr->elements[z] = val_nil();
     int idx = 0;
     size_t start = 0;
     for (i = 0; i + 1 < buf.len; i++) {
@@ -1564,7 +1595,7 @@ static void poll_pending_connections(VM *vm, PendingConnPool *pool, Value handle
                     if (flags >= 0) fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 #endif
                     int nodelay = 1;
-                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                    setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
                     char ip_str[64] = "127.0.0.1";
                     struct sockaddr_in peer;
                     socklen_t peer_len = sizeof(peer);
@@ -1829,7 +1860,7 @@ static bool http_serve_setup_listener(VM *vm, Task *t, int port, int workers, co
         return false;
     }
     int opt = 1;
-    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&opt, sizeof(opt));
     /* Required for cluster mode: each worker thread (see
      * spawn_cluster_workers) runs its own fully independent VM and binds
      * its OWN socket on this same port rather than sharing one fd -- the
@@ -1925,7 +1956,7 @@ static bool http_serve_tick(VM *vm, Task *t, Value handler_or_routes_val, bool i
                 fcntl(client_fd, F_SETFL, flags | O_NONBLOCK);
 #endif
                 int nodelay = 1;
-                setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+                setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, (const char *)&nodelay, sizeof(nodelay));
                 char ip_str[64] = "127.0.0.1";
                 unsigned char *ip = (unsigned char *)&client_addr.sin_addr.s_addr;
                 snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);

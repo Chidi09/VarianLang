@@ -9,6 +9,7 @@
 #include <string.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 
 /* ─── File reading ─── */
 static char *read_file(const char *path) {
@@ -90,26 +91,6 @@ static char *read_directory_sources(const char *dir_path) {
     return result;
 }
 
-static char *test_runner_read_file_with_modules(const char *path) {
-    char *main_source = read_file(path);
-    if (!main_source) return NULL;
-
-    char *prelude = read_directory_sources("vn_modules");
-    if (!prelude) return main_source;
-
-    size_t prelude_len = strlen(prelude);
-    size_t main_len = strlen(main_source);
-    char *combined = (char *)malloc(prelude_len + 1 + main_len + 1);
-    if (!combined) { free(prelude); return main_source; }
-    memcpy(combined, prelude, prelude_len);
-    combined[prelude_len] = '\n';
-    memcpy(combined + prelude_len + 1, main_source, main_len);
-    combined[prelude_len + 1 + main_len] = '\0';
-    free(prelude);
-    free(main_source);
-    return combined;
-}
-
 /* ─── Recursive directory scanner ─── */
 static void collect_test_files(const char *dir, char ***files, int *count, int *cap) {
     DIR *d = opendir(dir);
@@ -160,11 +141,32 @@ typedef struct {
     int timed_out;
 } TestTotals;
 
-/* ─── Run a single test file ─── */
-/* Returns: 0 on success (all tests pass), 1 on failure */
-static int run_test_file(const char *path, const char *filter, int timeout_ms,
-                         TestTotals *totals) {
-    char *source = test_runner_read_file_with_modules(path);
+/* ─── Run a single test file inside a persistent warm VM ─── */
+static int run_test_file_warm(VM *warm_vm, const char *path,
+                               const char *filter, int timeout_ms,
+                               TestTotals *totals) {
+    /* Free ALL tasks from the previous file's run so vm_run creates a
+     * fresh init task for this file's top-level code.  Dead test tasks
+     * from the mini-scheduler are never reaped by vm_run's round-robin
+     * loop, so they accumulate in warm_vm->tasks[] and cause
+     * vm_run (warm_vm, true) to skip init-task creation because
+     * task_count > 0 even though every entry is dead.
+     * Globals are name-addressed at runtime (define_global / get_global
+     * do a linear scan of global_names[]), so no compiler seeding is
+     * needed — we just need the top-level code to run and register
+     * the per-file globals and dispatch entries. */
+    for (int i = 0; i < warm_vm->task_count; i++) {
+        if (warm_vm->tasks[i]) {
+            free(warm_vm->tasks[i]->arena_base);
+            warm_vm->tasks[i]->arena_base = NULL;
+            free(warm_vm->tasks[i]);
+            warm_vm->tasks[i] = NULL;
+        }
+    }
+    warm_vm->task_count = 0;
+    warm_vm->free_tasks = NULL;  /* freed above — don't let free-list dangle */
+
+    char *source = read_file(path);
     if (!source) return 1;
 
     Lexer lexer;
@@ -196,45 +198,166 @@ static int run_test_file(const char *path, const char *filter, int timeout_ms,
         return 1;
     }
 
-    VM vm;
-    vm_init(&vm, &compiler);
-    vm.test_filter = filter;
-    vm.test_timeout_ms = timeout_ms;
+    /* Free old main_fn wrapper (struct only — chunk owns code/constants) */
+    if (warm_vm->main_fn) {
+        free(warm_vm->main_fn);
+        warm_vm->main_fn = NULL;
+    }
+
+    /* Free old FFI entries from a previous vm_run call */
+    free(warm_vm->ffi_entries);
+    warm_vm->ffi_entries = NULL;
+    warm_vm->ffi_entry_count = 0;
+
+    warm_vm->compiler = &compiler;
+    warm_vm->source = source;
+    warm_vm->source_name = path;
+    warm_vm->prelude_line_count = 0;
 
     /* Copy tests from compiler to VM */
-    for (int i = 0; i < compiler.test_count && vm.test_count < MAX_TESTS; i++) {
-        vm.tests[vm.test_count].description = strdup(compiler.tests[i].description);
-        vm.tests[vm.test_count].func = compiler.tests[i].func;
-        vm.test_count++;
+    warm_vm->test_count = 0;
+    for (int i = 0; i < compiler.test_count && warm_vm->test_count < MAX_TESTS; i++) {
+        warm_vm->tests[warm_vm->test_count].description = strdup(compiler.tests[i].description);
+        warm_vm->tests[warm_vm->test_count].func = compiler.tests[i].func;
+        warm_vm->test_count++;
     }
+
+    warm_vm->test_filter = filter;
+    warm_vm->test_timeout_ms = timeout_ms;
+    warm_vm->test_fail_count = 0;
+    warm_vm->test_skip_count = 0;
+    warm_vm->test_timeout_count = 0;
+    warm_vm->deadline_us = 0;
+    warm_vm->timed_out = false;
+    warm_vm->had_error = false;
+    warm_vm->last_error[0] = '\0';
 
     /* Run top-level + tests */
-    vm_run(&vm, true);
+    vm_run(warm_vm, true);
 
-    int fails = vm.test_fail_count;
+    int fails = warm_vm->test_fail_count;
 
     if (totals) {
-        int ran = vm.test_count - vm.test_skip_count;
-        totals->passed    += ran - vm.test_fail_count;
-        totals->failed    += vm.test_fail_count;
-        totals->skipped   += vm.test_skip_count;
-        totals->timed_out += vm.test_timeout_count;
+        int ran = warm_vm->test_count - warm_vm->test_skip_count;
+        totals->passed    += ran - warm_vm->test_fail_count;
+        totals->failed    += warm_vm->test_fail_count;
+        totals->skipped   += warm_vm->test_skip_count;
+        totals->timed_out += warm_vm->test_timeout_count;
     }
 
-    vm_free(&vm);
-    chunk_free(&chunk);
+    /* Kill any remaining tasks (actor loops, etc.) so they don't leak into the next file */
+    for (int i = 0; i < warm_vm->task_count; i++) {
+        if (warm_vm->tasks[i]) warm_vm->tasks[i]->dead = true;
+    }
 
     /* Free test descriptions we strdup'd */
-    for (int i = 0; i < vm.test_count; i++) {
-        if (vm.tests[i].description) {
-            /* Don't free compiler.tests[i].description — strdup done above */
-            free(vm.tests[i].description);
-        }
+    for (int i = 0; i < warm_vm->test_count; i++) {
+        free(warm_vm->tests[i].description);
+        warm_vm->tests[i].description = NULL;
+        warm_vm->tests[i].func = NULL;
+    }
+    warm_vm->test_count = 0;
+
+    /* Free main_fn struct (owned by this per-file calloc) */
+    if (warm_vm->main_fn) {
+        free(warm_vm->main_fn);
+        warm_vm->main_fn = NULL;
     }
 
+    chunk_free(&chunk);
     arena_destroy(arena);
     free(source);
+
     return fails > 0 ? 1 : 0;
+}
+
+/* ─── Compile-and-run the prelude, returning a persistent warm VM ─── */
+static int warm_vm_init(VM *warm_vm, char **out_prelude_source,
+                         Chunk *out_prelude_chunk, Arena **out_prelude_arena) {
+    char *prelude_source = read_directory_sources("vn_modules");
+    if (!prelude_source) {
+        fprintf(stderr, "test: could not read vn_modules prelude\n");
+        return -1;
+    }
+
+    Lexer lexer;
+    lexer_init(&lexer, prelude_source, "vn_modules");
+
+    Arena *arena = arena_create(0);
+    Parser parser;
+    parser_init(&parser, &lexer, arena);
+
+    AstNode *program = parser_parse(&parser);
+    if (parser.had_error) {
+        fprintf(stderr, "Parse error in prelude: %s\n", parser_get_error(&parser));
+        arena_destroy(arena);
+        free(prelude_source);
+        return -1;
+    }
+
+    chunk_init(out_prelude_chunk);
+
+    Compiler compiler;
+    compiler_init(&compiler, arena, out_prelude_chunk, program);
+
+    if (!compiler_compile(&compiler)) {
+        fprintf(stderr, "Compile error in prelude: %s\n", compiler.error_message);
+        chunk_free(out_prelude_chunk);
+        arena_destroy(arena);
+        free(prelude_source);
+        return -1;
+    }
+
+    vm_init(warm_vm, &compiler);
+    warm_vm->source = prelude_source;
+    warm_vm->source_name = "vn_modules";
+
+    /* Run prelude top-level only (no tests) */
+    vm_run(warm_vm, false);
+
+    *out_prelude_source = prelude_source;
+    *out_prelude_arena = arena;
+    return 0;
+}
+
+/* ─── Reset warm VM globals/dispatch and RE-RUN the compiled prelude ─── */
+static void warm_vm_reset_and_reload_prelude(VM *warm_vm, Chunk *prelude_chunk,
+                                              const char *prelude_source,
+                                              const char *prelude_name) {
+    warm_vm->global_count = 0;
+    memset(warm_vm->dispatch_occupied, 0, sizeof(warm_vm->dispatch_occupied));
+    memset(warm_vm->dispatch_pic_keys, 0, sizeof(warm_vm->dispatch_pic_keys));
+    for (int i = 0; i < VM_DISPATCH_PIC_SIZE; i++)
+        warm_vm->dispatch_pic_idxs[i] = -1;
+    warm_vm->validation_registry.count = 0;
+    warm_vm->shape_registry.count = 0;
+    memset(warm_vm->shape_registry.shapes, 0, sizeof(warm_vm->shape_registry.shapes));
+    warm_vm->actor_field_count = 0;
+    warm_vm->task_count = 0;
+    warm_vm->free_tasks = NULL;
+    warm_vm->compiler = NULL;
+    warm_vm->source = prelude_source;
+    warm_vm->source_name = prelude_name;
+    warm_vm->prelude_line_count = 0;
+
+    /* Restore main_fn to point at the prelude chunk (run_test_file_warm frees it) */
+    if (!warm_vm->main_fn) {
+        warm_vm->main_fn = (ObjFunction *)calloc(1, sizeof(ObjFunction));
+        warm_vm->main_fn->obj.type = VAL_FUNCTION;
+        warm_vm->main_fn->code = prelude_chunk->code;
+        warm_vm->main_fn->code_count = prelude_chunk->count;
+        warm_vm->main_fn->code_capacity = prelude_chunk->capacity;
+        warm_vm->main_fn->constants = prelude_chunk->constants;
+        warm_vm->main_fn->constant_count = prelude_chunk->constant_count;
+        warm_vm->main_fn->constant_capacity = prelude_chunk->constant_capacity;
+    }
+
+    /* Free old FFI entries (vm_run will not re-create them if compiler is NULL) */
+    free(warm_vm->ffi_entries);
+    warm_vm->ffi_entries = NULL;
+    warm_vm->ffi_entry_count = 0;
+
+    vm_run(warm_vm, false);
 }
 
 /* ─── Public API ─── */
@@ -267,23 +390,57 @@ int test_run_dir(const char *path, const char *filter, int timeout_ms) {
     if (timeout_ms > 0) printf("Timeout: %dms per test\n", timeout_ms);
     printf("\n");
 
+    /* ─── Warm-VM setup: compile prelude ONCE ─── */
+    VM warm_vm;
+    char *prelude_source = NULL;
+    Chunk prelude_chunk;
+    Arena *prelude_arena = NULL;
+    printf("[warm-vm] Loading prelude (vn_modules/*.vn)...\n");
+    int vmerr = warm_vm_init(&warm_vm, &prelude_source,
+                              &prelude_chunk, &prelude_arena);
+    if (vmerr != 0) {
+        if (files) {
+            for (int i = 0; i < count; i++) free(files[i]);
+            free(files);
+        }
+        return 1;
+    }
+    printf("[warm-vm] Prelude loaded. %d globals defined.\n\n", warm_vm.global_count);
+
     int total_failed = 0;
     TestTotals totals = {0, 0, 0, 0};
 
     for (int i = 0; i < count; i++) {
         printf("File: %s\n", files[i]);
-        total_failed += run_test_file(files[i], filter, timeout_ms, &totals);
+
+        int ret = run_test_file_warm(&warm_vm, files[i], filter, timeout_ms, &totals);
+        total_failed += ret;
+
+        /* Per-file isolation: reset globals and re-run compiled prelude bytecode */
+        warm_vm_reset_and_reload_prelude(&warm_vm, &prelude_chunk, prelude_source, "vn_modules");
+
         printf("\n");
         free(files[i]);
     }
 
     free(files);
 
+    /* Print the summary BEFORE teardown. A test may leave a lingering native
+     * thread alive (a live server / pubsub tick, or the detached pthread in
+     * lib_http), which can deadlock vm_free on exit. We already have every
+     * result, so report it and terminate immediately, bypassing the hang —
+     * the OS reclaims all memory, file handles, and threads. (void-cast the
+     * otherwise-unused warm-VM/prelude resources to silence -Wunused.) */
+    (void)warm_vm; (void)prelude_chunk; (void)prelude_arena; (void)prelude_source;
+
     printf("─────────────────────────────────────\n");
     printf("Summary: %d passed, %d failed", totals.passed, totals.failed);
     if (totals.timed_out > 0) printf(" (%d timed out)", totals.timed_out);
     if (totals.skipped > 0)   printf(", %d skipped", totals.skipped);
     printf("\n");
+    fflush(stdout);
+    fflush(stderr);
 
-    return total_failed > 0 ? 1 : 0;
+    _Exit(total_failed > 0 ? 1 : 0);  /* immediate, skips the hanging teardown */
+    return total_failed > 0 ? 1 : 0;  /* not reached */
 }

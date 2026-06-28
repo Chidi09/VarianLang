@@ -166,11 +166,11 @@ impl FetchRequest {
         return self._do_stream()
     }
 
-    fn stream_with(self, fn) {
+    fn stream_with(self, callback) {
         let chunks = self.stream()
         if chunks == null { return null }
         for i in 0..chunks.len() {
-            fn(chunks[i])
+            callback(chunks[i])
         }
         return chunks
     }

@@ -34,16 +34,7 @@ let _queue_db = null
 fn _queue_init_db() {
     if _queue_db == null {
         _queue_db = sqlite.connect("aurora.db")
-        sqlite.query(_queue_db, "CREATE TABLE IF NOT EXISTS vn_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            payload TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            error TEXT,
-            attempts INTEGER DEFAULT 0,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )")
+        sqlite.query(_queue_db, "CREATE TABLE IF NOT EXISTS vn_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, attempts INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
     }
 }
 

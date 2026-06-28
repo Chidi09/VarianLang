@@ -126,7 +126,11 @@ static KeywordEntry keywords[] = {
     {"match",  TOKEN_MATCH},
     {"case",   TOKEN_CASE},
     {"struct", TOKEN_STRUCT},
-    {"schema", TOKEN_SCHEMA},
+    /* NOTE: `schema` is intentionally NOT a keyword. It is a very common
+     * identifier (e.g. `lumen_form(schema)`, `lumen_search(req, schema)`) across
+     * the stdlib and user code. Reserving it (added then reverted) broke those
+     * uses and the test suite. The TOKEN_SCHEMA enum + parser branch remain for
+     * a future, non-colliding schema-declaration syntax. */
     {"enum",   TOKEN_ENUM},
     {"actor",  TOKEN_ACTOR},
     {"impl",   TOKEN_IMPL},

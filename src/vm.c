@@ -2008,16 +2008,163 @@ static void compile_node(Compiler *compiler, AstNode *node) {
                 emit_byte(compiler, BC_POP);
                 int break_target = compiler->chunk->count;
                 compiler_pop_loop(compiler, break_target);
-            } else {
-                /* Non-range: simplified */
-                if (!is_range && compiler->scope_depth > 0)
-                    compile_expression(compiler, node->for_stmt.iterable);
-                emit_byte(compiler, BC_POP);
+            } else if (compiler->scope_depth > 0) {
+                /* for var in <array-expr> { body } — inside a function (locals).
+                 * Desugars to: __arr__=expr; __i__=0; __len__=__arr__.len();
+                 *   while __i__ < __len__ { var = __arr__[__i__]; body; __i__++ } */
+                compile_expression(compiler, node->for_stmt.iterable);
+                int arr_idx = compiler_add_local(compiler, "__arr__");
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)arr_idx);
+
+                int zero_idx = chunk_add_constant(compiler->chunk, val_int(0));
+                emit_constant_idx(compiler, zero_idx);
+                int i_idx = compiler_add_local(compiler, "__i__");
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)i_idx);
+
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)arr_idx);
+                emit_byte(compiler, BC_DISPATCH);
+                {
+                    ObjString *s = copy_string("len", 3);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, 0); /* arg count */
+                int len_idx = compiler_add_local(compiler, "__len__");
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)len_idx);
+
+                emit_byte(compiler, BC_NIL);
+                int var_idx = compiler_add_local(compiler, var_name);
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)var_idx);
+
                 int loop_start = compiler->chunk->count;
                 compiler_push_loop(compiler, loop_start);
+
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)i_idx);
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)len_idx);
+                emit_byte(compiler, BC_LESS);
+                int exit_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                emit_byte(compiler, BC_POP);
+
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)arr_idx);
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)i_idx);
+                emit_byte(compiler, BC_INDEX);
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)var_idx);
+                emit_byte(compiler, BC_POP);
+
                 compile_node(compiler, node->for_stmt.body);
+
                 compiler_patch_continues(compiler, compiler->chunk->count);
+                emit_bytes(compiler, BC_GET_LOCAL, (uint8_t)i_idx);
+                int one_idx = chunk_add_constant(compiler->chunk, val_int(1));
+                emit_constant_idx(compiler, one_idx);
+                emit_byte(compiler, BC_ADD);
+                emit_bytes(compiler, BC_SET_LOCAL, (uint8_t)i_idx);
+                emit_byte(compiler, BC_POP);
+
                 emit_loop(compiler, loop_start);
+                patch_jump(compiler, exit_jump);
+                emit_byte(compiler, BC_POP);
+                int break_target = compiler->chunk->count;
+                compiler_pop_loop(compiler, break_target);
+            } else {
+                /* for var in <array-expr> { body } — at top level (globals). */
+                compile_expression(compiler, node->for_stmt.iterable);
+                {
+                    ObjString *s = copy_string("__arr__", 7);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                int zero_idx = chunk_add_constant(compiler->chunk, val_int(0));
+                emit_constant_idx(compiler, zero_idx);
+                {
+                    ObjString *s = copy_string("__i__", 5);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                {
+                    ObjString *s = copy_string("__arr__", 7);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, BC_DISPATCH);
+                {
+                    ObjString *s = copy_string("len", 3);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, 0);
+                {
+                    ObjString *s = copy_string("__len__", 7);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+
+                int loop_start = compiler->chunk->count;
+                compiler_push_loop(compiler, loop_start);
+
+                {
+                    ObjString *s = copy_string("__i__", 5);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                {
+                    ObjString *s = copy_string("__len__", 7);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, BC_LESS);
+                int exit_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                emit_byte(compiler, BC_POP);
+
+                {
+                    ObjString *s = copy_string("__arr__", 7);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                {
+                    ObjString *s = copy_string("__i__", 5);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, BC_INDEX);
+                {
+                    ObjString *s = copy_string(var_name, (int)strlen(var_name));
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_DEFINE_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+
+                compile_node(compiler, node->for_stmt.body);
+
+                compiler_patch_continues(compiler, compiler->chunk->count);
+                {
+                    ObjString *s = copy_string("__i__", 5);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_GET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                int one_idx = chunk_add_constant(compiler->chunk, val_int(1));
+                emit_constant_idx(compiler, one_idx);
+                emit_byte(compiler, BC_ADD);
+                {
+                    ObjString *s = copy_string("__i__", 5);
+                    int idx = chunk_add_constant(compiler->chunk, val_string(s));
+                    emit_byte(compiler, BC_SET_GLOBAL);
+                    emit_short(compiler, (uint16_t)idx);
+                }
+                emit_byte(compiler, BC_POP);
+
+                emit_loop(compiler, loop_start);
+                patch_jump(compiler, exit_jump);
+                emit_byte(compiler, BC_POP);
                 int break_target = compiler->chunk->count;
                 compiler_pop_loop(compiler, break_target);
             }

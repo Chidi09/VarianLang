@@ -56,3 +56,16 @@ fn _hex_val(c) {
     if c == "f" or c == "F" { return 15 }
     return 0
 }
+
+// Namespace object so callers can use `crypto.random_string(...)` etc.
+// (mirrors how validate/sanitize expose themselves in validate.vn).
+let crypto = http.create_struct(
+    ["random_string", "random_hex", "random_bytes", "hmac", "hmac_verify"],
+    [
+        |n| { return random_string(n) },
+        |n| { return random_hex(n) },
+        |n| { return random_bytes(n) },
+        |key, data| { return hmac(key, data) },
+        |key, data, signature| { return hmac_verify(key, data, signature) }
+    ]
+)

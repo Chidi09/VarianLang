@@ -62,6 +62,11 @@ ifeq ($(PLATFORM),Windows)
     CFLAGS += -I$(DEPS_DIR)/include
     LDFLAGS += -L$(DEPS_DIR)/lib
     LDFLAGS += -Wl,-Bstatic -lsqlite3 -lhiredis -lffi -Wl,-Bdynamic -lws2_32 -lwinmm -lcrypt32
+    # Windows' default stack reservation is only 1 MB (Linux is 8 MB). The
+    # recursive-descent parser/compiler overflows it on the large bundled
+    # vn_modules prelude (~10k lines, deeply nested string concatenations).
+    # Reserve 256 MB so the prelude compiles/runs like it does on Linux.
+    LDFLAGS += -Wl,--stack,268435456
     CFLAGS += -D_WIN32_WINNT=0x0600
     # Static tre (regex) library - built from source, no DLL dependency
     TRE_LIB = deps/libtre.a
