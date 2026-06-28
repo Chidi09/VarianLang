@@ -316,6 +316,13 @@ Value val_actor(ObjActor *a) {
     return v;
 }
 
+Value val_bound_method(ObjBoundMethod *bm) {
+    Value v;
+    v.type = VAL_BOUND_METHOD;
+    v.as.bound_method = bm;
+    return v;
+}
+
 /* ─── Object Allocation ─── */
 static void gc_collect(VM *vm);
 
@@ -774,6 +781,7 @@ static void gc_mark_value(VM *vm, Value value) {
         case VAL_TASK:     obj = (Obj *)value.as.task_obj; break;
         case VAL_CHANNEL:  obj = (Obj *)value.as.channel; break;
         case VAL_ACTOR:    obj = (Obj *)value.as.actor; break;
+        case VAL_BOUND_METHOD: obj = (Obj *)value.as.bound_method; break;
         default: return;
     }
     if (obj && !obj->is_marked) {
@@ -839,6 +847,12 @@ static void gc_trace(VM *vm) {
                     int idx = (c->head + i) % c->capacity;
                     gc_mark_value(vm, c->buffer[idx]);
                 }
+                break;
+            }
+            case VAL_BOUND_METHOD: {
+                ObjBoundMethod *bm = (ObjBoundMethod *)obj;
+                gc_mark_value(vm, bm->self);
+                gc_mark_value(vm, bm->method);
                 break;
             }
             case VAL_MODULE:
@@ -925,6 +939,10 @@ static size_t gc_sweep(VM *vm) {
                     free(c->captured);
                     if (c->captured_slots) free(c->captured_slots);
                     obj_size = sizeof(ObjClosure);
+                    break;
+                }
+                case VAL_BOUND_METHOD: {
+                    obj_size = sizeof(ObjBoundMethod);
                     break;
                 }
                 default: break;
@@ -1073,6 +1091,9 @@ static void value_fprint(FILE *f, Value value) {
         case VAL_ACTOR:
             fprintf(f, "<actor %s>", value.as.actor->type_name);
             break;
+        case VAL_BOUND_METHOD:
+            fprintf(f, "<bound method>");
+            break;
     }
 }
 
@@ -1132,6 +1153,7 @@ bool value_equal(Value a, Value b) {
             return true;
         }
         case VAL_CLOSURE: return a.as.closure == b.as.closure;
+        case VAL_BOUND_METHOD: return a.as.bound_method == b.as.bound_method;
         default: return false;
     }
 }
@@ -4504,6 +4526,23 @@ L_BC_LOOP_TOP:
                 uint8_t arg_count = READ_BYTE();
                 Value callee = PEEK(arg_count);
 
+                /* ─── Bound method: extract self+method, reorganize stack so
+                 * the existing VAL_NATIVE_FN / VAL_FUNCTION / VAL_CLOSURE
+                 * branches below receive self as the first argument ─── */
+                if (callee.type == VAL_BOUND_METHOD) {
+                    ObjBoundMethod *bm = callee.as.bound_method;
+                    Value self_val = bm->self;
+                    Value method_val = bm->method;
+                    int callee_pos = t->stack_top - 1 - arg_count;
+                    for (int i = arg_count - 1; i >= 0; i--)
+                        t->stack[callee_pos + 2 + i] = t->stack[callee_pos + 1 + i];
+                    t->stack_top++;
+                    t->stack[callee_pos] = method_val;
+                    t->stack[callee_pos + 1] = self_val;
+                    callee = method_val;
+                    arg_count++;
+                }
+
                 if (callee.type == VAL_NATIVE_FN) {
                     Value *args = &t->stack[t->stack_top - arg_count];
                     NativeFn fn = (NativeFn)callee.as.native_fn;
@@ -5335,7 +5374,20 @@ L_BC_LOOP_TOP:
                     if (found >= 0) {
                         PUSH(s->fields[found]);
                     } else {
-                        RAISE("Struct has no field '%s'", name->chars);
+                        Value *func_val = vm_find_dispatch(vm,
+                            s->type_name ? s->type_name : (s->shape ? s->shape->type_name : NULL),
+                            name->chars);
+                        if (func_val) {
+                            ObjBoundMethod *bm = (ObjBoundMethod *)calloc(1, sizeof(ObjBoundMethod));
+                            bm->obj.type = VAL_BOUND_METHOD;
+                            bm->obj.next = vm->objects;
+                            vm->objects = (Obj *)bm;
+                            bm->self = obj;
+                            bm->method = *func_val;
+                            PUSH(val_bound_method(bm));
+                        } else {
+                            RAISE("Struct has no field '%s'", name->chars);
+                        }
                     }
                 } else if (obj.type == VAL_MODULE) {
                     Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);

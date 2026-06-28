@@ -1,0 +1,32 @@
+// i18n module — tests against the public API (new_i18n + .t / .plural / load_json).
+
+test "new_i18n creates instance with locale" {
+    let i = new_i18n("en")
+    assert_eq(i.locale, "en")
+}
+
+test "t returns loaded translation" {
+    let i = new_i18n("en")
+    i.load_json("en", json_encode(http.create_struct(["greeting"], ["Hello"])))
+    assert_eq(i.t("greeting"), "Hello")
+}
+
+test "t returns the key when missing" {
+    let i = new_i18n("en")
+    assert_eq(i.t("nonexistent"), "nonexistent")
+}
+
+test "plural singular form" {
+    let i = new_i18n("en")
+    assert_eq(i.plural(1, "item", "items"), "1 item")
+}
+
+test "plural plural form" {
+    let i = new_i18n("en")
+    assert_eq(i.plural(3, "item", "items"), "3 items")
+}
+
+test "plural zero uses plural form" {
+    let i = new_i18n("en")
+    assert_eq(i.plural(0, "item", "items"), "0 items")
+}
