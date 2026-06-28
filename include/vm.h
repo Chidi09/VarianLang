@@ -134,6 +134,7 @@ typedef enum {
     VAL_TASK,
     VAL_CHANNEL,
     VAL_ACTOR,
+    VAL_BOUND_METHOD,
 } ValueType;
 
 typedef struct Obj Obj;
@@ -148,6 +149,7 @@ typedef struct ObjModule ObjModule;
 typedef struct ObjTask ObjTask;
 typedef struct ObjChannel ObjChannel;
 typedef struct ObjActor ObjActor;
+typedef struct ObjBoundMethod ObjBoundMethod;
 
 typedef struct {
     ValueType type;
@@ -167,6 +169,7 @@ typedef struct {
         ObjTask *task_obj;
         ObjChannel *channel;
         ObjActor *actor;
+        ObjBoundMethod *bound_method;
     } as;
 } Value;
 
@@ -276,6 +279,7 @@ Value val_module(ObjModule *m);
 Value val_task_obj(ObjTask *t);
 Value val_channel(ObjChannel *c);
 Value val_actor(ObjActor *a);
+Value val_bound_method(ObjBoundMethod *bm);
 
 ObjString *copy_string(const char *chars, int length);
 ObjString *take_string(char *chars, int length);
@@ -317,6 +321,13 @@ struct ObjActor {
     Value state;           /* the inner VAL_STRUCT holding field values */
     Value inbox;           /* VAL_CHANNEL — messages arrive here */
     Task *loop_task;       /* the background task running the actor loop */
+};
+
+/* ─── Bound Method (runtime fallback for impl calls on prelude structs) ─── */
+struct ObjBoundMethod {
+    Obj obj;
+    Value self;
+    Value method;
 };
 
 /* Validation rule for struct fields */
