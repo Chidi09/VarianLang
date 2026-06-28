@@ -65,3 +65,6 @@ PLAN.md
 aot_bench.c
 zenith_bench.vn
 constellation.toml
+
+# lumen_router_test scratch output
+_lumen_router_test_*

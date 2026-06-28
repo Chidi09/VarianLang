@@ -3472,7 +3472,7 @@ fn _lumen_live_loop(ws, component, provider, req) {
         user_id = "user_" + crypto.random_string(4)
     }
     let meta = http.create_struct(["user_id", "browser"], [user_id, "Lumen Client"])
-    let topic = ws.path
+    let topic = _validate.get_field(ws, "path")
     if topic == null or topic == "" { topic = "default" }
 
     let conn_id = crypto.random_string(8)

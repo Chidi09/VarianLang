@@ -14,14 +14,14 @@ test "maps file bases to routes (index is root)" {
 }
 
 test "build_dir compiles a pages directory into one runnable app" {
-    let dir = "/tmp/lumen_router_test_pages"
+    let dir = "_lumen_router_test_pages"
     io.mkdir(dir)
     io.write_text(dir + "/index.lumen",
         "<template><h1>Home</h1></template><script>fn state() \{ return \{\} \}</script>")
     io.write_text(dir + "/about.lumen",
         "<template><h1>About</h1></template><script>fn state() \{ return \{\} \}</script>")
 
-    let out = "/tmp/lumen_router_test_app.vn"
+    let out = "_lumen_router_test_app.vn"
     let count = _lumen_build_dir(dir, out, 8099)
     assert_eq(count, 2)
 
