@@ -1,0 +1,220 @@
+// auth_rbac.vn — Role-Based Access Control for Varian & Zenith
+
+// ═══════════════════════════════════════════════════════════════════════
+// Struct Definitions
+// ═══════════════════════════════════════════════════════════════════════
+
+struct Role {
+    name: string,
+    permissions: any,  // array of permission strings
+}
+
+struct RBAC {
+    _roles: any,       // struct of Role structs indexed by name
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RBAC Instance Creation
+// ═══════════════════════════════════════════════════════════════════════
+
+fn new_rbac() {
+    let rbac = RBAC {
+        _roles: http.create_struct([], []),
+    }
+    return rbac
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Role Management
+// ═══════════════════════════════════════════════════════════════════════
+
+fn define_role(rbac, name, permissions) {
+    let role = Role {
+        name: name,
+        permissions: permissions,
+    }
+
+    let keys = _validate.get_keys(rbac._roles)
+    let vals = []
+    let replaced = false
+    for i in 0..keys.len() {
+        if keys[i] == name {
+            vals = vals.push(role)
+            replaced = true
+        } else {
+            vals = vals.push(_validate.get_field(rbac._roles, keys[i]))
+        }
+    }
+    if !replaced {
+        keys = keys.push(name)
+        vals = vals.push(role)
+    }
+    rbac._roles = http.create_struct(keys, vals)
+}
+
+fn add_permission(rbac, role_name, permission) {
+    let role = _validate.get_field(rbac._roles, role_name)
+    if role == null {
+        // Role doesn't exist, define it with this permission
+        define_role(rbac, role_name, [permission])
+        return
+    }
+
+    let perms = role.permissions
+    // Check if permission already exists
+    for i in 0..perms.len() {
+        if perms[i] == permission {
+            return  // Already has it
+        }
+    }
+    role.permissions = perms.push(permission)
+
+    // Update in the struct
+    let keys = _validate.get_keys(rbac._roles)
+    let vals = []
+    for i in 0..keys.len() {
+        if keys[i] == role_name {
+            vals = vals.push(role)
+        } else {
+            vals = vals.push(_validate.get_field(rbac._roles, keys[i]))
+        }
+    }
+    rbac._roles = http.create_struct(keys, vals)
+}
+
+fn remove_permission(rbac, role_name, permission) {
+    let role = _validate.get_field(rbac._roles, role_name)
+    if role == null {
+        return
+    }
+
+    let perms = role.permissions
+    let new_perms = []
+    for i in 0..perms.len() {
+        if perms[i] != permission {
+            new_perms = new_perms.push(perms[i])
+        }
+    }
+    role.permissions = new_perms
+
+    // Update in the struct
+    let keys = _validate.get_keys(rbac._roles)
+    let vals = []
+    for i in 0..keys.len() {
+        if keys[i] == role_name {
+            vals = vals.push(role)
+        } else {
+            vals = vals.push(_validate.get_field(rbac._roles, keys[i]))
+        }
+    }
+    rbac._roles = http.create_struct(keys, vals)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Permission Checks
+// ═══════════════════════════════════════════════════════════════════════
+
+fn has_permission(rbac, role_name, permission) {
+    let role = _validate.get_field(rbac._roles, role_name)
+    if role == null {
+        return false
+    }
+
+    let perms = role.permissions
+    for i in 0..perms.len() {
+        if perms[i] == permission {
+            return true
+        }
+    }
+    return false
+}
+
+fn has_all_permissions(rbac, role_name, permissions) {
+    for i in 0..permissions.len() {
+        if !has_permission(rbac, role_name, permissions[i]) {
+            return false
+        }
+    }
+    return true
+}
+
+fn has_any_permission(rbac, role_name, permissions) {
+    for i in 0..permissions.len() {
+        if has_permission(rbac, role_name, permissions[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Middleware
+// ═══════════════════════════════════════════════════════════════════════
+
+fn require_permission(rbac, req, next, permission) {
+    let user = _validate.get_field(req, "user")
+    if user == null {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [401, "Authentication required", "text/plain"]
+        )
+    }
+
+    let user_role = _validate.get_field(user, "role")
+    if user_role == null {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [403, "Forbidden: insufficient permissions", "text/plain"]
+        )
+    }
+
+    if !has_permission(rbac, user_role, permission) {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [403, "Forbidden: insufficient permissions", "text/plain"]
+        )
+    }
+
+    return next(req)
+}
+
+fn require_role(rbac, req, next, role_name) {
+    let user = _validate.get_field(req, "user")
+    if user == null {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [401, "Authentication required", "text/plain"]
+        )
+    }
+
+    let user_role = _validate.get_field(user, "role")
+    if user_role == null or user_role != role_name {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [403, "Forbidden: insufficient permissions", "text/plain"]
+        )
+    }
+
+    return next(req)
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// Listing
+// ═══════════════════════════════════════════════════════════════════════
+
+fn list_permissions(rbac, role_name) {
+    let role = _validate.get_field(rbac._roles, role_name)
+    if role == null {
+        return []
+    }
+    return role.permissions
+}
+
+fn list_roles(rbac) {
+    let keys = _validate.get_keys(rbac._roles)
+    let roles = []
+    for i in 0..keys.len() {
+        roles = roles.push(_validate.get_field(rbac._roles, keys[i]))
+    }
+    return roles
+}

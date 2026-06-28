@@ -1,0 +1,271 @@
+// auth_mfa.vn — Multi-Factor Authentication for Varian & Zenith
+//
+// Uses native TOTP functions: auth.totp_secret(), auth.totp_generate(),
+// auth.totp_verify(), auth.generate_token(), auth.hash_sha256()
+
+// ═══════════════════════════════════════════════════════════════════════
+// Struct Definitions
+// ═══════════════════════════════════════════════════════════════════════
+
+struct MFAConfig {
+    user_id: string,
+    secret: string,
+    enabled: bool,
+    backup_codes: any,  // array of hashed backup codes
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MFA Setup
+// ═══════════════════════════════════════════════════════════════════════
+
+// Generate a new MFA secret, QR URL, and backup codes
+fn mfa_setup(user_id) {
+    let secret = null
+    try {
+        secret = auth.totp_secret()
+    } catch e {
+        // Fallback: use generate_token as base32-like secret
+        secret = auth.generate_token(20)
+    }
+
+    // Build otpauth URL for QR code
+    let qr_url = "otpauth://totp/" + _url_encode(user_id) + "?secret=" + secret + "&issuer=" + _url_encode("ZenithAuth")
+
+    // Generate backup codes
+    let backup_codes = mfa_generate_backup_codes(8)
+
+    return http.create_struct(
+        ["secret", "qr_url", "backup_codes"],
+        [secret, qr_url, backup_codes]
+    )
+}
+
+// Enable MFA after verifying a TOTP code
+fn mfa_enable(db, user_id, secret, code) {
+    // Verify the provided code
+    let verified = false
+    try {
+        verified = auth.totp_verify(secret, code)
+    } catch e {
+        // Try manual generation + comparison
+        try {
+            let generated = auth.totp_generate(secret)
+            verified = generated == code
+        } catch e2 {
+            verified = false
+        }
+    }
+
+    if !verified {
+        return http.create_struct(["success", "error"], [false, "Invalid TOTP code. Please try again."])
+    }
+
+    // Check if user already has MFA
+    let existing = db.query("SELECT id FROM mfa_configs WHERE user_id = ?", [user_id])
+    if existing.len() > 0 {
+        db.execute("UPDATE mfa_configs SET secret = ?, enabled = 1 WHERE user_id = ?", [secret, user_id])
+    } else {
+        db.execute("INSERT INTO mfa_configs (user_id, secret, enabled, backup_codes) VALUES (?, ?, 1, ?)", [user_id, secret, json_encode([])])
+    }
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["message"], ["MFA enabled successfully"])])
+}
+
+// Verify a TOTP code against stored secret
+fn mfa_verify(db, user_id, code) {
+    let rows = db.query("SELECT secret, enabled FROM mfa_configs WHERE user_id = ? AND enabled = 1", [user_id])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "MFA not configured or not enabled"])
+    }
+
+    let secret = rows[0].secret
+    let verified = false
+
+    try {
+        verified = auth.totp_verify(secret, code)
+    } catch e {
+        try {
+            let generated = auth.totp_generate(secret)
+            verified = generated == code
+        } catch e2 {
+            verified = false
+        }
+    }
+
+    if verified {
+        return http.create_struct(["success", "data"], [true, http.create_struct(["verified"], [true])])
+    }
+
+    return http.create_struct(["success", "error"], [false, "Invalid TOTP code"])
+}
+
+// Disable MFA with password confirmation
+fn mfa_disable(db, user_id, password) {
+    // Verify password first
+    let rows = db.query("SELECT password_hash FROM users WHERE id = ?", [user_id])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "User not found"])
+    }
+
+    if !auth.verify_password(password, rows[0].password_hash) {
+        return http.create_struct(["success", "error"], [false, "Invalid password"])
+    }
+
+    db.execute("UPDATE mfa_configs SET enabled = 0 WHERE user_id = ?", [user_id])
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["message"], ["MFA disabled successfully"])])
+}
+
+// Generate N backup codes (returns raw codes, caller should hash and store them)
+fn mfa_generate_backup_codes(count) {
+    let codes = []
+    for i in 0..count {
+        let code = ""
+        // Generate a readable backup code: XXXXX-XXXXX
+        let raw = auth.generate_token(6)
+        code = raw.substring(0, 5) + "-" + raw.substring(5, 10)
+        codes = codes.push(code)
+    }
+    return codes
+}
+
+// Verify and consume a backup code
+fn mfa_use_backup_code(db, user_id, code) {
+    let rows = db.query("SELECT backup_codes FROM mfa_configs WHERE user_id = ? AND enabled = 1", [user_id])
+    if rows.len() == 0 {
+        return http.create_struct(["success", "error"], [false, "MFA not configured"])
+    }
+
+    let backup_codes = []
+    try {
+        backup_codes = json_decode(rows[0].backup_codes)
+    } catch e {
+        backup_codes = []
+    }
+
+    let code_hash = auth.hash_sha256(code)
+    let remaining = []
+    let found = false
+
+    for i in 0..backup_codes.len() {
+        if backup_codes[i] == code_hash {
+            found = true
+        } else {
+            remaining = remaining.push(backup_codes[i])
+        }
+    }
+
+    if !found {
+        return http.create_struct(["success", "error"], [false, "Invalid backup code"])
+    }
+
+    db.execute("UPDATE mfa_configs SET backup_codes = ? WHERE user_id = ?", [json_encode(remaining), user_id])
+
+    return http.create_struct(["success", "data"], [true, http.create_struct(["message", "remaining"], ["Backup code used successfully", remaining.len()])])
+}
+
+// Store backup codes hashed (call this after generating them)
+fn mfa_store_backup_codes(db, user_id, raw_codes) {
+    let hashed = []
+    for i in 0..raw_codes.len() {
+        hashed = hashed.push(auth.hash_sha256(raw_codes[i]))
+    }
+
+    let existing = db.query("SELECT id FROM mfa_configs WHERE user_id = ?", [user_id])
+    if existing.len() > 0 {
+        db.execute("UPDATE mfa_configs SET backup_codes = ? WHERE user_id = ?", [json_encode(hashed), user_id])
+    } else {
+        db.execute("INSERT INTO mfa_configs (user_id, secret, enabled, backup_codes) VALUES (?, '', 0, ?)", [user_id, json_encode(hashed)])
+    }
+
+    return http.create_struct(["success"], [true])
+}
+
+// Middleware that checks if user needs MFA verification
+fn mfa_middleware(db) {
+    return |req, next| {
+        let user = _validate.get_field(req, "user")
+        if user == null {
+            return next(req)  // Let auth middleware handle it
+        }
+
+        let user_id = _validate.get_field(user, "user_id")
+        if user_id == null {
+            user_id = _validate.get_field(user, "id")
+        }
+        if user_id == null {
+            return next(req)
+        }
+
+        // Check if MFA is enabled
+        let rows = db.query("SELECT enabled FROM mfa_configs WHERE user_id = ? AND enabled = 1", [user_id])
+
+        if rows.len() > 0 {
+            // Check if MFA was already verified in this session
+            let mfa_verified = _validate.get_field(user, "mfa_verified")
+            if mfa_verified == null or mfa_verified != true {
+                // Check if the request has an X-MFA-Code header
+                let mfa_code = _validate.get_field(req.headers, "x_mfa_code")
+                if mfa_code == null {
+                    return http.create_struct(
+                        ["status", "body", "content_type"],
+                        [401, json_encode({ error: "MFA code required", mfa_required: true }), "application/json"]
+                    )
+                }
+
+                // Verify the code
+                let verification = mfa_verify(db, user_id, mfa_code)
+                if !verification.success {
+                    // Try backup code
+                    let backup_result = mfa_use_backup_code(db, user_id, mfa_code)
+                    if !backup_result.success {
+                        return http.create_struct(
+                            ["status", "body", "content_type"],
+                            [401, json_encode({ error: "Invalid MFA code" }), "application/json"]
+                        )
+                    }
+                }
+            }
+        }
+
+        return next(req)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// MFA Table Setup
+// ═══════════════════════════════════════════════════════════════════════
+
+fn create_mfa_tables(db) {
+    db.execute("CREATE TABLE IF NOT EXISTS mfa_configs (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER UNIQUE, secret TEXT, enabled INTEGER DEFAULT 0, backup_codes TEXT)", [])
+    return http.create_struct(["success"], [true])
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// URL Encoding (local copy to avoid dependency)
+// ═══════════════════════════════════════════════════════════════════════
+
+fn _url_encode(s) {
+    if s == null { return "" }
+    let result = ""
+    let len = s.len()
+    for i in 0..len {
+        let c = s.substring(i, i + 1)
+        let code = s.code_at(i)
+        if (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or (code >= 48 and code <= 57) or c == "-" or c == "." or c == "_" or c == "~" {
+            result = result + c
+        } else if c == " " {
+            result = result + "+"
+        } else {
+            result = result + "%" + _hex_byte(code)
+        }
+    }
+    return result
+}
+
+fn _hex_byte(b) {
+    let hex = "0123456789ABCDEF"
+    let hi = hex.substring(b / 16, b / 16 + 1)
+    let lo = hex.substring(b % 16, b % 16 + 1)
+    return hi + lo
+}

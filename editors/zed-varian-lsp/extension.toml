@@ -7,7 +7,7 @@ authors = ["VarianLang"]
 repository = "https://github.com/Chidi09/VarianLang"
 
 # Path to the compiled WASM binary (relative to extension.toml).
-wasm = "extension.wasm"
+wasm = { path = "extension.wasm" }
 
 [language_servers.varian-lsp]
 name = "Varian LSP"

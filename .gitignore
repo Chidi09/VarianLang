@@ -68,3 +68,7 @@ constellation.toml
 
 # lumen_router_test scratch output
 _lumen_router_test_*
+
+editors/zed-varian/grammars/
+# Zed builds grammars at install time — never commit them
+editors/zed-varian/grammars/
