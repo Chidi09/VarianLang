@@ -1,0 +1,41 @@
+{
+  "$schema": "https://zed.dev/schema/icon_themes/v0.1.0.json",
+  "name": "Varian",
+  "author": "VarianLang",
+  "themes": [
+    {
+      "name": "Varian Light",
+      "appearance": "light",
+      "file_suffixes": {
+        "vn": "varian",
+        "vhtml": "varian",
+        "lumen": "lumen"
+      },
+      "file_icons": {
+        "varian": {
+          "path": "icons/varian-light.svg"
+        },
+        "lumen": {
+          "path": "icons/lumen-light.svg"
+        }
+      }
+    },
+    {
+      "name": "Varian Dark",
+      "appearance": "dark",
+      "file_suffixes": {
+        "vn": "varian",
+        "vhtml": "varian",
+        "lumen": "lumen"
+      },
+      "file_icons": {
+        "varian": {
+          "path": "icons/varian-dark.svg"
+        },
+        "lumen": {
+          "path": "icons/lumen-dark.svg"
+        }
+      }
+    }
+  ]
+}

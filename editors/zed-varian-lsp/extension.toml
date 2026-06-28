@@ -1,0 +1,22 @@
+id = "varian-lsp"
+name = "Varian LSP Adapter"
+description = "Bridges Zed's LSP host to the `vn lsp` command. Pairs with the `varian` grammar/languages/theme/icons extension."
+version = "0.1.0"
+schema_version = 1
+authors = ["VarianLang"]
+repository = "https://github.com/Chidi09/VarianLang"
+
+# Path to the compiled WASM binary (relative to extension.toml).
+wasm = "extension.wasm"
+
+[language_servers.varian-lsp]
+name = "Varian LSP"
+language = "Varian"
+
+# Allow this extension to spawn `vn lsp`. The first arg is fixed to "lsp";
+# the trailing wildcard `**` lets Zed pass through any extra flags it might
+# add (e.g. `--stdio`).
+[[capabilities]]
+kind = "process:exec"
+command = "vn"
+args = ["lsp", "**"]

@@ -1,0 +1,21 @@
+name = "Varian"
+grammar = "varian"
+path_suffixes = ["vn", "vhtml"]
+line_comments = ["// ", "/// ", "//! "]
+block_comment = { start = "/*", prefix = " * ", end = "*/", tab_size = 0 }
+
+# Bracket pairs for auto-close / selection surround / jump-to-pair.
+# The pairs here use only the literal characters the grammar produces
+# (tree-sitter "@open"/"@close" string-token captures). The Lumen language
+# shares the same grammar so its config is identical except for path_suffixes.
+brackets = [
+    { start = "{", end = "}", close = true, surround = true, newline = true },
+    { start = "[", end = "]", close = true, surround = true, newline = true },
+    { start = "(", end = ")", close = true, surround = true, newline = true },
+    { start = "<", end = ">", close = false, surround = true, newline = true },
+    { start = "\"", end = "\"", close = true, surround = true, newline = false },
+    { start = "'", end = "'", close = true, surround = true, newline = false },
+]
+
+tab_size = 4
+hard_tabs = false

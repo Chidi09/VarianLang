@@ -72,6 +72,11 @@
             },
             {
                 "language": "lumen",
+                "scopeName": "source.lumen",
+                "path": "./syntaxes/lumen.tmLanguage.json"
+            },
+            {
+                "language": "lumen",
                 "scopeName": "source.varian",
                 "path": "./syntaxes/varian.tmLanguage.json"
             }

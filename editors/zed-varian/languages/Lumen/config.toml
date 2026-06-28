@@ -1,0 +1,18 @@
+name = "Lumen"
+grammar = "varian"
+path_suffixes = ["lumen"]
+line_comments = ["// ", "/// ", "//! "]
+block_comment = { start = "/*", prefix = " * ", end = "*/", tab_size = 0 }
+
+# Lumen is Varian + HTML-like template syntax. Same brackets as Varian.
+brackets = [
+    { start = "{", end = "}", close = true, surround = true, newline = true },
+    { start = "[", end = "]", close = true, surround = true, newline = true },
+    { start = "(", end = ")", close = true, surround = true, newline = true },
+    { start = "<", end = ">", close = false, surround = true, newline = true },
+    { start = "\"", end = "\"", close = true, surround = true, newline = false },
+    { start = "'", end = "'", close = true, surround = true, newline = false },
+]
+
+tab_size = 4
+hard_tabs = false

@@ -1,0 +1,26 @@
+id = "varian"
+name = "Varian"
+description = "Varian language support for Zed: tree-sitter grammar, syntax highlighting, themes, file icons, and the Varian + Lumen languages."
+version = "0.1.0"
+schema_version = 1
+authors = ["VarianLang"]
+repository = "https://github.com/Chidi09/VarianLang"
+
+# Languages, themes, and icon themes are auto-discovered from their
+# respective subdirectories. They are listed here to keep the manifest
+# self-describing; populate_defaults() will keep these in sync at load time.
+languages = ["languages/Varian", "languages/Lumen"]
+themes = ["themes/varian.json"]
+icon_themes = ["icon_themes/varian.json"]
+
+[grammars.varian]
+repository = "https://github.com/Chidi09/tree-sitter-varian"
+rev = "f33440b2de87f1b6897e95351db32222a308f542"
+
+# Declare the language server here only as a name + which languages it serves.
+# The actual command (`vn lsp`) is provided by the companion `varian-lsp`
+# Rust WASM extension (editors/zed-varian-lsp) that implements
+# zed::Extension::language_server_command.
+[language_servers.varian-lsp]
+name = "Varian LSP"
+languages = ["Varian", "Lumen"]
