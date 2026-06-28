@@ -93,3 +93,15 @@ vendored under `C:/deps` + `deps/libtre.a`; on Linux use the distro packages.)
 3. Check the grammar SHA (TODO #1) and do the `extension.toml` rev bump if the new grammar is pushed.
 4. `make USE_POSTGRES=0 && ./vn test tests/ --timeout 6` to confirm the baseline (≈315/6) builds clean on Linux.
 5. Then proceed down §4 TODOs.
+
+## 9. ⚠️ Skills & memory do NOT transfer to this VPS
+The Windows box had an `opencode-delegate` skill and Claude memory under `~/.claude/` — those
+are machine-local and are NOT on this VPS. So a fresh Claude session here won't auto-know them;
+THIS doc is the carried-over context. Delegation options on the VPS:
+- **Claude subagents** (the Agent tool, model `haiku`/`sonnet`) — work NATIVELY here, no setup.
+  This is the most reliable delegate (DeepSeek/opencode kept hanging on installs). Prefer it.
+- **opencode / DeepSeek** — must be installed + authed here first (provider `opencode-go`), then:
+  `opencode run -m opencode-go/deepseek-v4-flash --agent build "<self-contained task>" < /dev/null`.
+  Pre-install any toolchain yourself; give it small, install-free tasks; review every diff.
+- **agy / Gemini** — needs a Linux Antigravity build + sign-in here; then drive cleanly with
+  `ht` (Linux-native): `ht -- agy -p "<task>" --dangerously-skip-permissions`.
