@@ -1,0 +1,8 @@
+test "new_migrator exists" {
+    assert_ne(new_migrator, null)
+}
+
+test "MIGRATIONS_TABLE constant exists" {
+    assert_ne(_MIGRATIONS_TABLE, null)
+    assert_eq(_MIGRATIONS_TABLE, "_migrations")
+}

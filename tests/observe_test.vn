@@ -1,0 +1,43 @@
+test "new_logger creates logger" {
+    let l = new_logger("test")
+    assert_eq(l.name, "test")
+}
+
+test "default log exists" {
+    assert_ne(log, null)
+    assert_eq(log.name, "app")
+}
+
+test "metrics_text single counter" {
+    let text = metrics_text(["requests"], [42])
+    let found_name = _substr_index(text, "requests", 0)
+    let found_type = _substr_index(text, "counter", 0)
+    let found_val = _substr_index(text, "42", 0)
+    assert_ne(found_name, -1)
+    assert_ne(found_type, -1)
+    assert_ne(found_val, -1)
+}
+
+test "metrics_text multiple counters" {
+    let text = metrics_text(["req", "err"], [100, 3])
+    assert_ne(_substr_index(text, "req", 0), -1)
+    assert_ne(_substr_index(text, "err", 0), -1)
+    assert_ne(_substr_index(text, "100", 0), -1)
+}
+
+test "metrics_text empty" {
+    let text = metrics_text([], [])
+    assert_eq(text, "")
+}
+
+test "metrics_handler returns closure" {
+    let h = metrics_handler(["count"], [5])
+    assert_ne(h, null)
+}
+
+test "metrics_handler response has status 200" {
+    let h = metrics_handler(["x"], [1])
+    let resp = h({})
+    assert_eq(resp.status, 200)
+    assert_eq(resp.content_type, "text/plain; version=0.0.4")
+}

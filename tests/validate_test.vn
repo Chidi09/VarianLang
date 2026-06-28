@@ -1,0 +1,45 @@
+test "validate.str exists" {
+    let v = validate.str()
+    assert_ne(v, null)
+}
+
+test "validate.num exists" {
+    let v = validate.num()
+    assert_ne(v, null)
+}
+
+test "validate.object exists" {
+    let v = validate.object({})
+    assert_ne(v, null)
+}
+
+test "sanitize.strip_html strips tags" {
+    let res = sanitize.strip_html("<b>bold</b>")
+    assert_eq(res, "bold")
+}
+
+test "sanitize.escape_html escapes angle" {
+    let res = sanitize.escape_html("<>&")
+    assert_eq(res, "&lt;&gt;&amp;")
+}
+
+test "sanitize.trim whitespace" {
+    let res = sanitize.trim("  hi  ")
+    assert_eq(res, "hi")
+}
+
+test "_validate_is_string detects string" {
+    assert_eq(_validate_is_string("hello"), true)
+}
+
+test "validate function exists" {
+    assert_ne(validate, null)
+}
+
+test "sanitize function exists" {
+    assert_ne(sanitize, null)
+}
+
+test "_validate_parse exists" {
+    assert_ne(_validate_parse, null)
+}

@@ -1,0 +1,114 @@
+test "new_rbac creates empty RBAC" {
+    let r = new_rbac()
+    assert_ne(r, null)
+    let roles = list_roles(r)
+    assert_eq(roles.len(), 0)
+}
+
+test "define_role adds role" {
+    let r = new_rbac()
+    define_role(r, "admin", ["read", "write", "delete"])
+    assert_eq(has_permission(r, "admin", "read"), true)
+    assert_eq(has_permission(r, "admin", "write"), true)
+    assert_eq(has_permission(r, "admin", "delete"), true)
+}
+
+test "define_role replaces existing" {
+    let r = new_rbac()
+    define_role(r, "admin", ["read"])
+    define_role(r, "admin", ["write"])
+    assert_eq(has_permission(r, "admin", "read"), false)
+    assert_eq(has_permission(r, "admin", "write"), true)
+}
+
+test "has_permission missing role" {
+    let r = new_rbac()
+    assert_eq(has_permission(r, "ghost", "anything"), false)
+}
+
+test "add_permission adds to new role" {
+    let r = new_rbac()
+    add_permission(r, "editor", "write")
+    assert_eq(has_permission(r, "editor", "write"), true)
+}
+
+test "add_permission deduplicates" {
+    let r = new_rbac()
+    add_permission(r, "editor", "write")
+    add_permission(r, "editor", "write")
+    let perms = list_permissions(r, "editor")
+    assert_eq(perms.len(), 1)
+}
+
+test "remove_permission removes existing" {
+    let r = new_rbac()
+    define_role(r, "mod", ["read", "write"])
+    remove_permission(r, "mod", "write")
+    assert_eq(has_permission(r, "mod", "write"), false)
+    assert_eq(has_permission(r, "mod", "read"), true)
+}
+
+test "remove_permission missing role noop" {
+    let r = new_rbac()
+    remove_permission(r, "nobody", "x")
+}
+
+test "has_all_permissions true" {
+    let r = new_rbac()
+    define_role(r, "admin", ["a", "b", "c"])
+    assert_eq(has_all_permissions(r, "admin", ["a", "c"]), true)
+}
+
+test "has_all_permissions false" {
+    let r = new_rbac()
+    define_role(r, "admin", ["a", "b"])
+    assert_eq(has_all_permissions(r, "admin", ["a", "z"]), false)
+}
+
+test "has_any_permission true" {
+    let r = new_rbac()
+    define_role(r, "user", ["read"])
+    assert_eq(has_any_permission(r, "user", ["write", "read"]), true)
+}
+
+test "has_any_permission false" {
+    let r = new_rbac()
+    define_role(r, "user", ["read"])
+    assert_eq(has_any_permission(r, "user", ["delete"]), false)
+}
+
+test "list_permissions returns array" {
+    let r = new_rbac()
+    define_role(r, "viewer", ["see"])
+    let perms = list_permissions(r, "viewer")
+    assert_eq(perms.len(), 1)
+    assert_eq(perms[0], "see")
+}
+
+test "list_permissions missing role" {
+    let r = new_rbac()
+    assert_eq(list_permissions(r, "ghost").len(), 0)
+}
+
+test "list_roles returns all roles" {
+    let r = new_rbac()
+    define_role(r, "a", [])
+    define_role(r, "b", [])
+    assert_eq(list_roles(r).len(), 2)
+}
+
+test "require_permission denies missing" {
+    let r = new_rbac()
+    define_role(r, "user", [])
+    let req = { user: { role: "user" } }
+    let mw = require_permission(r, req, |rq| { return 42 }, "sudo")
+    assert_ne(mw, 42)
+}
+
+test "require_role denies mismatched" {
+    let r = new_rbac()
+    define_role(r, "user", [])
+    let req = { user: { role: "user" } }
+    let mw = require_role(r, req, |rq| { return "ok" }, "admin")
+    assert_ne(mw, "ok")
+}

@@ -1,0 +1,21 @@
+test "new_storage creates storage" {
+    let s = new_storage("/tmp/test")
+    assert_eq(s.base_dir, "/tmp/test")
+}
+
+test "default_storage exists" {
+    assert_ne(default_storage, null)
+    assert_eq(default_storage.base_dir, ".storage")
+}
+
+test "storage_put exists" {
+    assert_ne(storage_put, null)
+}
+
+test "storage_get exists" {
+    assert_ne(storage_get, null)
+}
+
+test "storage_delete exists" {
+    assert_ne(storage_delete, null)
+}

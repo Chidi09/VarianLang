@@ -1,0 +1,171 @@
+test "ai_conversation creates conversation" {
+    let conv = ai_conversation("")
+    assert_eq(conv.messages.len(), 0)
+}
+
+test "ai_conversation with system prompt" {
+    let conv = ai_conversation("You are helpful")
+    assert_eq(conv.messages.len(), 1)
+    assert_eq(conv.system_prompt, "You are helpful")
+}
+
+test "ai_client creates AIClient with defaults" {
+    let c = ai_client({ provider: "openai", api_key: "sk-test" })
+    assert_eq(c.provider, "openai")
+    assert_eq(c.api_key, "sk-test")
+    assert_ne(c.base_url, null)
+    assert_ne(c.model_fast, null)
+}
+
+test "ai_client empty api_key" {
+    let c = ai_client({ provider: "openai" })
+    assert_eq(c.api_key, "")
+}
+
+test "ai_client with custom base_url and model" {
+    let c = ai_client({ provider: "custom", api_key: "k", base_url: "http://local", model: "m1" })
+    assert_eq(c.base_url, "http://local")
+    assert_eq(c.model_smart, "m1")
+}
+
+test "ai_client with timeout" {
+    let c = ai_client({ provider: "openai", api_key: "k", timeout: 9999 })
+    assert_eq(c.timeout, 9999)
+}
+
+test "ai_health unknown provider" {
+    let h = ai_health("nonexistent_prov_xyz")
+    assert_eq(h, "unknown")
+}
+
+test "ai_health_set roundtrip" {
+    ai_health_set("test_prov_a", "ok")
+    let h1 = ai_health("test_prov_a")
+    assert_eq(h1, "ok")
+    ai_health_set("test_prov_a", "failed")
+    let h2 = ai_health("test_prov_a")
+    assert_eq(h2, "failed")
+}
+
+test "ai_set_primary changes global" {
+    ai_set_primary("deepseek")
+    ai_set_primary("openai")
+}
+
+test "AI_PROVIDERS has known providers" {
+    assert_ne(AI_PROVIDERS, null)
+    let openai_cfg = _validate.get_field(AI_PROVIDERS, "openai")
+    assert_ne(openai_cfg, null)
+    assert_ne(openai_cfg.base_url, null)
+}
+
+test "_ai_provider_order starts with primary" {
+    ai_set_primary("gemini")
+    let order = _ai_provider_order()
+    assert_eq(order[0], "gemini")
+    assert_eq(order.len(), 4)
+    ai_set_primary("openai")
+}
+
+test "_ai_openai_messages formats system message" {
+    let conv = ai_conversation("helpful assistant")
+    let msgs = _ai_openai_messages(conv)
+    assert_eq(msgs.len(), 1)
+    assert_eq(msgs[0].role, "system")
+    assert_eq(msgs[0].content, "helpful assistant")
+}
+
+test "_ai_build_req_body generates correct shape" {
+    let c = ai_client({ provider: "openai", api_key: "k", model: "gpt-4o" })
+    let conv = ai_conversation("You are helpful")
+    let body = _ai_build_req_body(c, conv, { temperature: 0.5, max_tokens: 512 }, false)
+    assert_eq(body.model, "gpt-4o")
+    assert_eq(body.temperature, 0.5)
+    assert_eq(body.max_tokens, 512)
+}
+
+test "_ai_build_req_body with smart tier" {
+    let c = ai_client({ provider: "openai", api_key: "k", model: "gpt-4o" })
+    let conv = ai_conversation("")
+    let body = _ai_build_req_body(c, conv, { tier: "smart" }, true)
+    assert_eq(body.model, "gpt-4o")
+}
+
+test "_ai_build_auth_headers openai" {
+    let c = ai_client({ provider: "openai", api_key: "sk-secret" })
+    let h = _ai_build_auth_headers(c)
+    let found = 0
+    for i in 0..h.len() {
+        if h[i] == "Authorization: Bearer sk-secret" { found = 1 }
+    }
+    assert_eq(found, 1)
+}
+
+test "_ai_build_auth_headers anthropic" {
+    let c = ai_client({ provider: "anthropic", api_key: "ant-key" })
+    let h = _ai_build_auth_headers(c)
+    let found = 0
+    for i in 0..h.len() {
+        if h[i] == "x-api-key: ant-key" { found = 1 }
+    }
+    assert_eq(found, 1)
+}
+
+test "_ai_parse_openai_chat null safe" {
+    assert_eq(_ai_parse_openai_chat(null), null)
+}
+
+test "_ai_parse_openai_chat valid json" {
+    let body = json_encode({ choices: [{ message: { role: "assistant", content: "Hi" }, finish_reason: "stop" }], usage: { prompt_tokens: 5, completion_tokens: 10, total_tokens: 15 } })
+    let result = _ai_parse_openai_chat(body)
+    assert_ne(result, null)
+    assert_eq(result.message.content, "Hi")
+}
+
+test "_ai_parse_anthropic_chat null safe" {
+    assert_eq(_ai_parse_anthropic_chat(null), null)
+}
+
+test "_ai_parse_anthropic_chat valid json" {
+    let body = json_encode({ content: [{ text: "Hello from Claude" }], usage: { input_tokens: 5, output_tokens: 10 } })
+    let result = _ai_parse_anthropic_chat(body)
+    assert_ne(result, null)
+    assert_eq(result.message.content, "Hello from Claude")
+}
+
+test "_ai_parse_gemini_chat null safe" {
+    assert_eq(_ai_parse_gemini_chat(null), null)
+}
+
+test "_ai_parse_gemini_chat valid json" {
+    let body = json_encode({ candidates: [{ content: { parts: [{ text: "Gemini response" }] } }], usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 10, totalTokenCount: 15 } })
+    let result = _ai_parse_gemini_chat(body)
+    assert_ne(result, null)
+    assert_eq(result.message.content, "Gemini response")
+}
+
+test "_ai_parse_openai_chunk null safe" {
+    assert_eq(_ai_parse_openai_chunk(null), null)
+    assert_eq(_ai_parse_openai_chunk(""), null)
+}
+
+test "_ai_parse_openai_chunk done" {
+    assert_eq(_ai_parse_openai_chunk("data: [DONE]"), null)
+}
+
+test "_ai_parse_anthropic_chunk null safe" {
+    assert_eq(_ai_parse_anthropic_chunk(null), null)
+}
+
+test "_ai_parse_gemini_chunk null safe" {
+    assert_eq(_ai_parse_gemini_chunk(null), null)
+}
+
+test "module aliases exist" {
+    assert_ne(conversation, null)
+    assert_ne(client, null)
+    assert_ne(embed_similarity, null)
+    assert_ne(embed_dot, null)
+    assert_ne(set_primary, null)
+    assert_ne(health, null)
+}

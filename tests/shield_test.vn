@@ -1,0 +1,30 @@
+test "join_strings joins with separator" {
+    let r = _join_strings(["a", "b", "c"], ", ")
+    assert_eq(r, "a, b, c")
+}
+
+test "join_strings single element" {
+    let r = _join_strings(["only"], ":")
+    assert_eq(r, "only")
+}
+
+test "join_strings empty array" {
+    let r = _join_strings([], ",")
+    assert_eq(r, "")
+}
+
+test "cors exists" {
+    assert_ne(cors, null)
+}
+
+test "csrf exists" {
+    assert_ne(csrf, null)
+}
+
+test "rate_limit exists" {
+    assert_ne(rate_limit, null)
+}
+
+test "rate_limit_redis exists" {
+    assert_ne(rate_limit_redis, null)
+}

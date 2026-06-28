@@ -1,0 +1,77 @@
+test "mfa_setup exists" {
+    assert_ne(mfa_setup, null)
+}
+
+test "mfa_enable exists" {
+    assert_ne(mfa_enable, null)
+}
+
+test "mfa_verify exists" {
+    assert_ne(mfa_verify, null)
+}
+
+test "mfa_disable exists" {
+    assert_ne(mfa_disable, null)
+}
+
+test "mfa_generate_backup_codes returns array" {
+    let codes = mfa_generate_backup_codes(5)
+    assert_eq(codes.len(), 5)
+}
+
+test "mfa_generate_backup_codes format" {
+    let codes = mfa_generate_backup_codes(1)
+    assert_eq(codes[0].len(), 11)
+}
+
+test "mfa_generate_backup_codes zero count" {
+    let codes = mfa_generate_backup_codes(0)
+    assert_eq(codes.len(), 0)
+}
+
+test "mfa_store_backup_codes exists" {
+    assert_ne(mfa_store_backup_codes, null)
+}
+
+test "mfa_middleware exists" {
+    assert_ne(mfa_middleware, null)
+}
+
+test "create_mfa_tables exists" {
+    assert_ne(create_mfa_tables, null)
+}
+
+test "url_encode basic" {
+    let result = _url_encode("hello")
+    assert_eq(result, "hello")
+}
+
+test "url_encode space" {
+    let result = _url_encode("a b")
+    assert_eq(result, "a+b")
+}
+
+test "url_encode null" {
+    assert_eq(_url_encode(null), "")
+}
+
+test "hex_byte zero" {
+    assert_eq(_hex_byte(0), "00")
+}
+
+test "hex_byte 255" {
+    assert_eq(_hex_byte(255), "FF")
+}
+
+test "hex_byte 16" {
+    assert_eq(_hex_byte(16), "10")
+}
+
+test "hex_byte 127" {
+    assert_eq(_hex_byte(127), "7F")
+}
+
+test "mfa_generate_backup_codes 10 codes" {
+    let codes = mfa_generate_backup_codes(10)
+    assert_eq(codes.len(), 10)
+}

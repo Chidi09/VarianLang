@@ -1,0 +1,12 @@
+test "load_config exists" {
+    assert_ne(load_config, null)
+}
+
+test "load_config_path exists" {
+    assert_ne(load_config_path, null)
+}
+
+test "load_config_path takes string argument" {
+    let cfg = load_config_path(".env")
+    assert_ne(cfg, null)
+}

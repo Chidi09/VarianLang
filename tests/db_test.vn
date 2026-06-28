@@ -1,0 +1,96 @@
+test "compile_select basic" {
+    let c = compile_select("users", ["id", "name"], [], -1, -1, "sqlite", [])
+    assert_eq(c.sql, "SELECT id, name FROM users")
+    assert_eq(c.param_count, 0)
+}
+
+test "compile_select with where" {
+    let c = compile_select("users", ["*"], [["id", "="]], -1, -1, "sqlite", [])
+    assert_eq(c.sql, "SELECT * FROM users WHERE id = ?")
+    assert_eq(c.param_count, 1)
+}
+
+test "compile_select with limit offset" {
+    let c = compile_select("items", ["*"], [], 10, 5, "sqlite", [])
+    assert_eq(c.sql, "SELECT * FROM items LIMIT 10 OFFSET 5")
+}
+
+test "compile_select postgres placeholders" {
+    let c = compile_select("users", ["*"], [["id", "="], ["age", ">"]], -1, -1, "postgres", [])
+    assert_eq(c.sql, "SELECT * FROM users WHERE id = $1 AND age > $2")
+}
+
+test "compile_select with orders" {
+    let c = compile_select("users", ["name"], [], -1, -1, "sqlite", [["created_at", "DESC"]])
+    assert_eq(c.sql, "SELECT name FROM users ORDER BY created_at DESC")
+}
+
+test "compile_select multiple fields" {
+    let c = compile_select("orders", ["id", "total", "status"], [["status", "="]], -1, -1, "sqlite", [["created_at", "ASC"]])
+    assert_eq(c.sql, "SELECT id, total, status FROM orders WHERE status = ? ORDER BY created_at ASC")
+}
+
+test "bind matches param count" {
+    let c = compile_select("users", ["*"], [["id", "="]], -1, -1, "sqlite", [])
+    let b = bind(c, [42])
+    assert_eq(b.sql, c.sql)
+    assert_eq(b.params.len(), 1)
+    assert_eq(b.params[0], 42)
+}
+
+test "bind throws on mismatch" {
+    let c = compile_select("users", ["*"], [["id", "="]], -1, -1, "sqlite", [])
+    assert_throws(| | {
+        bind(c, [1, 2])
+    })
+}
+
+test "pg_placeholders replaces question marks" {
+    let sql = "SELECT * FROM users WHERE id = ? AND name = ?"
+    let result = _pg_placeholders(sql)
+    assert_eq(result, "SELECT * FROM users WHERE id = $1 AND name = $2")
+}
+
+test "pg_placeholders no matches" {
+    let result = _pg_placeholders("SELECT 1")
+    assert_eq(result, "SELECT 1")
+}
+
+test "db_sql_tables extracts table names" {
+    let sql = "SELECT * FROM users JOIN posts ON users.id = posts.user_id"
+    let tables = _db_sql_tables(sql)
+    assert_eq(tables.len(), 2)
+    assert_eq(tables[0], "users")
+    assert_eq(tables[1], "posts")
+}
+
+test "db_sql_tables from update" {
+    let tables = _db_sql_tables("UPDATE products SET price = 10")
+    assert_eq(tables.len(), 1)
+    assert_eq(tables[0], "products")
+}
+
+test "db_sql_tables empty sql" {
+    let tables = _db_sql_tables("")
+    assert_eq(tables.len(), 0)
+}
+
+test "capture start and end roundtrip" {
+    capture_start()
+    capture_end()
+}
+
+test "select function exists" {
+    assert_ne(select, null)
+}
+
+test "compile_select empty fields" {
+    let c = compile_select("t", [], [], -1, -1, "sqlite", [])
+    assert_eq(c.sql, "SELECT  FROM t")
+}
+
+test "bind with no params" {
+    let c = compile_select("t", ["*"], [], -1, -1, "sqlite", [])
+    let b = bind(c, [])
+    assert_eq(b.params.len(), 0)
+}

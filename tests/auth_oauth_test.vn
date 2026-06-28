@@ -1,0 +1,193 @@
+test "google_oauth creates provider" {
+    let p = google_oauth("cid", "secret", "http://localhost/cb")
+    assert_eq(p.name, "google")
+    assert_eq(p.client_id, "cid")
+    assert_ne(p.authorize_url, null)
+}
+
+test "github_oauth creates provider" {
+    let p = github_oauth("cid", "secret", "http://localhost/cb")
+    assert_eq(p.name, "github")
+}
+
+test "microsoft_oauth with tenant" {
+    let p = microsoft_oauth("cid", "secret", "http://localhost/cb", "mytenant")
+    assert_eq(p.name, "microsoft")
+    assert_eq(p.tenant, "mytenant")
+}
+
+test "microsoft_oauth defaults tenant" {
+    let p = microsoft_oauth("cid", "secret", "http://localhost/cb", null)
+    assert_eq(p.tenant, "common")
+}
+
+test "apple_oauth creates provider" {
+    let p = apple_oauth("cid", "secret", "http://localhost/cb")
+    assert_eq(p.name, "apple")
+    assert_eq(p.response_mode, "form_post")
+}
+
+test "base64url_encode basic" {
+    let e = _base64url_encode("hello")
+    assert_ne(e, null)
+    assert_ne(e, "")
+}
+
+test "base64url_encode empty" {
+    assert_eq(_base64url_encode(""), "")
+    assert_eq(_base64url_encode(null), "")
+}
+
+test "base64url_roundtrip" {
+    let original = "test data 123!@#"
+    let encoded = _base64url_encode(original)
+    let decoded = _base64url_decode(encoded)
+    assert_eq(decoded, original)
+}
+
+test "b64url_rev A to Z" {
+    assert_eq(_b64url_rev("A"), 0)
+    assert_eq(_b64url_rev("Z"), 25)
+    assert_eq(_b64url_rev("-"), 62)
+    assert_eq(_b64url_rev("_"), 63)
+}
+
+test "oauth_generate_code_verifier produces string" {
+    let v = oauth_generate_code_verifier()
+    assert_ne(v, null)
+    assert_ne(v, "")
+}
+
+test "oauth_generate_code_challenge produces string" {
+    let v = oauth_generate_code_verifier()
+    let c = oauth_generate_code_challenge(v)
+    assert_ne(c, null)
+    assert_ne(c, "")
+}
+
+test "hex_to_string produces bytes" {
+    let raw = _hex_to_string("48656c6c6f")
+    assert_ne(raw, null)
+    assert_ne(raw, "")
+}
+
+test "hex_val digits" {
+    assert_eq(_hex_val("0"), 0)
+    assert_eq(_hex_val("9"), 9)
+    assert_eq(_hex_val("a"), 10)
+    assert_eq(_hex_val("f"), 15)
+    assert_eq(_hex_val("A"), 10)
+    assert_eq(_hex_val("F"), 15)
+}
+
+test "oauth_authorize_url includes client_id" {
+    let p = google_oauth("cid", "secret", "http://localhost/cb")
+    let url = oauth_authorize_url(p, "state123", null)
+    let found = _substr_index(url, "client_id=cid", 0)
+    assert_ne(found, -1)
+    let state_found = _substr_index(url, "state=state123", 0)
+    assert_ne(state_found, -1)
+}
+
+test "oauth_authorize_url with code_challenge" {
+    let p = google_oauth("cid", "secret", "http://localhost/cb")
+    let url = oauth_authorize_url(p, "st", "challenge_value")
+    let found_cc = _substr_index(url, "code_challenge=challenge_value", 0)
+    assert_ne(found_cc, -1)
+    let found_method = _substr_index(url, "code_challenge_method=S256", 0)
+    assert_ne(found_method, -1)
+}
+
+test "oauth_authorize_url apple response_mode" {
+    let p = apple_oauth("cid", "secret", "http://localhost/cb")
+    let url = oauth_authorize_url(p, "st", null)
+    let found = _substr_index(url, "response_mode=form_post", 0)
+    assert_ne(found, -1)
+}
+
+test "oauth_exchange_code exists" {
+    assert_ne(oauth_exchange_code, null)
+}
+
+test "oauth_get_google_user exists" {
+    assert_ne(oauth_get_google_user, null)
+}
+
+test "oauth_get_microsoft_user exists" {
+    assert_ne(oauth_get_microsoft_user, null)
+}
+
+test "oauth_get_github_user exists" {
+    assert_ne(oauth_get_github_user, null)
+}
+
+test "oauth_get_apple_user exists" {
+    assert_ne(oauth_get_apple_user, null)
+}
+
+test "oauth_get_user exists" {
+    assert_ne(oauth_get_user, null)
+}
+
+test "oauth_create_session exists" {
+    assert_ne(oauth_create_session, null)
+}
+
+test "oauth_login_or_register exists" {
+    assert_ne(oauth_login_or_register, null)
+}
+
+test "create_oauth_tables exists" {
+    assert_ne(create_oauth_tables, null)
+}
+
+test "normalize_oauth_user google" {
+    let data = { id: "123", email: "a@b.com", name: "Alice", picture: "pic.jpg" }
+    let n = _normalize_oauth_user("google", data)
+    assert_eq(n.email, "a@b.com")
+    assert_eq(n.provider, "google")
+    assert_eq(n.name, "Alice")
+}
+
+test "normalize_oauth_user github" {
+    let data = { id: 456, login: "octocat", email: "octo@github.com" }
+    let n = _normalize_oauth_user("github", data)
+    assert_eq(n.email, "octo@github.com")
+    assert_eq(n.provider, "github")
+}
+
+test "normalize_oauth_user microsoft" {
+    let data = { id: "xyz", mail: "user@contoso.com", displayName: "User" }
+    let n = _normalize_oauth_user("microsoft", data)
+    assert_eq(n.email, "user@contoso.com")
+    assert_eq(n.provider, "microsoft")
+}
+
+test "normalize_oauth_user apple" {
+    let data = { sub: "apple1", email: "a@privaterelay.apple.com" }
+    let n = _normalize_oauth_user("apple", data)
+    assert_eq(n.id, "apple1")
+    assert_eq(n.provider, "apple")
+}
+
+test "normalize_oauth_user unknown returns null" {
+    assert_eq(_normalize_oauth_user("unknown", {}), null)
+}
+
+test "url_encode basic" {
+    assert_eq(_url_encode("abc"), "abc")
+}
+
+test "url_encode space" {
+    assert_eq(_url_encode("a b"), "a+b")
+}
+
+test "url_encode null" {
+    assert_eq(_url_encode(null), "")
+}
+
+test "hex_byte bounds" {
+    assert_eq(_hex_byte(0), "00")
+    assert_eq(_hex_byte(255), "FF")
+    assert_eq(_hex_byte(65), "41")
+}

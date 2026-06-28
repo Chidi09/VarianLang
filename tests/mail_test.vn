@@ -1,0 +1,145 @@
+test "parse_addr bare email" {
+    let r = _parse_addr("user@example.com")
+    assert_eq(r.email, "user@example.com")
+    assert_eq(r.name, "")
+}
+
+test "parse_addr name email" {
+    let r = _parse_addr("Alice <alice@example.com>")
+    assert_eq(r.email, "alice@example.com")
+    assert_eq(r.name, "Alice")
+}
+
+test "parse_addr empty" {
+    let r = _parse_addr("")
+    assert_eq(r.email, "")
+}
+
+test "escape_html escapes angle brackets" {
+    let r = _escape_html("<test>")
+    assert_eq(r, "&lt;test&gt;")
+}
+
+test "escape_html escapes ampersand" {
+    let r = _escape_html("a&b")
+    assert_eq(r, "a&amp;b")
+}
+
+test "escape_html null returns empty" {
+    assert_eq(_escape_html(null), "")
+}
+
+test "escape_html double quote" {
+    let r = _escape_html("\"")
+    assert_eq(r, "&quot;")
+}
+
+test "strip_html removes simple tags" {
+    let r = _strip_html("<p>Hello</p>")
+    assert_eq(r, "Hello")
+}
+
+test "strip_html nested tags" {
+    let r = _strip_html("<div><b>Bold</b></div>")
+    assert_eq(r, "Bold")
+}
+
+test "strip_html null" {
+    assert_eq(_strip_html(null), "")
+}
+
+test "replace_all basic" {
+    let r = _replace_all("a-b-c", "-", "/")
+    assert_eq(r, "a/b/c")
+}
+
+test "replace_all no match" {
+    let r = _replace_all("hello", "x", "y")
+    assert_eq(r, "hello")
+}
+
+test "replace_all null" {
+    assert_eq(_replace_all(null, "a", "b"), "")
+}
+
+test "replace_all empty find" {
+    let r = _replace_all("hi", "", "x")
+    assert_eq(r, "hi")
+}
+
+test "substr_index finds at start" {
+    let idx = _substr_index("hello world", "hello", 0)
+    assert_eq(idx, 0)
+}
+
+test "substr_index finds mid" {
+    let idx = _substr_index("hello world", "world", 0)
+    assert_eq(idx, 6)
+}
+
+test "substr_index not found" {
+    assert_eq(_substr_index("hello", "xyz", 0), -1)
+}
+
+test "substr_index with offset" {
+    let idx = _substr_index("aaaa", "aa", 2)
+    assert_eq(idx, 2)
+}
+
+test "email function exists" {
+    assert_ne(email, null)
+}
+
+test "email_html_template exists" {
+    assert_ne(email_html_template, null)
+}
+
+test "send_resend exists" {
+    assert_ne(send_resend, null)
+}
+
+test "send_sendgrid exists" {
+    assert_ne(send_sendgrid, null)
+}
+
+test "send_smtp exists" {
+    assert_ne(send_smtp, null)
+}
+
+test "send_smtp_no_tls exists" {
+    assert_ne(send_smtp_no_tls, null)
+}
+
+test "email_verify_email exists" {
+    assert_ne(email_verify_email, null)
+}
+
+test "email_password_reset exists" {
+    assert_ne(email_password_reset, null)
+}
+
+test "email_welcome exists" {
+    assert_ne(email_welcome, null)
+}
+
+test "email_magic_link exists" {
+    assert_ne(email_magic_link, null)
+}
+
+test "email_notification exists" {
+    assert_ne(email_notification, null)
+}
+
+test "_parse_addr email with name attribute" {
+    let r = _parse_addr("Bob Builder <bob@build.com>")
+    assert_eq(r.email, "bob@build.com")
+    assert_eq(r.name, "Bob Builder")
+}
+
+test "_build_resend_attachments exists" {
+    assert_ne(_build_resend_attachments, null)
+}
+
+test "_build_sg_attachments exists" {
+    assert_ne(_build_sg_attachments, null)
+}

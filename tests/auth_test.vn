@@ -1,0 +1,127 @@
+test "jwt_middleware exists" {
+    assert_ne(jwt_middleware, null)
+}
+
+test "jwt_middleware_rs256 exists" {
+    assert_ne(jwt_middleware_rs256, null)
+}
+
+test "session_middleware exists" {
+    assert_ne(session_middleware, null)
+}
+
+test "register_user exists" {
+    assert_ne(register_user, null)
+}
+
+test "login_user exists" {
+    assert_ne(login_user, null)
+}
+
+test "verify_email exists" {
+    assert_ne(verify_email, null)
+}
+
+test "send_verification_email exists" {
+    assert_ne(send_verification_email, null)
+}
+
+test "forgot_password exists" {
+    assert_ne(forgot_password, null)
+}
+
+test "reset_password exists" {
+    assert_ne(reset_password, null)
+}
+
+test "change_password exists" {
+    assert_ne(change_password, null)
+}
+
+test "create_session exists" {
+    assert_ne(create_session, null)
+}
+
+test "validate_session exists" {
+    assert_ne(validate_session, null)
+}
+
+test "revoke_session exists" {
+    assert_ne(revoke_session, null)
+}
+
+test "revoke_all_sessions exists" {
+    assert_ne(revoke_all_sessions, null)
+}
+
+test "cleanup_expired_sessions exists" {
+    assert_ne(cleanup_expired_sessions, null)
+}
+
+test "create_api_key exists" {
+    assert_ne(create_api_key, null)
+}
+
+test "validate_api_key exists" {
+    assert_ne(validate_api_key, null)
+}
+
+test "revoke_api_key exists" {
+    assert_ne(revoke_api_key, null)
+}
+
+test "list_api_keys exists" {
+    assert_ne(list_api_keys, null)
+}
+
+test "create_refresh_token exists" {
+    assert_ne(create_refresh_token, null)
+}
+
+test "rotate_refresh_token exists" {
+    assert_ne(rotate_refresh_token, null)
+}
+
+test "revoke_refresh_token exists" {
+    assert_ne(revoke_refresh_token, null)
+}
+
+test "revoke_all_refresh_tokens exists" {
+    assert_ne(revoke_all_refresh_tokens, null)
+}
+
+test "security_headers exists" {
+    assert_ne(security_headers, null)
+}
+
+test "login_rate_limit exists" {
+    assert_ne(login_rate_limit, null)
+}
+
+test "audit_log exists" {
+    assert_ne(audit_log, null)
+}
+
+test "get_audit_logs exists" {
+    assert_ne(get_audit_logs, null)
+}
+
+test "audit_middleware exists" {
+    assert_ne(audit_middleware, null)
+}
+
+test "require_role exists" {
+    assert_ne(require_role, null)
+}
+
+test "require_permission exists" {
+    assert_ne(require_permission, null)
+}
+
+test "create_auth_tables exists" {
+    assert_ne(create_auth_tables, null)
+}
+
+test "zenith_auth namespace exists" {
+    assert_ne(zenith_auth, null)
+}
