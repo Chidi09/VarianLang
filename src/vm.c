@@ -1402,6 +1402,30 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
         }
 
         case NODE_BINARY: {
+            /* Logical `and`/`or` short-circuit: the right operand must not be
+             * evaluated once the left already decides the result. Without this,
+             * idioms like `x == null or x.len() == 0` call .len() on a null and
+             * crash. BC_JUMP_IF_FALSE peeks (does not pop), so the operand that
+             * survives is the expression's value (Lua/Python style). Bitwise
+             * `&`/`|` (OP_BIT_AND/OP_BIT_OR) stay eager below. */
+            if (node->binary.op == OP_AND) {
+                compile_expression(compiler, node->binary.left);
+                int end_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                emit_byte(compiler, BC_POP);   /* discard truthy left, take right */
+                compile_expression(compiler, node->binary.right);
+                patch_jump(compiler, end_jump);
+                break;
+            }
+            if (node->binary.op == OP_OR) {
+                compile_expression(compiler, node->binary.left);
+                int else_jump = emit_jump(compiler, BC_JUMP_IF_FALSE);
+                int end_jump = emit_jump(compiler, BC_JUMP);
+                patch_jump(compiler, else_jump);
+                emit_byte(compiler, BC_POP);   /* discard falsy left, take right */
+                compile_expression(compiler, node->binary.right);
+                patch_jump(compiler, end_jump);
+                break;
+            }
             compile_expression(compiler, node->binary.left);
             compile_expression(compiler, node->binary.right);
             switch (node->binary.op) {
@@ -3382,8 +3406,16 @@ Value actor_spawn_native(VM *vm, int arg_count, Value *args) {
      * type shares one Shape -- fixed field set per type_name. */
     ObjStruct *state = new_struct(vm, info->field_count, false);
     if (state->field_names) free(state->field_names);
-    struct_attach_shape(vm, state, type_name,
-                         (char *const *)info->field_names, info->field_count);
+    /* info->field_names is a 2D buffer (char[64][64]), but struct_attach_shape
+     * expects an array of char* pointers. Casting the 2D array straight to
+     * (char*const*) reinterprets each 64-byte row as eight pointers, so
+     * field_names[0] became the raw bytes of the name itself (e.g. "ips" ->
+     * 0x737069) and strdup() crashed on that bogus address. Build a proper
+     * pointer view into each row first. */
+    char *name_ptrs[MAX_ACTOR_TYPES];
+    for (int i = 0; i < info->field_count; i++)
+        name_ptrs[i] = info->field_names[i];
+    struct_attach_shape(vm, state, type_name, name_ptrs, info->field_count);
     for (int i = 0; i < info->field_count; i++) {
         state->fields[i] = val_nil();
     }

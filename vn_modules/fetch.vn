@@ -56,13 +56,15 @@ impl FetchRequest {
             vals = vals.push(value)
         }
         self.headers = http.create_struct(keys, vals)
+        return self
     }
 
-    fn timeout(self, ms) { self._timeout = ms }
-    fn retry(self, n) { self._retries = n }
+    fn timeout(self, ms) { self._timeout = ms return self }
+    fn retry(self, n) { self._retries = n return self }
 
     fn json(self) {
         self._parse_json = true
+        return self
     }
 
     fn _header_str(self) {
@@ -96,7 +98,9 @@ impl FetchRequest {
                         result = http.get(self.url)
                     }
                 } else {
-                    let hdr = self._build_headers()
+                    // native http.post expects headers as an array of "Name: value"
+                    // strings, not a single CRLF-joined string.
+                    let hdr = self._build_headers_array()
                     if self._timeout > 0 {
                         result = http.post(self.url, hdr, self.body, self._timeout)
                     } else {

@@ -125,7 +125,12 @@ static Value lib_sqlite_query(VM *vm, int arg_count, Value *args) {
     int cols = sqlite3_column_count(stmt);
 
     while (rc == SQLITE_ROW) {
-        ObjStruct *s = new_struct(vm, cols, false);
+        /* force_heap=true: native code below populates field_names via strdup,
+         * which requires the scratch field_names array. Arena-backed structs
+         * leave field_names == NULL (names come from a Shape via BC_STRUCT), so
+         * writing s->field_names[c] there segfaulted inside a task arena (e.g.
+         * an HTTP request handler). A heap struct always has the array. */
+        ObjStruct *s = new_struct(vm, cols, true);
         s->type_name = NULL;
         self->stack[self->stack_top++] = val_struct(s);
 

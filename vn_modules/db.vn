@@ -294,3 +294,15 @@ impl QueryBuilder {
                                self.limit_val, self.offset_val, self.dialect, self.order_clauses)
     }
 }
+
+// `db` namespace — exposes the module's free functions under the `db.` prefix that
+// the docs, examples (store_app.vn), lumen.vn's live data-tables, and auth modules all
+// use as written (e.g. `db.connect(...)`, `db.select(table)`). Without this binding
+// every `db.X` call site raised "Undefined variable 'db'" at runtime. Bare field-call
+// syntax (`db.select(t)`) resolves to these function-valued fields.
+let db = http.create_struct(
+    ["connect", "select", "capture_start", "capture_end", "bind",
+     "compile_select", "test_transaction"],
+    [connect, select, capture_start, capture_end, bind,
+     compile_select, test_transaction]
+)
