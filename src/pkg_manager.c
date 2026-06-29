@@ -744,7 +744,7 @@ static size_t write_cb(void *ptr, size_t size, size_t nmemb, void *userdata) {
 static char *fetch_index(void) {
     const char *url = getenv("CONSTELLATION_INDEX_URL");
     if (!url) {
-        url = "https://raw.githubusercontent.com/varian-lang/constellation-index/main/index.json";
+        url = "https://raw.githubusercontent.com/Chidi09/constellation-index/main/index.json";
     }
     
     if (url[0] == '/') {

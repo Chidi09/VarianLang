@@ -186,3 +186,14 @@ vn add github.com/u/foo@v1.2.0   # git dependency at a tag
 2. **SHA-256 Validation**: Downloaded tarball archives are validated against the index-declared hash before extraction. This guarantees that files have not been modified or hijacked on the Git provider.
 3. **Consented capabilities & build scripts**: A package that declares native capabilities (`ffi`/`python`/`net`/`fs`) or a `[build]` script cannot be installed silently. `vn install` lists what it requests and requires explicit consent — an interactive `y/N` prompt, or `CONSTELLATION_TRUST=1` for CI. Refusal removes the just-vendored files so nothing untrusted is left on disk. On approval the build script **runs** (via the `vn` runtime, from the package's own dir) and is then deleted from the vendored tree so it can't re-run at import time; a build failure aborts the install. The approved build-script hash is pinned in `constellation.lock` (trust-on-first-use). *Consent is the security boundary today, like npm's postinstall; full capability sandboxing of the build step is the future hardening.*
 4. **Version conflicts fail loudly**: if two packages in the dependency graph require incompatible versions of the same package (different major, or two different exact pins), `vn install` stops with an error naming both requirers — never a silent first-wins resolution.
+
+## Registry index URL
+
+By default `vn` reads the package index from:
+
+    https://raw.githubusercontent.com/Chidi09/constellation-index/main/index.json
+
+Override it with the `CONSTELLATION_INDEX_URL` environment variable to point at a
+different index (e.g. a fork or a local mirror):
+
+    export CONSTELLATION_INDEX_URL=https://example.com/my-index.json
