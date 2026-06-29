@@ -604,6 +604,12 @@ typedef struct VM {
     Value globals[1024];
     int global_count;
     char global_names[1024][64];
+    /* Globals — FNV-1a open-addressing index (name-hash -> slot in globals[]).
+     * Makes get/set/define_global O(1) instead of a linear strcmp scan over
+     * the whole (prelude-sized) global table on every variable access. Sized
+     * to 2x the 1024 global capacity for a <=0.5 load factor. */
+    #define GLOBAL_TABLE_SIZE 2048
+    int global_index[GLOBAL_TABLE_SIZE];
 
     Compiler *compiler;
     bool had_error;

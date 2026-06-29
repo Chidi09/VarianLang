@@ -325,6 +325,10 @@ static void warm_vm_reset_and_reload_prelude(VM *warm_vm, Chunk *prelude_chunk,
                                               const char *prelude_source,
                                               const char *prelude_name) {
     warm_vm->global_count = 0;
+    /* Keep the O(1) globals index in sync with the count reset above, or it
+     * retains stale name->slot entries that alias re-defined prelude/test
+     * globals onto the wrong slots (manifests as "Undefined variable 'print'"). */
+    for (int i = 0; i < GLOBAL_TABLE_SIZE; i++) warm_vm->global_index[i] = -1;
     memset(warm_vm->dispatch_occupied, 0, sizeof(warm_vm->dispatch_occupied));
     memset(warm_vm->dispatch_pic_keys, 0, sizeof(warm_vm->dispatch_pic_keys));
     for (int i = 0; i < VM_DISPATCH_PIC_SIZE; i++)
