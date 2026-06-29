@@ -1,0 +1,5 @@
+# Fetched/built by build_tre.sh — reproducible, not checked in.
+tre-0.9.0/
+libtre.a
+*.tar.gz
+_install/

@@ -42,6 +42,58 @@ no `cargo install` — just `vn` and you're building web apps.
 
 ---
 
+## Installation
+
+### Prebuilt binaries
+
+Grab the latest `vn` for your platform from the [Releases page](https://github.com/Chidi09/VarianLang/releases), unpack it, and put it on your `PATH`:
+
+```sh
+# Linux / macOS
+chmod +x vn
+sudo mv vn /usr/local/bin/vn
+vn --help
+```
+
+On Windows, unzip the release (it bundles the required runtime DLLs) and add the folder to your `PATH`.
+
+### Build from source
+
+You need a C11 compiler (`gcc`/`clang`) plus a few system libraries.
+
+**Linux (Debian/Ubuntu):**
+```sh
+sudo apt install build-essential libcurl4-openssl-dev libssl-dev \
+                 liburing-dev libpq-dev libsqlite3-dev libhiredis-dev libffi-dev
+make
+sudo ln -sf "$PWD/vn" /usr/local/bin/vn   # put vn on PATH
+```
+
+**macOS (Homebrew):**
+```sh
+brew install curl openssl libpq sqlite hiredis libffi
+make
+sudo ln -sf "$PWD/vn" /usr/local/bin/vn
+```
+(`liburing` is Linux-only; macOS uses a kqueue/threaded fallback automatically.)
+
+**Windows (MinGW-w64):** the static regex dependency (`tre`) is fetched and built by
+`sh deps/build_tre.sh` (invoked automatically by `make`); the rest of the deps live under
+`C:\deps`. See `appveyor.yml` for the exact, CI-verified setup.
+
+> Tip: `vn` locates its standard library (`vn_modules/`) relative to the real binary path, so a
+> symlink onto your `PATH` works fine. Alternatively set `VARIAN_HOME=/path/to/VarianLang`.
+
+### Editor support (LSP)
+
+The language server is built into the binary (`vn lsp`).
+
+- **VS Code** — install the packaged extension: `code --install-extension editors/vscode/varian-0.1.0.vsix`
+  (syntax highlighting, hover, go-to-definition, diagnostics, formatting, completion). It launches
+  `vn lsp`, so make sure `vn` is on your `PATH`.
+- **Zed** — install the dev extension in `editors/zed-varian/`.
+- **Neovim / other** — point any LSP client at the `vn lsp` command (stdio transport).
+
 ## Quick start
 
 ```sh
@@ -285,7 +337,7 @@ app.listen(3000)
 | **Templating** | External (Jinja2, Pug, EJS, html/template) | **Built-in** `<%= %>` engine — HTML-escaped by default |
 | **Security middleware** | Manual install + wire (helmet, cors, csurf, ratelimit) | `shield.vn` — **CORS, CSRF, rate-limit** all built in |
 | **Background jobs** | External (Celery, Bull, machina) | **Built-in** — `WorkerPool` + `cron()` |
-| **ORM / query builder** | External (Prisma, SQLAlchemy, Knex, sqlx) | **Comptime ORM** — SQL compiled at compile time, zero runtime cost |
+| **ORM / query builder** | External (Prisma, SQLAlchemy, Knex, sqlx) | **Meridian** — comptime ORM, SQL compiled at compile time, zero runtime cost |
 | **Multi-core** | Node: single-threaded → PM2/cluster; Python: GIL → gunicorn | `listen_cluster()` — OS fork with shared listen socket |
 | **Deploy** | Runtime + `node_modules` / go toolchain / Python venv | **Single native binary** — `vn build --release` |
 | **Multi-app per process** | Express: one shared app; FastAPI: one app | `ZenithApp` is a struct — many independent apps in one process |
@@ -333,7 +385,7 @@ needed. Every function and struct below is in scope the moment you run `vn`.
 | `lumen.vn` | Frontend framework — `lumen_mount`, `lumen_store`, `lumen_resource`, `lumen_form`, file-based routing, SSG, 27 UI components, test DSL |
 | `shield.vn` | Security middleware — `cors()`, `csrf()`, `rate_limit()`, `rate_limit_redis()` |
 | `auth.vn` | Auth middleware — `zenith_auth.jwt(secret)`, `zenith_auth.session_store()`, `zenith_auth.session(store, cookie)` + password helpers |
-| `db.vn` | Compile-time SQL query builder — `select()`, `bind()`, `run_sqlite()`, `run_postgres()`, `test_transaction()` |
+| `db.vn` | **Meridian** — compile-time SQL query builder: `select()`, `bind()`, `run_sqlite()`, `run_postgres()`, `test_transaction()` |
 | `queue.vn` | Background jobs — `WorkerPool.spawn(n)`, `.submit(fn)`, `.stop()` — also `cron(interval_ms, handler)` |
 | `mail.vn` | Email — `send_smtp(host, port, ...)`, `send_resend(api_key, ...)` |
 | `storage.vn` | Local file blob store — `new_storage(dir)`, `.put(key, bytes)`, `.get(key)`, `.delete(key)` |

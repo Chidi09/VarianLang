@@ -199,7 +199,7 @@
   </a>
 </div>
 
-<p>Zenith (<code>vn_modules/zenith.vn</code>) and the comptime ORM (<code>vn_modules/db.vn</code>) are Varian source files — not native C modules. Every file under <code>vn_modules/</code> is automatically concatenated as a prelude when you run your program, so <code>ZenithApp</code>, <code>new_app()</code>, etc. are always in scope — <strong>no <code>import</code> needed</strong>.</p>
+<p>Zenith (<code>vn_modules/zenith.vn</code>) and Meridian, the comptime ORM (<code>vn_modules/db.vn</code>) are Varian source files — not native C modules. Every file under <code>vn_modules/</code> is automatically concatenated as a prelude when you run your program, so <code>ZenithApp</code>, <code>new_app()</code>, etc. are always in scope — <strong>no <code>import</code> needed</strong>.</p>
 
 <!-- ============ WHY ZENITH ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Zenith?</h2>
@@ -545,8 +545,8 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
 <p>Zenith handles the WebSocket upgrade (RFC 6455) automatically when you register a <code>ws(path, handler)</code> route. The handler receives a WebSocket struct with <code>read()</code> and <code>write()</code> methods. Server-sent events (SSE) are also supported via the standard response streaming API.</p>
 
 <!-- ============ COMPTIME ORM ============ -->
-<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">database</span> The comptime ORM</h2>
-<p>The query builder in <code>vn_modules/db.vn</code> separates <strong>shape</strong> (table, fields, WHERE clauses) from <strong>values</strong> (the actual data). Since the shape of a query is almost always static, it can run inside <code>comptime { }</code> — the SQL string is built and checked at compile time, then baked into the binary at zero runtime cost.</p>
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">database</span> Meridian: the comptime ORM</h2>
+<p><strong>Meridian</strong> is Varian's built-in ORM. In astronomy the meridian is the coordinate line passing through the Zenith — just as a meridian maps the sky, Meridian maps your data with strict, compile-time boundaries. The query builder in <code>vn_modules/db.vn</code> separates <strong>shape</strong> (table, fields, WHERE clauses) from <strong>values</strong> (the actual data). Since the shape of a query is almost always static, it can run inside <code>comptime { }</code> — the SQL string is built and checked at compile time, then baked into the binary at zero runtime cost.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">orm.vn</span></div>
@@ -587,6 +587,37 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
   </tbody>
 </table>
 <p><code>bind(compiled, params)</code> attaches runtime values and validates count. <code>run_sqlite(bound, conn)</code> / <code>run_postgres(bound, conn)</code> execute.</p>
+
+<!-- ============ MIGRATIONS ============ -->
+<h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">migration</span> Database migrations</h2>
+<p>Meridian includes a migration system for versioning your database schema. Create a migrator, register up/down SQL, and apply or roll back:</p>
+
+<div class="code-block" style="margin-bottom:var(--space-4);">
+  <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">migrations.vn</span></div>
+  <div class="code-block-body"><pre><span class="token-keyword">let</span> conn = sqlite.<span class="token-function">connect</span>(<span class="token-string">"app.db"</span>)
+<span class="token-keyword">let</span> m = migration.<span class="token-function">new_migrator</span>(conn)
+
+<span class="token-comment">// Register a migration with up and down SQL</span>
+m.<span class="token-function">register</span>(<span class="token-string">"create_users"</span>,
+    <span class="token-string">"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)"</span>,
+    <span class="token-string">"DROP TABLE IF EXISTS users"</span>)
+
+<span class="token-comment">// Register an up-only migration</span>
+m.<span class="token-function">register_up</span>(<span class="token-string">"add_index"</span>,
+    <span class="token-string">"CREATE INDEX idx_users_name ON users(name)"</span>)
+
+<span class="token-comment">// Apply all pending migrations</span>
+m.<span class="token-function">up</span>()
+
+<span class="token-comment">// Roll back the last migration</span>
+m.<span class="token-function">down</span>(<span class="token-number">1</span>)
+
+<span class="token-comment">// Check migration status</span>
+<span class="token-keyword">let</span> pending = m.<span class="token-function">pending</span>()
+<span class="token-keyword">let</span> applied = m.<span class="token-function">applied</span>()</pre></div>
+</div>
+
+<p><code>register()</code> stores both up and down SQL; <code>register_up()</code> is for forwards-only changes like adding indexes. <code>m.up()</code> runs all pending migrations in order; <code>m.down(n)</code> rolls back the last <code>n</code> applied migrations. Use <code>m.pending()</code> and <code>m.applied()</code> to inspect migration state.</p>
 
 <!-- ============ SMTP / EMAIL ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">mail</span> Sending email</h2>
