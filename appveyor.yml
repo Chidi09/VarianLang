@@ -276,6 +276,32 @@ for:
               -ContentType "application/octet-stream" -InFile $f
             Write-Host "Uploaded $name"
           }
+      - ps: |
+          # Build the Windows installer (Inno Setup). Uploads on a tagged build.
+          $PKG = "varian-windows-x64"
+          if (-not (Test-Path "dist/$PKG/vn.exe")) { Write-Host "No payload — skipping installer"; exit 0 }
+          choco install innosetup -y --no-progress | Out-Null
+          $iscc = (Get-ChildItem "C:\Program Files*\Inno Setup*\ISCC.exe" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          if (-not $iscc) { Write-Host "ISCC not found — skipping installer"; exit 0 }
+          & $iscc "/DSourcePath=..\dist\$PKG" installer\varian.iss
+          if ($LASTEXITCODE -ne 0) { throw "ISCC failed" }
+          $setup = (Get-ChildItem installer\output\varian-setup-*.exe | Select-Object -First 1).FullName
+          Copy-Item $setup "varian-setup-x64.exe" -Force
+          $hash = (Get-FileHash "varian-setup-x64.exe" -Algorithm SHA256).Hash.ToLower()
+          Set-Content "varian-setup-x64.exe.sha256" "$hash  varian-setup-x64.exe"
+          $tag = $env:APPVEYOR_REPO_TAG_NAME
+          if (-not $tag) { Write-Host "No tag — installer built, not uploaded"; exit 0 }
+          $headers = @{ Authorization = "token $env:GITHUB_TOKEN"; "User-Agent" = "appveyor-varian" }
+          $all = Invoke-RestMethod "https://api.github.com/repos/$env:APPVEYOR_REPO_NAME/releases?per_page=100" -Headers $headers
+          $rel = $all | Where-Object { $_.tag_name -eq $tag } | Select-Object -First 1
+          if (-not $rel) { Write-Host "Release not found for $tag"; exit 0 }
+          $upload = "https://uploads.github.com/repos/$env:APPVEYOR_REPO_NAME/releases/$($rel.id)/assets"
+          foreach ($f in @("varian-setup-x64.exe", "varian-setup-x64.exe.sha256")) {
+            $name = [System.IO.Path]::GetFileName($f)
+            Invoke-RestMethod -Uri "$upload?name=$name" -Method Post -Headers $headers `
+              -ContentType "application/octet-stream" -InFile $f
+            Write-Host "Uploaded $name"
+          }
 
 artifacts:
   - path: varian-linux-x64.tar.gz
@@ -290,3 +316,7 @@ artifacts:
     name: varian-windows-x64
   - path: varian-windows-x64.zip.sha256
     name: varian-windows-x64-sha256
+  - path: varian-setup-x64.exe
+    name: varian-windows-installer
+  - path: varian-setup-x64.exe.sha256
+    name: varian-windows-installer-sha256
