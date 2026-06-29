@@ -32,6 +32,8 @@
 #include <process.h>
 #else
 #include <sys/wait.h>
+#include <unistd.h>
+#include <signal.h>
 #endif
 #ifndef VN_NO_HTTP
 #include <curl/curl.h>

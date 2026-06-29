@@ -15,7 +15,7 @@ icon_themes = ["icon_themes/varian.json"]
 
 [grammars.varian]
 repository = "https://github.com/Chidi09/tree-sitter-varian"
-rev = "f33440b2de87f1b6897e95351db32222a308f542"
+rev = "8a88f6edf98e6edf44a459540914a9d83be4b82f"
 
 # Declare the language server here only as a name + which languages it serves.
 # The actual command (`vn lsp`) is provided by the companion `varian-lsp`
