@@ -342,6 +342,44 @@ print(my_err.hint)     // &quot;ask the user to try another card&quot;
 <li><code>errors.is(err, kind_string)</code>: returns <code>true</code> if <code>err</code>'s kind matches <code>kind_string</code>.</li>
 <li><code>errors.make(kind, message, hint)</code>: returns a structured Error struct containing <code>kind</code>, <code>message</code>, and <code>hint</code>.</li>
 </ul>
+<h2><code>i18n</code></h2>
+<p>The <code>i18n</code> module provides lightweight internationalization support, including locale switching, JSON-based translation catalogs, and pluralization.</p>
+<pre><code class="language-varian">let i = i18n.new_i18n("en")
+i.load_json("fr", json_text)   // load a locale from JSON
+i.set_locale("fr")
+i.t("greeting")                // translate a key
+i.plural(2, "item", "items")
+</code></pre>
+<h2><code>feature</code></h2>
+<p>The <code>feature</code> module implements feature flagging and gradual rollouts, allowing runtime behavior adjustments with percentage-based rules and target overrides.</p>
+<pre><code class="language-varian">let f = feature.new_features()
+f.define("new_ui", true)
+f.enabled("new_ui")            // -> bool
+f.enabled_for("beta", ctx)     // per-context
+f.percentage("rollout", ctx, 25)  // gradual % rollout
+f.override("new_ui", false)
+f.reset("new_ui")
+</code></pre>
+<h2><code>crypto</code></h2>
+<p>The <code>crypto</code> module offers cryptographic utilities for generating secure random strings, hex values, and bytes, alongside HMAC signing and verification.</p>
+<pre><code class="language-varian">crypto.random_string(32)
+crypto.random_hex(16)
+crypto.random_bytes(8)
+crypto.hmac("my_key", "my_data")
+crypto.hmac_verify("my_key", "my_data", sig)
+</code></pre>
+<h2><code>fetch</code></h2>
+<p>The <code>fetch</code> module is a fluent HTTP client builder for constructing and sending requests with custom headers, timeouts, and automatic retries.</p>
+<pre><code class="language-varian">let res = fetch.fetch("https://api.example.com").header("Authorization", "Bearer x").timeout(5000).json()
+</code></pre>
+<h2><code>pagination</code></h2>
+<p>The <code>pagination</code> module provides helpers for generating paginated response models, calculating total pages, and tracking navigation state.</p>
+<pre><code class="language-varian">let p = pagination.paginate(page, per_page).with_total(total)
+p.pages()
+p.has_next()
+p.next_page()
+p.response()
+</code></pre>
     </main>
   </div>
   <Footer>
