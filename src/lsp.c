@@ -1717,6 +1717,391 @@ static void handle_semantic_tokens(int id, const char *uri) {
 }
 
 /* ────────────────────────────────────────────────
+ *  handle_references
+ * ──────────────────────────────────────────────── */
+static void handle_references(int id, const char *json, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int vline = line_lsp + 1 + line_offset;
+    int vcol = char_lsp + 1;
+
+    int best_depth = -1;
+    AstNode *found = find_node_at(program, vline, vcol, 0, &best_depth);
+
+    const char *target_name = NULL;
+    if (found && found->kind == NODE_IDENTIFIER) {
+        target_name = found->identifier.name;
+    }
+
+    if (!target_name) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[]}", id);
+        send_response(buf);
+        arena_destroy(arena);
+        return;
+    }
+
+    char *processed = is_lumen_file(uri) ? blank_lumen_html(text) : strdup(text);
+
+    Lexer lexer;
+    lexer_init(&lexer, processed, uri);
+
+    size_t cap = 8192;
+    size_t len = 0;
+    char *items = malloc(cap);
+    items[0] = '\0';
+    int count = 0;
+
+    char *uri_enc = encode_json_string(uri);
+    int target_len = (int)strlen(target_name);
+
+    for (;;) {
+        Token t = lexer_next(&lexer);
+        if (t.type == TOKEN_EOF) {
+            if (t.value) free(t.value);
+            break;
+        }
+
+        if (t.type == TOKEN_IDENTIFIER && t.length == target_len &&
+            strncmp(t.start, target_name, t.length) == 0) {
+            int sl = t.line - 1;
+            int sc = t.column - 1;
+
+            char buf[1024];
+            snprintf(buf, sizeof(buf),
+                     "%s{\"uri\":%s,\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}",
+                     (count > 0 ? "," : ""), uri_enc, sl, sc, sl, sc + t.length);
+
+            size_t blen = strlen(buf);
+            if (len + blen + 2 >= cap) {
+                cap *= 2;
+                items = realloc(items, cap);
+            }
+            strcat(items, buf);
+            len += blen;
+            count++;
+        }
+
+        if (t.value) free(t.value);
+    }
+
+    free(uri_enc);
+    free(processed);
+
+    size_t out_cap = len + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[%s]}", id, items);
+    send_response(out_json);
+
+    free(items);
+    free(out_json);
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_rename
+ * ──────────────────────────────────────────────── */
+static void handle_rename(int id, const char *json, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    char *new_name = extract_json_string(json, "newName");
+    if (!new_name) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        free(new_name);
+        return;
+    }
+
+    int vline = line_lsp + 1 + line_offset;
+    int vcol = char_lsp + 1;
+
+    int best_depth = -1;
+    AstNode *found = find_node_at(program, vline, vcol, 0, &best_depth);
+
+    const char *target_name = NULL;
+    if (found && found->kind == NODE_IDENTIFIER) {
+        target_name = found->identifier.name;
+    }
+
+    if (!target_name) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        free(new_name);
+        arena_destroy(arena);
+        return;
+    }
+
+    char *processed = is_lumen_file(uri) ? blank_lumen_html(text) : strdup(text);
+
+    Lexer lexer;
+    lexer_init(&lexer, processed, uri);
+
+    size_t cap = 8192;
+    size_t len = 0;
+    char *edits = malloc(cap);
+    edits[0] = '\0';
+    int count = 0;
+
+    char *new_name_enc = encode_json_string(new_name);
+    int target_len = (int)strlen(target_name);
+
+    for (;;) {
+        Token t = lexer_next(&lexer);
+        if (t.type == TOKEN_EOF) {
+            if (t.value) free(t.value);
+            break;
+        }
+
+        if (t.type == TOKEN_IDENTIFIER && t.length == target_len &&
+            strncmp(t.start, target_name, t.length) == 0) {
+            int sl = t.line - 1;
+            int sc = t.column - 1;
+
+            char buf[1024];
+            snprintf(buf, sizeof(buf),
+                     "%s{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":%s}",
+                     (count > 0 ? "," : ""), sl, sc, sl, sc + t.length, new_name_enc);
+
+            size_t blen = strlen(buf);
+            if (len + blen + 2 >= cap) {
+                cap *= 2;
+                edits = realloc(edits, cap);
+            }
+            strcat(edits, buf);
+            len += blen;
+            count++;
+        }
+
+        if (t.value) free(t.value);
+    }
+
+    free(new_name_enc);
+    free(processed);
+
+    char *uri_enc = encode_json_string(uri);
+    size_t out_cap = len + strlen(uri_enc) + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"changes\":{%s:[%s]}}}",
+             id, uri_enc, edits);
+    send_response(out_json);
+
+    free(uri_enc);
+    free(edits);
+    free(out_json);
+    free(new_name);
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_signature_help
+ * ──────────────────────────────────────────────── */
+static void handle_signature_help(int id, const char *json, const char *uri) {
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        send_response(buf);
+        return;
+    }
+
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    if (!program) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        send_response(buf);
+        return;
+    }
+
+    char *label = NULL;
+
+    /* Best-effort: scan backwards from cursor for '(' on the same line */
+    const char *line_start = text;
+    int cur_line = 0;
+    while (cur_line < line_lsp && *line_start) {
+        if (*line_start == '\n') cur_line++;
+        line_start++;
+    }
+
+    if (*line_start) {
+        const char *p = line_start;
+        int col = 0;
+        const char *paren = NULL;
+        while (*p && *p != '\n' && col <= char_lsp) {
+            if (*p == '(') paren = p;
+            p++;
+            col++;
+        }
+
+        if (paren && paren > line_start) {
+            const char *name_end = paren - 1;
+            while (name_end > line_start && isspace((unsigned char)*name_end)) name_end--;
+            const char *name_start = name_end;
+            while (name_start > line_start && (isalnum((unsigned char)*(name_start - 1)) || *(name_start - 1) == '_')) name_start--;
+
+            int name_len = (int)(name_end - name_start + 1);
+            if (name_len > 0 && name_len < 256) {
+                char name_buf[256];
+                memcpy(name_buf, name_start, name_len);
+                name_buf[name_len] = '\0';
+
+                AstNode *decl = find_decl(program, name_buf);
+                if (decl) {
+                    label = decl_signature(decl);
+                } else {
+                    char *ndoc = lookup_native_doc(name_buf);
+                    if (ndoc) {
+                        label = malloc(strlen(name_buf) + 64);
+                        snprintf(label, strlen(name_buf) + 64, "fn %s(...)", name_buf);
+                        free(ndoc);
+                    }
+                }
+            }
+        }
+    }
+
+    if (label) {
+        char *label_enc = encode_json_string(label);
+        size_t out_cap = strlen(label_enc) + 256;
+        char *out_json = malloc(out_cap);
+        snprintf(out_json, out_cap,
+                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[{\"label\":%s,\"parameters\":[]}]}}",
+                 id, label_enc);
+        send_response(out_json);
+        free(label_enc);
+        free(out_json);
+        free(label);
+    } else {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        send_response(buf);
+    }
+
+    arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_code_action
+ * ──────────────────────────────────────────────── */
+static void handle_code_action(int id, const char *json, const char *uri) {
+    (void)json;
+    (void)uri;
+    char buf[256];
+    snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[]}", id);
+    send_response(buf);
+}
+
+/* ────────────────────────────────────────────────
+ *  handle_folding_range
+ * ──────────────────────────────────────────────── */
+static void handle_folding_range(int id, const char *json, const char *uri) {
+    (void)json;
+    const char *text = get_doc(uri);
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+        send_response(buf);
+        return;
+    }
+
+#define MAX_FOLD_DEPTH 1024
+    int brace_stack[MAX_FOLD_DEPTH];
+    int depth = 0;
+
+    size_t cap = 8192;
+    size_t len = 0;
+    char *ranges = malloc(cap);
+    ranges[0] = '\0';
+    int count = 0;
+    int line = 0;
+
+    for (const char *p = text; *p; p++) {
+        if (*p == '{') {
+            if (depth < MAX_FOLD_DEPTH) {
+                brace_stack[depth] = line;
+            }
+            depth++;
+        } else if (*p == '}') {
+            if (depth > 0) {
+                depth--;
+                int start_line = brace_stack[depth];
+                if (line > start_line) {
+                    char buf[128];
+                    snprintf(buf, sizeof(buf), "%s{\"startLine\":%d,\"endLine\":%d}",
+                             (count > 0 ? "," : ""), start_line, line);
+                    size_t blen = strlen(buf);
+                    if (len + blen + 2 >= cap) {
+                        cap = (len + blen + 2) * 2;
+                        ranges = realloc(ranges, cap);
+                    }
+                    strcat(ranges, buf);
+                    len += blen;
+                    count++;
+                }
+            }
+        } else if (*p == '\n') {
+            line++;
+        }
+    }
+
+    size_t out_cap = len + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[%s]}", id, ranges);
+    send_response(out_json);
+
+    free(ranges);
+    free(out_json);
+#undef MAX_FOLD_DEPTH
+}
+
+/* ────────────────────────────────────────────────
  *  Initialize
  * ──────────────────────────────────────────────── */
 static void handle_initialize(int id) {
@@ -1727,6 +2112,11 @@ static void handle_initialize(int id) {
              "\"hoverProvider\":true,"
              "\"completionProvider\":{\"triggerCharacters\":[\".\",\":\"]},"
              "\"definitionProvider\":true,"
+             "\"referencesProvider\":true,"
+             "\"renameProvider\":true,"
+             "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},"
+             "\"codeActionProvider\":true,"
+             "\"foldingRangeProvider\":true,"
              "\"documentFormattingProvider\":true,"
              "\"documentSymbolProvider\":true,"
              "\"semanticTokensProvider\":{\"legend\":{\"tokenTypes\":["
@@ -1828,6 +2218,36 @@ int lsp_main(void) {
                 char *uri = get_uri(json);
                 if (uri) {
                     handle_semantic_tokens(id, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/references") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_references(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/rename") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_rename(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/signatureHelp") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_signature_help(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/codeAction") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_code_action(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/foldingRange") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_folding_range(id, json, uri);
                     free(uri);
                 }
             }
