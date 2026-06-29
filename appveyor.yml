@@ -1,13 +1,16 @@
 # AppVeyor CI — multi-platform build + release.
 # Builds the `vn` toolchain on Linux, macOS, and Windows.
-# On a pushed tag, uploads all platform artifacts to a GitHub Release.
+# Every push/PR builds all three platforms for validation (CI). On a pushed
+# TAG, the same build additionally uploads its artifacts to a GitHub Release
+# (the upload steps self-skip when APPVEYOR_REPO_TAG_NAME is empty).
 #
 # Setup (one-time):
 #   1. https://ci.appveyor.com/ → Log in with GitHub → New Project → pick Chidi09/VarianLang
 #   2. Settings → Environment → add secret: GITHUB_TOKEN
 #   3. Push a tag — AppVeyor picks it up automatically.
 
-skip_non_tags: true
+# Build on every commit for CI feedback; uploads still gate on a tag (below).
+skip_non_tags: false
 clone_depth: 1
 
 image:
