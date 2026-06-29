@@ -2884,6 +2884,7 @@ void vm_init(VM *vm, Compiler *compiler) {
     vm->current_task_index = 0;
     vm->objects = NULL;
     vm->global_count = 0;
+    for (int i = 0; i < GLOBAL_TABLE_SIZE; i++) vm->global_index[i] = -1;
     vm->compiler = compiler;
     vm->had_error = false;
     vm->suppress_error_print = false;
@@ -3031,41 +3032,58 @@ void runtime_error(VM *vm, const char *format, ...) {
     vm->had_error = true;
 }
 
+/* Globals — open-addressing hash index over vm->global_names. Returns the
+ * slot in vm->globals[] for `name`, or -1 if undefined. O(1) amortized. */
+static int global_find_slot(VM *vm, const char *name) {
+    uint32_t mask = GLOBAL_TABLE_SIZE - 1;
+    uint32_t h = hash_string(name, (int)strlen(name)) & mask;
+    for (uint32_t i = 0; i < GLOBAL_TABLE_SIZE; i++) {
+        int slot = (h + i) & mask;
+        int gi = vm->global_index[slot];
+        if (gi < 0) return -1;                 /* empty slot -> not present */
+        if (strcmp(vm->global_names[gi], name) == 0) return gi;
+    }
+    return -1;
+}
+
+/* Record that global `name` lives at globals[gi]. Globals are never removed,
+ * so no tombstones are needed. */
+static void global_index_insert(VM *vm, const char *name, int gi) {
+    uint32_t mask = GLOBAL_TABLE_SIZE - 1;
+    uint32_t h = hash_string(name, (int)strlen(name)) & mask;
+    for (uint32_t i = 0; i < GLOBAL_TABLE_SIZE; i++) {
+        int slot = (h + i) & mask;
+        if (vm->global_index[slot] < 0) { vm->global_index[slot] = gi; return; }
+    }
+}
+
 void define_global(VM *vm, ObjString *name, Value value) {
     value = escape_promote(vm, value);
-    for (int i = 0; i < vm->global_count; i++) {
-        if (strcmp(vm->global_names[i], name->chars) == 0) {
-            vm->globals[i] = value;
-            return;
-        }
-    }
+    int gi = global_find_slot(vm, name->chars);
+    if (gi >= 0) { vm->globals[gi] = value; return; }
     if (vm->global_count >= 1024) {
         runtime_error(vm, "Too many global variables");
         return;
     }
-    strncpy(vm->global_names[vm->global_count], name->chars, 63);
-    vm->global_names[vm->global_count][63] = '\0';
-    vm->globals[vm->global_count] = value;
+    gi = vm->global_count;
+    strncpy(vm->global_names[gi], name->chars, 63);
+    vm->global_names[gi][63] = '\0';
+    vm->globals[gi] = value;
     vm->global_count++;
+    global_index_insert(vm, vm->global_names[gi], gi);
 }
 
 Value get_global(VM *vm, ObjString *name) {
-    for (int i = 0; i < vm->global_count; i++) {
-        if (strcmp(vm->global_names[i], name->chars) == 0)
-            return vm->globals[i];
-    }
+    int gi = global_find_slot(vm, name->chars);
+    if (gi >= 0) return vm->globals[gi];
     runtime_error(vm, "Undefined variable '%s'", name->chars);
     return val_nil();
 }
 
 void set_global(VM *vm, ObjString *name, Value value) {
     value = escape_promote(vm, value);
-    for (int i = 0; i < vm->global_count; i++) {
-        if (strcmp(vm->global_names[i], name->chars) == 0) {
-            vm->globals[i] = value;
-            return;
-        }
-    }
+    int gi = global_find_slot(vm, name->chars);
+    if (gi >= 0) { vm->globals[gi] = value; return; }
     runtime_error(vm, "Undefined variable '%s'", name->chars);
 }
 
