@@ -2654,6 +2654,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
     parser->enum_count = 0;
     parser->method_count = 0;
     parser->function_count = 0;
+    parser->actor_count = 0;
 
     /* Pre-register built-in method names so parser emits BC_DISPATCH for them */
     {
@@ -2665,7 +2666,16 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
             "bit_and", "bit_or", "bit_xor", "index_of", "last_index_of",
             "contains", "ends_with",
             "set", "get", "has", "keys",
-            "read", "write", "close"
+            "get_field", "get_keys",
+            "read", "write", "close",
+            /* fetch.vn's fluent builder methods. ai.vn is parsed first
+             * (alphabetical), so its `fetch(url).header().timeout().post()` chain
+             * would otherwise compile as field-access+call and fail at runtime.
+             * Only these cross-module names need priming; ai.vn's own impl methods
+             * (chat, _chat_*, embed*) are registered cumulatively as they're parsed,
+             * and module calls like math.sqrt must NOT be listed here or they'd
+             * dispatch instead of resolving on the module (breaks mock.intercept). */
+            "header", "timeout", "post"
         };
         int n = sizeof(builtin_methods) / sizeof(builtin_methods[0]);
         for (int i = 0; i < n && i < 256; i++) {

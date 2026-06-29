@@ -200,8 +200,8 @@ fn ai_embed_similarity(a, b) {
     let n = a.len()
     if b.len() < n { n = b.len() }
     for i in 0..n {
-        let av = a[i]; if av.type == "int" { av = 0.0 + av }
-        let bv = b[i]; if bv.type == "int" { bv = 0.0 + bv }
+        let av = 0.0 + a[i]
+        let bv = 0.0 + b[i]
         dot = dot + av * bv
         na = na + av * av
         nb = nb + bv * bv
@@ -217,8 +217,8 @@ fn ai_embed_dot(a, b) {
     let n = a.len()
     if b.len() < n { n = b.len() }
     for i in 0..n {
-        let av = a[i]; if av.type == "int" { av = 0.0 + av }
-        let bv = b[i]; if bv.type == "int" { bv = 0.0 + bv }
+        let av = 0.0 + a[i]
+        let bv = 0.0 + b[i]
         result = result + av * bv
     }
     return result
@@ -521,28 +521,61 @@ impl AIClient {
         if _validate.get_field(opts, "tier") == "smart" { model = self.model_smart }
         if _validate.get_field(opts, "model") != null { model = _validate.get_field(opts, "model") }
 
-        // Build Gemini-format contents array
+        // Build Gemini-format contents array. Gemini has no "system" role in
+        // `contents`; system prompts must go in a top-level `systemInstruction`
+        // field, otherwise they're silently dropped and the model never sees them.
         let contents = []
+        let system_text = ""
         for i in 0..conv.messages.len() {
             let m = conv.messages[i]
-            if m.role != "system" {
+            if m.role == "system" {
+                if system_text != "" { system_text = system_text + "\n\n" }
+                system_text = system_text + m.content
+            } else {
                 let gemini_role = "user"
                 if m.role == "assistant" { gemini_role = "model" }
                 contents = contents.push({ role: gemini_role, parts: [{ text: m.content }] })
             }
         }
 
-        let body = { contents: contents }
-        let extra_fields = []
-        let extra_vals = []
-        extra_fields = extra_fields.push("maxOutputTokens")
-        extra_vals = extra_vals.push(max_tok)
-        extra_fields = extra_fields.push("temperature")
-        extra_vals = extra_vals.push(temp)
-        body = http.create_struct(
-            ["contents", "generationConfig"],
-            [contents, http.create_struct(extra_fields, extra_vals)]
+        // Thinking control. Gemini 2.5 models "think" by default, and those
+        // thinking tokens are drawn from maxOutputTokens -- so an un-tuned call
+        // burns the budget on hidden reasoning and truncates the visible reply
+        // (and any trailing structured output) mid-sentence. We make it a knob
+        // instead of forcing it off:
+        //   opts.thinking_budget : explicit budget (0 = off, -1 = dynamic, N = fixed tokens)
+        //   opts.thinking        : bool shorthand (true => dynamic, false => off)
+        // Default is case-by-case: OFF for the fast tier (basic chat, taking an
+        // order -- no reasoning needed, keep replies snappy and un-truncated),
+        // DYNAMIC for the smart tier (let it reason). Note gemini-2.5-pro cannot
+        // fully disable thinking, so a budget of 0 there is sent as dynamic (-1).
+        let think_budget = 0
+        if _validate.get_field(opts, "tier") == "smart" { think_budget = -1 }
+        let tb = _validate.get_field(opts, "thinking_budget")
+        if tb != null { think_budget = tb }
+        let tflag = _validate.get_field(opts, "thinking")
+        if tflag != null {
+            if tflag { think_budget = -1 } else { think_budget = 0 }
+        }
+        if think_budget == 0 and model.index_of("pro") >= 0 { think_budget = -1 }
+
+        let gen_config = http.create_struct(
+            ["maxOutputTokens", "temperature", "thinkingConfig"],
+            [max_tok, temp, http.create_struct(["thinkingBudget"], [think_budget])]
         )
+
+        let body = null
+        if system_text != "" {
+            body = http.create_struct(
+                ["contents", "generationConfig", "systemInstruction"],
+                [contents, gen_config, http.create_struct(["parts"], [[{ text: system_text }]])]
+            )
+        } else {
+            body = http.create_struct(
+                ["contents", "generationConfig"],
+                [contents, gen_config]
+            )
+        }
 
         let url = self.base_url + "/models/" + model + ":generateContent?key=" + self.api_key
 
