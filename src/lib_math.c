@@ -3,6 +3,15 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+/* M_PI/M_E are not in strict ISO/POSIX (the build uses -D_POSIX_C_SOURCE),
+ * so provide portable fallbacks when the platform's math.h withholds them. */
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+#ifndef M_E
+#define M_E 2.71828182845904523536
+#endif
+
 /* ─── Helper: convert Value to double ─── */
 static inline double val_to_double(Value v) {
     return (v.type == VAL_FLOAT) ? v.as.floating : (double)v.as.integer;

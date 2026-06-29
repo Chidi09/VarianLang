@@ -7,6 +7,9 @@
 #include <direct.h>
 #include <io.h>
 #include <dirent.h>
+#define mkdir(path, mode) _mkdir(path)
+#else
+#include <dirent.h>
 #endif
 #include <unistd.h>
 
@@ -141,7 +144,7 @@ static Value lib_io_mkdir(VM *vm, int arg_count, Value *args) {
     if (arg_count < base + 1 || args[base].type != VAL_STRING)
         return val_bool(false);
     const char *path = args[base].as.string->chars;
-    if (mkdir(path) == 0) return val_bool(true);
+    if (mkdir(path, 0755) == 0) return val_bool(true);
     struct stat st;
     /* Already exists as a directory -- treat as success, same as mkdir -p. */
     return val_bool(stat(path, &st) == 0 && S_ISDIR(st.st_mode));
