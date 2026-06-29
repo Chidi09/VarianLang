@@ -93,6 +93,11 @@
             }
         }
     },
+    "scripts": {
+        "package": "npx --yes @vscode/vsce package",
+        "publish": "npx --yes @vscode/vsce publish",
+        "publish:ovsx": "npx --yes ovsx publish"
+    },
     "dependencies": {
         "vscode-languageclient": "^8.1.0"
     }
