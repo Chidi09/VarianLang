@@ -8,7 +8,7 @@
 ; ── Keywords ──────────────────────────────────────────────
 [
   "let" "const" "mut" "fn" "struct" "enum" "actor" "impl" "trait" "type"
-  "pub" "test" "comptime" "async" "schema" "self"
+  "pub" "test" "comptime" "async" "schema"
 ] @keyword
 
 [
@@ -32,9 +32,7 @@
 (lambda_expression) @function
 
 (call_expression function: (identifier) @function.call)
-(call_expression
-  function: (member_expression
-    property: (identifier) @function.method))
+
 
 (dispatch_call method: (identifier) @function.method)
 
@@ -99,10 +97,9 @@
 
 ; ── Framework APIs (Zenith, Lumen, Aurora) ────────────────
 ; Zenith backend framework methods
-(call_expression
-  function: (member_expression
-    property: (identifier) @function.builtin
-    (#match? @function.builtin "^(get|post|put|delete|patch|options|head|add_middleware|serve_static|enable_docs|on_error|handle|listen|listen_cluster|listen_tls|listen_tls_cluster|register_schema)$")))
+(dispatch_call
+  method: (identifier) @function.builtin
+  (#match? @function.builtin "^(get|post|put|delete|patch|options|head|add_middleware|serve_static|enable_docs|on_error|handle|listen|listen_cluster|listen_tls|listen_tls_cluster|register_schema)$"))
 
 ; Lumen frontend framework functions
 (call_expression
@@ -116,7 +113,11 @@
 ; ── Lumen Template-Specific Captures ──────────────────────
 ; HTML tags in templates (captured as identifiers in Varian grammar)
 ((identifier) @tag
-  (#match? @tag "^(template|div|span|h1|h2|h3|h4|h5|h6|p|a|button|input|form|label|select|option|textarea|ul|ol|li|table|tr|td|th|thead|tbody|img|br|hr|section|article|nav|header|footer|main|aside|figure|figcaption|mark|code|pre|blockquote|cite|em|strong|small|sub|sup|u|s)$"))
+  (#match? @tag "^(template|div|span|h1|h2|h3|h4|h5|h6|p|a|button|input|form|label|select|option|textarea|ul|ol|li|table|tr|td|th|thead|tbody|img|br|hr|section|article|nav|header|footer|main|aside|figure|figcaption|mark|code|pre|blockquote|cite|em|strong|small|sub|sup|u|s|script|style)$"))
+
+; Standard HTML attributes
+((identifier) @property
+  (#match? @property "^(class|id|name|href|src|alt|type|value|placeholder|action|method|for|rows|cols|title|disabled|checked|selected|readonly|required|multiple|target|rel)$"))
 
 ; Template directives (@click, @submit, :bind, :class, etc.)
 (decorator
