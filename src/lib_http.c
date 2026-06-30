@@ -2307,12 +2307,18 @@ static Value lib_http_create_struct(VM *vm, int arg_count, Value *args) {
      * The struct may be arena-backed (field_names == NULL), so we need to
      * attach a proper shape before populating fields. */
     if (count > 0) {
-        char *scratch[64];
-        int safe = count < 64 ? count : 64;
-        for (int i = 0; i < safe; i++)
+        /* Heap-allocate the scratch name array to `count` so maps/structs of
+         * any size work. The old fixed `scratch[64]` was filled to min(count,64)
+         * but `count` was still passed to struct_attach_shape, so a struct with
+         * >64 fields read past the array (uninitialised stack) and strdup'd a
+         * garbage pointer -> SIGSEGV. shape_get_or_create strdup's every name,
+         * so freeing scratch immediately after is safe. */
+        char **scratch = (char **)malloc((size_t)count * sizeof(char *));
+        for (int i = 0; i < count; i++)
             scratch[i] = (keys->elements[i].type == VAL_STRING)
                 ? keys->elements[i].as.string->chars : "";
         struct_attach_shape(vm, s, NULL, (char *const *)scratch, count);
+        free(scratch);
         for (int i = 0; i < count; i++) {
             s->fields[i] = vals->elements[i];
         }
