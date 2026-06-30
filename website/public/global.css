@@ -581,24 +581,25 @@ footer {
 }
 .btn-nav-toggle .material-symbols-outlined { font-size: 18px; }
 
-/* Safe responsiveness overrides */
-pre {
-  max-width: 100%;
-  overflow-x: auto;
-}
-
-.markdown-body table {
-  display: block;
-  width: 100%;
-  overflow-x: auto;
-  -webkit-overflow-scrolling: touch;
-}
-
 @media (max-width: 720px) {
   body.nav-open-active {
     overflow: hidden;
   }
-  
+
+  /* Mobile-only: let wide code blocks and tables scroll horizontally instead of
+     breaking the layout. Kept out of the desktop cascade so doc-page tables
+     still render as normal full-width tables on desktop. */
+  pre {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  .markdown-body table {
+    display: block;
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   .btn-nav-toggle {
     display: inline-flex;
     position: relative;
