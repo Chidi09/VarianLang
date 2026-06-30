@@ -86,7 +86,7 @@
       font-size: 0.9em;
     }
     .markdown-body pre {
-      background-color: #000;
+      background-color: var(--bg-surface);
       padding: var(--space-4);
       border-radius: var(--radius-md);
       overflow-x: auto;
