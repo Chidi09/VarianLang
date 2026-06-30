@@ -83,7 +83,7 @@
       font-size: 0.9em;
     }
     .markdown-body pre {
-      background-color: #000;
+      background-color: var(--bg-surface);
       padding: var(--space-4);
       border-radius: var(--radius-md);
       overflow-x: auto;
@@ -107,45 +107,43 @@
     .markdown-body table { width: 100%; border-collapse: collapse; margin-bottom: var(--space-4); }
     .markdown-body th, .markdown-body td { border: 1px solid var(--border-subtle); padding: var(--space-2) var(--space-4); text-align: left; }
     .markdown-body th { background-color: var(--bg-surface); }
-      .btn-nav-toggle {
-      display: none;
-      background: none;
-      border: 1px solid var(--border-subtle);
-      border-radius: var(--radius-full);
-      width: 36px; height: 36px;
-      align-items: center; justify-content: center;
-      cursor: pointer;
-      color: var(--text-secondary);
-      transition: all var(--transition-fast);
-      margin-left: var(--space-2);
-    }
-    .btn-nav-toggle:hover {
-      color: var(--text-primary);
-      border-color: var(--text-muted);
-    }
-    .btn-nav-toggle .material-symbols-outlined { font-size: 18px; }
+      
+    
+    
     @media (max-width: 720px) {
-      .btn-nav-toggle { display: inline-flex; }
-      .nav-links {
-        display: none;
-        position: absolute;
-        top: 100%; left: 0; right: 0;
-        background: var(--bg-main);
+      
+      
+      
+      
+      .docs-container { flex-direction: column; padding: 0 var(--space-4); }
+      .docs-sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        top: auto;
+        border-right: none;
         border-bottom: 1px solid var(--border-subtle);
-        flex-direction: column;
-        padding: var(--space-4) var(--space-6);
-        gap: var(--space-4);
-        z-index: 99;
+        padding-top: var(--space-4);
+        margin-bottom: var(--space-6);
       }
-      .nav-links.nav-open { display: flex; }
-      .navbar { position: relative; }
     }
 </style>
 </head>
 <body>
   <Page>
-    <Nav brand="Varian">
-    <div class="nav-links">
+  <div class="ambient-bg" aria-hidden="true">
+    <video autoplay muted loop playsinline poster="/aurora-bg.jpg" preload="metadata">
+      <source src="/aurora-bg.webm" type="video/webm">
+      <source src="/aurora-bg.mp4" type="video/mp4">
+    </video>
+  </div>
+  <div class="container">
+    <nav class="navbar">
+      <a href="/" class="nav-brand">
+        <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
+        <span>Varian</span>
+      </a>
+      <div class="nav-links">
         <a href="/#language">Language</a>
         <a href="/#ecosystem">Ecosystem</a>
         <a href="/aurora">Aurora</a>
@@ -154,7 +152,14 @@
         <a href="/the_varian_book">The Book</a>
         <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
       </div>
-    </Nav>
+      <button id="theme-toggle" class="btn-theme-toggle" aria-label="Toggle theme">
+        <span class="material-symbols-outlined" id="theme-icon">light_mode</span>
+      </button>
+      <button id="nav-toggle" class="btn-nav-toggle" aria-label="Menu" aria-expanded="false">
+        <span class="material-symbols-outlined">menu</span>
+      </button>
+    </nav>
+  </div>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
@@ -301,23 +306,7 @@ single most important caveat when deploying.</p>
         &copy; 2026 VarianLang. Built with Aurora.
       </div>
     </Footer>
-<script>  var navToggle = document.getElementById('nav-toggle');
-  var navLinks = document.querySelector('.nav-links');
-  if (navToggle && navLinks) {
-    navToggle.addEventListener('click', function() {
-      var open = navLinks.classList.toggle('nav-open');
-      navToggle.setAttribute('aria-expanded', open);
-      navToggle.querySelector('.material-symbols-outlined').textContent = open ? 'close' : 'menu';
-    });
-    document.addEventListener('click', function(e) {
-      if (!navToggle.contains(e.target) && !navLinks.contains(e.target)) {
-        navLinks.classList.remove('nav-open');
-        navToggle.setAttribute('aria-expanded', 'false');
-        navToggle.querySelector('.material-symbols-outlined').textContent = 'menu';
-      }
-    });
-  }
-</script>
+<script src="/nav.js"></script>
   </Page>
 </body>
 </html>

@@ -1301,8 +1301,7 @@ fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
         }
     }
     // Ensure output dir exists
-    let _ = io.write_text(out_dir + "/.lumen-ssg-tmp", "")
-    io.remove(out_dir + "/.lumen-ssg-tmp")
+    let _ = io.mkdir(out_dir)
 
     for pi in 0..pages.len() {
         let p = pages[pi]
@@ -1341,7 +1340,7 @@ fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
         // This would be run by `vn build --static`
         count = count + 1
     }
-    io.remove(".lumen-ssg-render.vn")
+    io.delete(".lumen-ssg-render.vn")
 
     // Generate sitemap.xml
     if base_url != null and base_url != "" {
@@ -1365,6 +1364,92 @@ fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
     }
 
     return count
+}
+
+// Emit a complete, runnable SSG program that registers every component and
+// renders each page to a static .html file, plus sitemap.xml/robots.txt.
+//
+// Why two phases: components only exist once their compiled source RUNS (it
+// calls lumen_register_component). So we can't render in this same VM — we
+// generate a self-contained program (component registrations + a render+write
+// per page) and write it to `build_path`; the caller then runs it with the
+// prelude, which registers the components and writes the HTML. This mirrors how
+// `vn dev` generates `.lumen-build.vn` and then runs it.
+fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
+    if pages.len() == 0 {
+        throw("Lumen SSG: no .lumen files found in " + pages_dir)
+    }
+    // Create the output dir now (mkdir -p): the render program re-creates it in
+    // phase 2, but sitemap.xml/robots.txt are written below in THIS phase and
+    // would silently fail if the dir didn't exist yet.
+    let _mkdir_now = io.mkdir(out_dir)
+    // Compile every component (shared components first, then each page).
+    let compiled = []
+    let compiled_src = ""
+    let comp_dir = pages_dir + "/components"
+    let comp_files = io.list_dir(comp_dir)
+    if comp_files != null {
+        for i in 0..comp_files.len() {
+            let f = comp_files[i]
+            if f.ends_with(".lumen") {
+                let name = _lumen_pascal(f.substring(0, f.len() - 6))
+                let src = io.read_text(comp_dir + "/" + f)
+                if src != null and _lumen_list_has(compiled, name) == false {
+                    compiled_src = compiled_src + lumen_compile_source(name, src) + "\n"
+                    compiled = compiled.push(name)
+                }
+            }
+        }
+    }
+    for pi in 0..pages.len() {
+        let p = pages[pi]
+        let src = io.read_text(p.path)
+        if src != null and _lumen_list_has(compiled, p.comp) == false {
+            compiled_src = compiled_src + lumen_compile_source(p.comp, src) + "\n"
+            compiled = compiled.push(p.comp)
+        }
+    }
+
+    // Build the runnable render program. Inside the string literals, real braces
+    // for the generated code are escaped as \{ \} so they aren't interpolated.
+    let prog = "// AUTO-GENERATED Lumen SSG render program — do not edit.\n"
+    prog = prog + compiled_src + "\n"
+    prog = prog + "let _ssg_out = io.mkdir(\"" + out_dir + "\")\n"
+    let pi2 = 0
+    while pi2 < pages.len() {
+        let p = pages[pi2]
+        let full_path = out_dir + p.route
+        if p.route.ends_with("/") { full_path = full_path + "index.html" }
+        else { full_path = full_path + ".html" }
+        prog = prog + "let _c = _lumen_get_component(\"" + p.comp + "\")\n"
+        prog = prog + "if _c != null \{\n"
+        prog = prog + "    _lumen_active_child_states = \{\}\n"
+        prog = prog + "    let _st = (_c.state_fn)()\n"
+        prog = prog + "    let _html = (_c.render_fn)(_st)\n"
+        prog = prog + "    let _w = io.write_text(\"" + full_path + "\", _html)\n"
+        prog = prog + "    print(\"  rendered " + p.route + " -> " + full_path + "\")\n"
+        prog = prog + "\} else \{ print(\"  MISSING component " + p.comp + "\") \}\n"
+        pi2 = pi2 + 1
+    }
+    let _bw = io.write_text(build_path, prog)
+
+    // sitemap.xml + robots.txt need no rendering — write them now.
+    if base_url != null and base_url != "" {
+        let sitemap = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        for pi in 0..pages.len() {
+            let p = pages[pi]
+            let loc = base_url
+            if loc.ends_with("/") == false { loc = loc + "/" }
+            if p.route.len() > 1 { loc = loc + p.route.substring(1, p.route.len()) }
+            sitemap = sitemap + "  <url><loc>" + loc + "</loc></url>\n"
+        }
+        sitemap = sitemap + "</urlset>"
+        let _sm = io.write_text(out_dir + "/sitemap.xml", sitemap)
+        let _rb = io.write_text(out_dir + "/robots.txt",
+            "User-agent: *\nAllow: /\nSitemap: " + base_url + "/sitemap.xml\n")
+    }
+    return pages.len()
 }
 
 // ─── Public API (Milestone 1) ───
@@ -4215,7 +4300,11 @@ fn lumen_icon(name) {
     if name == "rocket"   { return open + "<path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\"></path><path d=\"M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\"></path>" + close }
     if name == "check"    { return open + "<polyline points=\"20 6 9 17 4 12\"></polyline>" + close }
     if name == "shield"   { return open + "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path>" + close }
-    return ""
+    // Fallback: treat any unknown name as a Material Symbols glyph. Pages that
+    // use <Feature icon="language"> etc. (Material Symbols names, not the small
+    // Feather vocabulary above) get a real icon instead of an empty string —
+    // requires the Material Symbols font link, which the site pages include.
+    return "<span class=\"material-symbols-outlined\">" + name + "</span>"
 }
 
 // Register the built-in vocabulary. Runs at prelude load, so every template

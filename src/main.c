@@ -436,6 +436,72 @@ static int lumen_build(const char *pages, const char *out, const char *port) {
     return r;
 }
 
+/* Recursively copy a directory tree (used to drop public/ into the static
+ * export output). Creates dst dirs as needed. */
+static void lumen_copy_tree(const char *src, const char *dst) {
+    ensure_dir(dst);
+    DIR *d = opendir(src);
+    if (!d) return;
+    struct dirent *e;
+    while ((e = readdir(d)) != NULL) {
+        if (strcmp(e->d_name, ".") == 0 || strcmp(e->d_name, "..") == 0) continue;
+        char sp[2048], dp[2048];
+        snprintf(sp, sizeof(sp), "%s/%s", src, e->d_name);
+        snprintf(dp, sizeof(dp), "%s/%s", dst, e->d_name);
+        struct stat st;
+        if (stat(sp, &st) != 0) continue;
+        if (S_ISDIR(st.st_mode)) {
+            lumen_copy_tree(sp, dp);
+        } else if (S_ISREG(st.st_mode)) {
+            copy_file(sp, dp);
+        }
+    }
+    closedir(d);
+}
+
+/* `vn lumen export` — static-site generation. The language has no eval, so
+ * (like `vn dev`) this is two passes: (1) run a bootstrap that calls the
+ * prelude's _lumen_emit_static_program() to compile every page into ONE
+ * runnable render program; (2) run that program, which registers the
+ * components and writes each page's HTML (+ sitemap.xml/robots.txt). Then
+ * copy public/ assets in so the output dir is a complete deployable site. */
+static int lumen_export(const char *pages, const char *out_dir, const char *base_url) {
+    const char *boot   = ".lumen-export-boot.vn";
+    const char *render = ".lumen-export-render.vn";
+
+    FILE *bf = fopen(boot, "wb");
+    if (!bf) { fprintf(stderr, "lumen: cannot create %s\n", boot); return 1; }
+    fprintf(bf,
+        "let _n = _lumen_emit_static_program(\"%s\", \"%s\", \"%s\", \"%s\")\n"
+        "print(\"[Kiln] static export: \" + _n + \" pages -> %s\")\n",
+        pages, out_dir, base_url ? base_url : "", render, out_dir);
+    fclose(bf);
+
+    char *bsrc = read_file_with_modules(boot);
+    if (!bsrc) { remove(boot); return 1; }
+    g_varian_script_path = boot;
+    int r = run_source(bsrc, boot);
+    free(bsrc);
+    remove(boot);
+    if (r != 0) { remove(render); return r; }
+
+    char *rsrc = read_file_with_modules(render);
+    if (!rsrc) { remove(render); return 1; }
+    g_varian_script_path = render;
+    r = run_source(rsrc, render);
+    free(rsrc);
+    remove(render);
+    if (r != 0) return r;
+
+    struct stat st_pub;
+    if (stat("public", &st_pub) == 0 && S_ISDIR(st_pub.st_mode)) {
+        printf("[Kiln] Copying public/ assets -> %s\n", out_dir);
+        lumen_copy_tree("public", out_dir);
+    }
+    printf("[Kiln] Static site ready in %s/\n", out_dir);
+    return 0;
+}
+
 /* Sum the mtimes of every .lumen file in `dir` — a cheap change fingerprint. */
 static long lumen_pages_fingerprint(const char *dir) {
     DIR *d = opendir(dir);
@@ -2375,7 +2441,13 @@ int main(int argc, char *argv[]) {
             const char *port = (argc >= 6) ? argv[5] : "8090";
             return lumen_build(argv[3], argv[4], port);
         }
-        fprintf(stderr, "Usage: %s lumen <new <name> | add <component> | dev [dir] [port] | build <dir> <out.vn> [port]>\n", argv[0]);
+        if (argc >= 3 && strcmp(argv[2], "export") == 0) {
+            const char *pages    = (argc >= 4) ? argv[3] : "pages";
+            const char *out_dir  = (argc >= 5) ? argv[4] : "dist";
+            const char *base_url = (argc >= 6) ? argv[5] : "";
+            return lumen_export(pages, out_dir, base_url);
+        }
+        fprintf(stderr, "Usage: %s lumen <new <name> | add <component> | dev [dir] [port] | build <dir> <out.vn> [port] | export [dir] [outdir] [base_url]>\n", argv[0]);
         return 1;
     }
 

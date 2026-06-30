@@ -1639,8 +1639,8 @@ fn _execute_guard_file(file_path, guard_code, req) {
     } catch e {
         print("Guard execution error on " + file_path + ":", e)
     }
-    io.remove(req_file)
-    io.remove(guard_vn_file)
+    io.delete(req_file)
+    io.delete(guard_vn_file)
     return out
 }
 

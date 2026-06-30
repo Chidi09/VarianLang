@@ -1,0 +1,4 @@
+*
+!vercel.json
+!dist
+!dist/**
