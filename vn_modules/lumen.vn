@@ -4300,7 +4300,11 @@ fn lumen_icon(name) {
     if name == "rocket"   { return open + "<path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\"></path><path d=\"M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\"></path>" + close }
     if name == "check"    { return open + "<polyline points=\"20 6 9 17 4 12\"></polyline>" + close }
     if name == "shield"   { return open + "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path>" + close }
-    return ""
+    // Fallback: treat any unknown name as a Material Symbols glyph. Pages that
+    // use <Feature icon="language"> etc. (Material Symbols names, not the small
+    // Feather vocabulary above) get a real icon instead of an empty string —
+    // requires the Material Symbols font link, which the site pages include.
+    return "<span class=\"material-symbols-outlined\">" + name + "</span>"
 }
 
 // Register the built-in vocabulary. Runs at prelude load, so every template

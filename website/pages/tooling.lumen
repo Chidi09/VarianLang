@@ -155,6 +155,12 @@
 </head>
 <body>
   <Page>
+  <div class="ambient-bg" aria-hidden="true">
+    <video autoplay muted loop playsinline poster="/aurora-bg.jpg" preload="metadata">
+      <source src="/aurora-bg.webm" type="video/webm">
+      <source src="/aurora-bg.mp4" type="video/mp4">
+    </video>
+  </div>
   <div class="container">
     <nav class="navbar">
       <a href="/" class="nav-brand">
