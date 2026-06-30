@@ -139,21 +139,46 @@
       }
       .nav-links.nav-open { display: flex; }
       .navbar { position: relative; }
+      .docs-container { flex-direction: column; padding: 0 var(--space-4); }
+      .docs-sidebar {
+        width: 100%;
+        height: auto;
+        position: static;
+        top: auto;
+        border-right: none;
+        border-bottom: 1px solid var(--border-subtle);
+        padding-top: var(--space-4);
+        margin-bottom: var(--space-6);
+      }
     }
 </style>
 </head>
 <body>
   <Page>
 
-  <Nav brand="Varian">
-      <a href="/#language">Language</a>
-      <a href="/#ecosystem">Ecosystem</a>
-      <a href="/aurora">Aurora</a>
-      <a href="/zenith">Zenith</a>
-      <a href="/lumen">Lumen</a>
-      <a href="/the_varian_book">The Book</a>
-      <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
-  </Nav>
+  <div class="container">
+    <nav class="navbar">
+      <a href="/" class="nav-brand">
+        <img src="/assets/varian-logo.png" alt="Varian" width="36" height="36">
+        <span>Varian</span>
+      </a>
+      <div class="nav-links">
+        <a href="/#language">Language</a>
+        <a href="/#ecosystem">Ecosystem</a>
+        <a href="/aurora">Aurora</a>
+        <a href="/zenith">Zenith</a>
+        <a href="/lumen">Lumen</a>
+        <a href="/the_varian_book">The Book</a>
+        <a href="https://github.com/Chidi09/VarianLang">GitHub</a>
+      </div>
+      <button id="theme-toggle" class="btn-theme-toggle" aria-label="Toggle theme">
+        <span class="material-symbols-outlined" id="theme-icon">light_mode</span>
+      </button>
+      <button id="nav-toggle" class="btn-nav-toggle" aria-label="Menu" aria-expanded="false">
+        <span class="material-symbols-outlined">menu</span>
+      </button>
+    </nav>
+  </div>
 
   <div class="docs-container">
     <aside class="docs-sidebar">
