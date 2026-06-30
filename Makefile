@@ -59,6 +59,10 @@ ifeq ($(PLATFORM),Darwin)
 endif
 ifeq ($(PLATFORM),Windows)
     DEPS_DIR ?= C:/deps
+    # Shims for POSIX headers Windows doesn't ship (e.g. sys/wait.h). Kept out
+    # of the universal -Iinclude path so they don't shadow the real system
+    # headers on Linux/macOS.
+    CFLAGS += -Iinclude/win32compat
     CFLAGS += -I$(DEPS_DIR)/include
     LDFLAGS += -L$(DEPS_DIR)/lib
     LDFLAGS += -Wl,-Bstatic -lsqlite3 -lhiredis -lffi -Wl,-Bdynamic -lws2_32 -lwinmm -lcrypt32
