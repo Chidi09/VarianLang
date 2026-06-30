@@ -8,7 +8,7 @@
 ; ── Keywords ──────────────────────────────────────────────
 [
   "let" "const" "mut" "fn" "struct" "enum" "actor" "impl" "trait" "type"
-  "pub" "test" "comptime" "async" "schema" "self"
+  "pub" "test" "comptime" "async" "schema"
 ] @keyword
 
 [
@@ -32,9 +32,7 @@
 (lambda_expression) @function
 
 (call_expression function: (identifier) @function.call)
-(call_expression
-  function: (member_expression
-    property: (identifier) @function.method))
+
 
 (dispatch_call method: (identifier) @function.method)
 
@@ -99,10 +97,9 @@
 
 ; ── Framework APIs (Zenith, Lumen, Aurora) ────────────────
 ; Zenith backend framework methods
-(call_expression
-  function: (member_expression
-    property: (identifier) @function.builtin
-    (#match? @function.builtin "^(get|post|put|delete|patch|options|head|add_middleware|serve_static|enable_docs|on_error|handle|listen|listen_cluster|listen_tls|listen_tls_cluster|register_schema)$")))
+(dispatch_call
+  method: (identifier) @function.builtin
+  (#match? @function.builtin "^(get|post|put|delete|patch|options|head|add_middleware|serve_static|enable_docs|on_error|handle|listen|listen_cluster|listen_tls|listen_tls_cluster|register_schema)$"))
 
 ; Lumen frontend framework functions
 (call_expression

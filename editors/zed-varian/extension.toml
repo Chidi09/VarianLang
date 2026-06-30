@@ -17,10 +17,10 @@ icon_themes = ["icon_themes/varian.json"]
 repository = "https://github.com/Chidi09/tree-sitter-varian"
 rev = "8a88f6edf98e6edf44a459540914a9d83be4b82f"
 
-# Declare the language server here only as a name + which languages it serves.
-# The actual command (`vn lsp`) is provided by the companion `varian-lsp`
-# Rust WASM extension (editors/zed-varian-lsp) that implements
-# zed::Extension::language_server_command.
-[language_servers.varian-lsp]
-name = "Varian LSP"
-languages = ["Varian", "Lumen"]
+# NOTE: the Varian LSP (`vn lsp`) is provided by the SEPARATE `varian-lsp`
+# extension (editors/zed-varian-lsp), which ships the Rust/WASM adapter that
+# implements zed::Extension::language_server_command. It must NOT be declared
+# here: a `[language_servers.*]` entry obligates THIS extension to implement
+# the server in Rust, but this is a pure grammar/theme/icon extension with no
+# Rust code — declaring it makes Zed fail to load the extension, so the grammar
+# never registers and syntax highlighting silently disappears.
