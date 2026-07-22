@@ -212,11 +212,26 @@ reconstructs `prev[0:s] + d + prev[len-e:]` and morphs. Invisible to authors.
 ### Client islands (M8)
 
 For a genuinely client-only widget (chart, canvas, map), add a `<client>` block of real
-browser JS. It's embedded as a `<script>` that runs once on first paint and is left
-untouched by the morph (`cloneNode`/`innerHTML` never re-run scripts). This is the *honest*
-island — real client code where you ask for it, the rest still server-driven. Lumen
-deliberately does **not** compile Varian to a browser bundle; that's exactly what
-reintroduces hydration-mismatch bugs.
+browser JS. A plain `<client>` runs once on first paint; an explicit activation policy
+can defer it until the browser can use it:
+
+```html
+<client when="idle">mountEditor()</client>
+<client when="visible" target="#map">mountMap()</client>
+<client when="media" media="(min-width: 60rem)">mountWideChart()</client>
+```
+
+`visible` observes `target`, or the preceding rendered element when omitted. `idle`
+uses `requestIdleCallback` with a timer fallback. `media` runs once when the query first
+matches. Each policy emits only its small activation wrapper; unrelated policy code is
+absent, and a component without `<client>` emits no island JavaScript. Multiple blocks
+retain independent policies. Invalid policies and missing media queries fail during
+compilation.
+
+The generated script runs once and is left untouched by morphing (`cloneNode` and
+`innerHTML` do not re-run scripts). This is the *honest* island—real client code where
+you ask for it, while the rest remains server-driven. Lumen deliberately does **not**
+compile Varian to a browser bundle; that would reintroduce hydration-mismatch bugs.
 
 ### Typed content collections
 
@@ -411,7 +426,7 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
 | Typed content | Astro collections | **Built-in** — deterministic Markdown/JSON collections validated by Varian schemas |
 | SEO metadata | next/head, react-helmet | **Built-in** — `lumen_meta()` |
-| Client islands | None / manual | **Built-in** — `<client>` blocks |
+| Client islands | None / manual | **Built-in** — exact-JS `<client>` blocks with load, idle, visible, and media activation |
 | Inline SVG icons | CDN or bundler | **Built-in** — Lucide icons, zero CDN |
 | Dark mode | Manual CSS | **Built-in** — CSS variable tokens |
 | Live reload | HMR plugin | **Built-in** — `vn dev` |

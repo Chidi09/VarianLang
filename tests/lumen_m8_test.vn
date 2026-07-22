@@ -34,3 +34,54 @@ test "a component with no <client> block compiles unchanged" {
     // No stray island script injected.
     assert_ne(code.index_of("<p>hi</p>"), -1)
 }
+
+test "idle islands emit only an idle activation wrapper" {
+    let src = "<template><canvas id=\"chart\"></canvas></template>" +
+              "<script>fn state() \{ return \{\} \}</script>" +
+              "<client when=\"idle\">window.drawChart();</client>"
+    let code = lumen_compile_source("IdleChart", src)
+    assert_ne(code.index_of("requestIdleCallback"), -1)
+    assert_ne(code.index_of("window.drawChart();"), -1)
+    assert_eq(code.index_of("IntersectionObserver"), -1)
+    assert_eq(code.index_of("matchMedia("), -1)
+}
+
+test "visible islands activate their explicit target once" {
+    let src = "<template><div id=\"map\"></div></template>" +
+              "<script>fn state() \{ return \{\} \}</script>" +
+              "<client when=\"visible\" target=\"#map\">window.mountMap();</client>"
+    let code = lumen_compile_source("Map", src)
+    assert_ne(code.index_of("IntersectionObserver"), -1)
+    assert_ne(code.index_of("document.querySelector"), -1)
+    assert_ne(code.index_of("#map"), -1)
+    assert_ne(code.index_of("o.disconnect()"), -1)
+    assert_eq(code.index_of("requestIdleCallback"), -1)
+}
+
+test "media islands wait for a matching query" {
+    let src = "<template><div id=\"wide\"></div></template>" +
+              "<script>fn state() \{ return \{\} \}</script>" +
+              "<client when=\"media\" media=\"(min-width: 60rem)\">window.mountWide();</client>"
+    let code = lumen_compile_source("Wide", src)
+    assert_ne(code.index_of("matchMedia("), -1)
+    assert_ne(code.index_of("(min-width: 60rem)"), -1)
+    assert_ne(code.index_of("removeEventListener"), -1)
+    assert_eq(code.index_of("IntersectionObserver"), -1)
+}
+
+test "multiple client blocks retain their independent activation policies" {
+    let src = "<template><div>mixed</div></template>" +
+              "<script>fn state() \{ return \{\} \}</script>" +
+              "<client>window.immediate();</client>" +
+              "<client when=\"idle\">window.later();</client>"
+    let code = lumen_compile_source("Mixed", src)
+    assert_ne(code.index_of("window.immediate();"), -1)
+    assert_ne(code.index_of("window.later();"), -1)
+    assert_ne(code.index_of("requestIdleCallback"), -1)
+}
+
+test "invalid client activation contracts fail at compile time" {
+    let base = "<template><div></div></template><script>fn state() \{ return \{\} \}</script>"
+    assert_throws(| | { lumen_compile_source("BadPolicy", base + "<client when=\"hover\">x()</client>") })
+    assert_throws(| | { lumen_compile_source("BadMedia", base + "<client when=\"media\">x()</client>") })
+}

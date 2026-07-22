@@ -936,13 +936,42 @@ fn lumen_compile_source(name, lumen_src) {
         return code
     }
 
-    // ─── M8: client islands ───
-    let client_start = lumen_src.index_of("<client>")
-    let client_end = lumen_src.index_of("</client>")
-    if client_start >= 0 and client_end > client_start {
-        let client_js = lumen_src.substring(client_start + 8, client_end)
-        client_js = _ts_strip(client_js)
-        template = template + "<script>" + client_js + "</script>"
+    // ─── Client islands ───
+    // Browser code remains explicit. Activation wrappers are emitted only for
+    // the policies an author requests; a component without <client> ships none.
+    let client_from = 0
+    while true {
+        let client_start = lumen_src.index_of("<client", client_from)
+        if client_start < 0 { break }
+        let client_open_end = lumen_src.index_of(">", client_start + 7)
+        if client_open_end < 0 { throw("Lumen: unclosed <client> opening tag in " + name) }
+        let client_end = lumen_src.index_of("</client>", client_open_end + 1)
+        if client_end < 0 { throw("Lumen: missing </client> in " + name) }
+
+        let client_attrs = lumen_src.substring(client_start + 7, client_open_end)
+        let attrs = _lumen_parse_attrs(client_attrs)
+        let policy = _validate.get_field(attrs, "when")
+        if policy == null or policy == "" { policy = "load" }
+        let client_js = _ts_strip(lumen_src.substring(client_open_end + 1, client_end))
+        let activated = client_js
+
+        if policy == "idle" {
+            activated = "(function(f)\{(window.requestIdleCallback||function(g)\{setTimeout(g,1)\})(f)\})(function()\{" + client_js + "\n\});"
+        } else if policy == "visible" {
+            let target = _validate.get_field(attrs, "target")
+            let target_js = "null"
+            if target != null and target != "" { target_js = json_encode(target) }
+            activated = "(function(s,f)\{var q=" + target_js + ",t=q?document.querySelector(q):s.previousElementSibling;while(t&&(t.tagName==='SCRIPT'||t.tagName==='STYLE'))t=t.previousElementSibling;if(!t||!window.IntersectionObserver)\{f();return\}var o=new IntersectionObserver(function(e)\{if(e[0]&&e[0].isIntersecting)\{o.disconnect();f()\}\});o.observe(t)\})(document.currentScript,function()\{" + client_js + "\n\});"
+        } else if policy == "media" {
+            let query = _validate.get_field(attrs, "media")
+            if query == null or query == "" { throw("Lumen: <client when=\"media\"> requires a media query in " + name) }
+            activated = "(function(f)\{var m=matchMedia(" + json_encode(query) + ");if(m.matches)\{f();return\}var h=function(e)\{if(e.matches)\{m.removeEventListener('change',h);f()\}\};m.addEventListener('change',h)\})(function()\{" + client_js + "\n\});"
+        } else if policy != "load" {
+            throw("Lumen: unknown client activation policy '" + policy + "' in " + name)
+        }
+
+        template = template + "<script>" + activated + "</script>"
+        client_from = client_end + 9
     }
 
     let escaped_tpl = _lumen_escape_string(template)
