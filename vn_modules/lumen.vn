@@ -3665,6 +3665,111 @@ fn lumen_view_transition(name, content) {
     return "<div style=\"view-transition-name:" + safe_name + "\">" + content + "</div>"
 }
 
+fn _lumen_locale_match(tag, supported) {
+    if tag == null { return null }
+    let wanted = _sanitize.trim("" + tag).lower()
+    if wanted == "" or wanted == "*" { return null }
+    for i in 0..supported.len() {
+        if ("" + supported[i]).lower() == wanted { return supported[i] }
+    }
+    let dash = wanted.index_of("-")
+    let base = wanted
+    if dash >= 0 { base = wanted.substring(0, dash) }
+    for i in 0..supported.len() {
+        let candidate = ("" + supported[i]).lower()
+        if candidate == base or candidate.starts_with(base + "-") { return supported[i] }
+    }
+    return null
+}
+
+fn _lumen_accept_language(raw, supported) {
+    if raw == null or raw == "" { return null }
+    let choices = ("" + raw).split(",")
+    let selected = null
+    let selected_q = -1.0
+    for i in 0..choices.len() {
+        let parts = choices[i].split(";")
+        let tag = _sanitize.trim(parts[0])
+        let quality = 1.0
+        for j in 1..parts.len() {
+            let option = _sanitize.trim(parts[j])
+            if option.starts_with("q=") {
+                try { quality = json_decode(option.substring(2, option.len())) } catch e { quality = 0.0 }
+                let quality_type = type_of(quality)
+                if (quality_type != "int" and quality_type != "float") or quality < 0 or quality > 1 {
+                    quality = 0.0
+                }
+            }
+        }
+        if quality > selected_q and quality > 0 {
+            let matched = _lumen_locale_match(tag, supported)
+            if matched != null { selected = matched; selected_q = quality }
+        }
+    }
+    return selected
+}
+
+// Resolve locale routing without browser state. Explicit /locale paths win,
+// then Accept-Language quality negotiation, then the configured fallback.
+// `path` is stripped of the locale prefix for application route matching.
+fn lumen_locale_route(req, supported, default_locale) {
+    if type_of(supported) != "array" or supported.len() == 0 {
+        throw "lumen_locale_route: supported must be a non-empty locale array"
+    }
+    if _lumen_locale_match(default_locale, supported) == null {
+        throw "lumen_locale_route: default locale must be supported"
+    }
+    let path = _validate.get_field(req, "path")
+    if path == null or path == "" { path = "/" }
+    let segments = path.split("/")
+    let explicit = null
+    if segments.len() > 1 { explicit = _lumen_locale_match(segments[1], supported) }
+    let locale = explicit
+    let source = "path"
+    let route_path = path
+    if explicit != null {
+        let cut = 1 + segments[1].len()
+        route_path = path.substring(cut, path.len())
+        if route_path == "" { route_path = "/" }
+    } else {
+        source = "header"
+        let headers = _validate.get_field(req, "headers")
+        let raw = null
+        if headers != null {
+            raw = _validate.get_field(headers, "accept_language")
+            if raw == null { raw = _validate.get_field(headers, "accept-language") }
+        }
+        locale = _lumen_accept_language(raw, supported)
+        if locale == null { locale = default_locale; source = "default" }
+    }
+    let canonical_path = "/" + locale
+    if route_path != "/" { canonical_path = canonical_path + route_path }
+    return http.create_struct(
+        ["locale", "path", "canonical_path", "prefixed", "source"],
+        [locale, route_path, canonical_path, explicit != null, source]
+    )
+}
+
+// Emit SEO alternate links for every locale plus x-default. Pure HTML, zero JS.
+fn lumen_locale_alternates(path, supported, default_locale) {
+    if _lumen_locale_match(default_locale, supported) == null {
+        throw "lumen_locale_alternates: default locale must be supported"
+    }
+    let route_path = "" + path
+    if route_path == "" { route_path = "/" }
+    if route_path.starts_with("/") == false { route_path = "/" + route_path }
+    let out = ""
+    for i in 0..supported.len() {
+        let locale = "" + supported[i]
+        let href = "/" + locale
+        if route_path != "/" { href = href + route_path }
+        out = out + "<link rel=\"alternate\" hreflang=\"" + _sanitize.escape_html(locale) + "\" href=\"" + _sanitize.escape_html(href) + "\">"
+    }
+    let fallback = "/" + default_locale
+    if route_path != "/" { fallback = fallback + route_path }
+    return out + "<link rel=\"alternate\" hreflang=\"x-default\" href=\"" + _sanitize.escape_html(fallback) + "\">"
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }

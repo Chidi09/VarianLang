@@ -337,6 +337,16 @@ for reduced-motion users, and ships zero JavaScript. Wrap matching elements on t
 old and new documents with `lumen_view_transition(name, content)` for validated,
 stable shared-element names.
 
+### Locale-aware routing
+
+`lumen_locale_route(request, supported, default_locale)` resolves an explicit
+`/locale/...` prefix first, negotiates weighted `Accept-Language` preferences
+second (including regional-to-base fallback), and otherwise selects the declared
+default. It returns the locale, prefix-free application path, canonical localized
+path, and selection source. `lumen_locale_alternates(path, supported, default)`
+emits deterministic `hreflang` and `x-default` links. Both are entirely server-side
+and add zero browser JavaScript.
+
 ### Lumen UI (Component Registry)
 
 Lumen ships with an official, Shadcn-inspired component registry called **Lumen UI**. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in `pages/components/`) so you fully own and customize the code.
