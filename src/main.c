@@ -605,12 +605,38 @@ static int lumen_export(const char *pages, const char *out_dir, const char *base
     remove(boot);
     if (r != 0) { remove(render); return r; }
 
-    char *rsrc = read_file_with_modules(render);
-    if (!rsrc) { remove(render); return 1; }
-    g_varian_script_path = render;
-    r = run_source(rsrc, render, g_prelude_line_count);
-    free(rsrc);
+    char count_path[2100];
+    snprintf(count_path, sizeof(count_path), "%s.count", render);
+    char *count_text = read_file(count_path);
+    int page_count = count_text ? atoi(count_text) : 0;
+    free(count_text);
+    if (page_count < 1 || page_count > 100000) {
+        fprintf(stderr, "lumen: invalid static render page count\n");
+        remove(render); remove(count_path);
+        return 1;
+    }
+    for (int page = 0; page < page_count; page++) {
+        char index[32];
+        snprintf(index, sizeof(index), "%d", page);
+#ifdef _WIN32
+        _putenv_s("LUMEN_SSG_PAGE", index);
+#else
+        setenv("LUMEN_SSG_PAGE", index, 1);
+#endif
+        char *rsrc = read_file_with_modules(render);
+        if (!rsrc) { r = 1; break; }
+        g_varian_script_path = render;
+        r = run_source(rsrc, render, g_prelude_line_count);
+        free(rsrc);
+        if (r != 0) break;
+    }
+#ifdef _WIN32
+    _putenv_s("LUMEN_SSG_PAGE", "");
+#else
+    unsetenv("LUMEN_SSG_PAGE");
+#endif
     remove(render);
+    remove(count_path);
     if (r != 0) return r;
 
     struct stat st_pub;

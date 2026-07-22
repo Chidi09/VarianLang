@@ -405,12 +405,14 @@ fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
     let prog = "// AUTO-GENERATED Lumen SSG render program — do not edit.\n"
     prog = prog + compiled_src + "\n"
     prog = prog + "let _ssg_out = io.mkdir(\"" + _lumen_generated_string(out_dir) + "\")\n"
+    prog = prog + "let _ssg_page = env.get(\"LUMEN_SSG_PAGE\")\n"
     let pi2 = 0
     while pi2 < pages.len() {
         let p = pages[pi2]
         let full_path = out_dir + p.route
         if p.route.ends_with("/") { full_path = full_path + "index.html" }
         else { full_path = full_path + ".html" }
+        prog = prog + "if _ssg_page == \"" + pi2 + "\" \{\n"
         prog = prog + "let _c = _lumen_get_component(\"" + _lumen_generated_string(p.comp) + "\")\n"
         prog = prog + "if _c != null \{\n"
         prog = prog + "    _lumen_active_child_states = \{\}\n"
@@ -419,9 +421,11 @@ fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
         prog = prog + "    let _w = io.write_text(\"" + _lumen_generated_string(full_path) + "\", _html)\n"
         prog = prog + "    print(\"  rendered " + _lumen_generated_string(p.route) + " -> " + _lumen_generated_string(full_path) + "\")\n"
         prog = prog + "\} else \{ print(\"  MISSING component " + _lumen_generated_string(p.comp) + "\") \}\n"
+        prog = prog + "\}\n"
         pi2 = pi2 + 1
     }
     let _bw = io.write_text(build_path, prog)
+    let _cw = io.write_text(build_path + ".count", "" + pages.len())
 
     // sitemap.xml + robots.txt need no rendering — write them now.
     if base_url != null and base_url != "" {

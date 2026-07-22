@@ -62,6 +62,22 @@ test "Aurora route builds compose into an existing Zenith app" {
     assert_eq(generated.index_of("http.serve("), -1)
 }
 
+test "static render program selects one page per bounded VM pass" {
+    let dir = "_lumen_ssg_bounded_pages"
+    io.mkdir(dir)
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Home</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/about.lumen",
+        "<template><h1>About</h1></template><script>fn state() \{ return \{\} \}</script>")
+    let render = "/tmp/lumen-ssg-bounded-render.vn"
+    assert_eq(_lumen_emit_static_program(dir, "/tmp/lumen-ssg-bounded-out", "https://example.test", render), 2)
+    let program = io.read_text(render)
+    assert_ne(program.index_of("env.get(\"LUMEN_SSG_PAGE\")"), -1)
+    assert_ne(program.index_of("if _ssg_page == \"0\""), -1)
+    assert_ne(program.index_of("if _ssg_page == \"1\""), -1)
+    assert_eq(io.read_text(render + ".count"), "2")
+}
+
 test "route collector inherits nested layout loading and error boundaries" {
     let dir = "_lumen_router_boundaries"
     io.mkdir(dir)

@@ -112,6 +112,10 @@ adding a new concept users have to learn?
     local URL, file→route table, ready-in-N-ms) and hot-reload status lines; colour gated on TTY
     + `NO_COLOR`; the framework's own `http.serve` line is suppressed via `LUMEN_QUIET` so the
     console is the single banner. In `src/main.c` (`lumen_print_banner`, `lumen_dev`).
+  - **Bounded static export (DONE).** The two-phase SSG program selects one page per fresh VM
+    pass, so rendered component graphs do not accumulate across a large site. The 12-page
+    Varian documentation export completes under the same memory pressure that killed the old
+    all-pages-in-one-pass renderer, while sitemap and asset output remain deterministic.
   - `.lumen` tooling, automatic form CSRF wiring, and strict live-socket Origin enforcement
     are built and covered. The formatter preserves attributed/multiple client islands and is
     idempotence-tested; the linter checks template/style/server-script/client regions.
