@@ -205,7 +205,7 @@
   </a>
 </div>
 
-<Text>Lumen's ambient facade (<code>vn_modules/lumen.vn</code>) loads modular browser-action, content, security, routing/build, and server-resource package files alongside <code>vn_modules/lumen_ui.vn</code>. It compiles <code>.lumen</code> files into component structs via <code>lumen_compile_source</code>. Generated routes serve server HTML and focused DOM patches; static pages ship no browser action code, while interactive pages emit only the actions their markup selects. The facade keeps <code>lumen_component</code>, <code>lumen_mount</code>, and the Lumen UI registry available without application imports.</Text>
+<Text>Lumen's ambient facade (<code>vn_modules/lumen.vn</code>) loads modular browser-action, content, security, routing/build, forms, and server-resource package files alongside <code>vn_modules/lumen_ui.vn</code>. It compiles <code>.lumen</code> files into component structs via <code>lumen_compile_source</code>. Generated routes serve server HTML and focused DOM patches; static pages ship no browser action code, while interactive pages emit only the actions their markup selects. The facade keeps <code>lumen_component</code>, <code>lumen_mount</code>, and the Lumen UI registry available without application imports.</Text>
 
 <!-- ============ WHY LUMEN ============ -->
 <Heading size="2xl" as="h2"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Lumen?</Heading>

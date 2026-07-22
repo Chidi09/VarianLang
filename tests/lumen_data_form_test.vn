@@ -89,10 +89,29 @@ test "live component submit accepts authoritative FormData payload" {
     assert_eq(captured[0].role, "author")
 }
 
+test "authoritative FormData clears an omitted unchecked checkbox" {
+    let captured = [null]
+    let component = data_form_component({
+        fields: _form_fields(),
+        initial_values: { name: "Ada", age: 20, role: "reader", terms: true },
+        on_submit: |values| { captured[0] = values; return { ok: true } }
+    })
+    let state = (component.state_fn)()
+    let result = lumen_test_event(component, state, "df_submit", {
+        name: "Ada", age: "20", role: "reader"
+    })
+    assert_eq(result.state.status, "saved")
+    assert_eq(captured[0].terms, false)
+}
+
 test "form contracts reject duplicate unsafe and unsupported fields" {
     assert_throws(| | { data_form({ fields: [{ name: "bad-name" }] }) })
     assert_throws(| | { data_form({ fields: [{ name: "same" }, { name: "same" }] }) })
     assert_throws(| | { data_form({ fields: [{ name: "avatar", "type": "file" }] }) })
     assert_throws(| | { data_form({ fields: [{ name: "role", "type": "select" }] }) })
     assert_throws(| | { data_form({ fields: [], method: "delete" }) })
+    assert_throws(| | { data_form({ fields: "not-an-array" }) })
+    assert_throws(| | { data_form({ fields: [], enhance: "yes" }) })
+    assert_throws(| | { data_form({ fields: [], initial_values: [] }) })
+    assert_throws(| | { data_form({ fields: [], action: "/save\nInjected" }) })
 }
