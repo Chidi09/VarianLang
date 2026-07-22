@@ -1,0 +1,34 @@
+// Public-facade compatibility tests for the request subsystem extracted to
+// vn_modules/zenith/request.vn. Applications continue to receive these helpers
+// from the ambient Zenith facade; no explicit package import is required.
+
+test "Zenith request package decodes query and form components" {
+    let req = http.create_struct(["query", "body"], ["q=hello+world&tag=a%2Fb", "name=Ada+Lovelace"])
+    assert_eq(query(req, "q", "missing"), "hello world")
+    assert_eq(query(req, "tag", "missing"), "a/b")
+    assert_eq(form(req, "name", "missing"), "Ada Lovelace")
+    assert_eq(query(req, "absent", "fallback"), "fallback")
+}
+
+test "Zenith request package preserves malformed escapes" {
+    assert_eq(url_decode("a%2Zb%"), "a%2Zb%")
+}
+
+test "Zenith request package parses cookies and defaults missing values" {
+    let headers = http.create_struct(["cookie"], ["session=abc%20123; theme=dark"])
+    let req = http.create_struct(["headers"], [headers])
+    assert_eq(cookie(req, "session", "missing"), "abc 123")
+    assert_eq(cookie(req, "theme", "missing"), "dark")
+    assert_eq(cookie(req, "absent", "fallback"), "fallback")
+}
+
+test "Zenith request package exposes multipart fields and files" {
+    let file = http.create_struct(["fieldname", "filename", "content_type", "data"], ["avatar", "ada.png", "image/png", [1, 2, 3]])
+    let fields = http.create_struct(["caption"], ["portrait"])
+    let multipart = http.create_struct(["fields", "files"], [fields, [file]])
+    let req = http.create_struct(["_multipart"], [multipart])
+    assert_eq(form_field(req, "caption", "missing"), "portrait")
+    assert_eq(uploaded_files(req).len(), 1)
+    assert_eq(uploaded_file(req, "avatar").filename, "ada.png")
+    assert_eq(uploaded_file(req, "missing"), null)
+}

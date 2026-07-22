@@ -230,8 +230,8 @@
       <!-- Stats band -->
       <div class="stat-band">
         <div class="stat-item">
-          <div class="stat-number">428/428</div>
-          <div class="stat-label">Tests passing</div>
+          <div class="stat-number">Regression-tested</div>
+          <div class="stat-label">Full suite passing</div>
         </div>
         <div class="stat-item">
           <div class="stat-number">~10.5k</div>
