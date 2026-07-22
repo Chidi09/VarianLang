@@ -1,0 +1,52 @@
+fn _assert_module(name, marker) {
+    let js = _lumen_module(name)
+    assert_ne(js, "")
+    assert_ne(js.index_of(marker), -1)
+}
+
+test "pure browser modules are implemented" {
+    _assert_module("clipboard", "navigator.clipboard")
+    _assert_module("focus", "data-lumen-focus")
+    _assert_module("scroll", "scrollIntoView")
+    _assert_module("persist", "localStorage")
+    _assert_module("time", "RelativeTimeFormat")
+    _assert_module("media", "IntersectionObserver")
+    _assert_module("window", "prefers-color-scheme")
+    _assert_module("nav", "history.pushState")
+    _assert_module("transition", "requestAnimationFrame")
+    _assert_module("anchor", "getBoundingClientRect")
+    _assert_module("toast", "__lumen_toast")
+    _assert_module("key", "data-lumen-key")
+}
+
+test "presentation-only toggle module is implemented" {
+    _assert_module("toggle", "aria-expanded")
+}
+
+test "directive scanner tree-shakes and deduplicates modules" {
+    let tpl = "<time data-lumen-time=\"relative\"></time>" +
+              "<input data-lumen-persist=\"draft\">" +
+              "<a data-lumen-nav href=\"/next\">Next</a>" +
+              "<time data-lumen-time=\"countdown\"></time>"
+    let mods = _lumen_scan_directives(tpl)
+    assert_eq(mods.len(), 3)
+    assert_eq(mods[0], "persist")
+    assert_eq(mods[1], "time")
+    assert_eq(mods[2], "nav")
+}
+
+test "core-only pages do not ship optional modules" {
+    let mods = _lumen_scan_directives("<button data-lumen-click=\"save\">Save</button>")
+    assert_eq(mods.len(), 0)
+    let js = _lumen_client_js_with_manifest(mods)
+    assert_eq(js.index_of("navigator.clipboard"), -1)
+    assert_eq(js.index_of("RelativeTimeFormat"), -1)
+}
+
+test "selected manifest ships only selected modules" {
+    let js = _lumen_client_js_with_manifest(["persist", "time"])
+    assert_ne(js.index_of("localStorage"), -1)
+    assert_ne(js.index_of("RelativeTimeFormat"), -1)
+    assert_eq(js.index_of("navigator.clipboard"), -1)
+    assert_eq(js.index_of("history.pushState"), -1)
+}

@@ -4420,6 +4420,30 @@ fn _lumen_module(name) {
     if name == "key" {
         return "document.addEventListener('keydown',function(e)\{var el=document.querySelector('[data-lumen-key]');if(!el)return;var map=el.getAttribute('data-lumen-key');var pairs=map.split(',');for(var i=0;i<pairs.length;i++)\{var kv=pairs[i].trim().split(':');if(kv.length!==2)continue;var k=kv[0].trim(),h=kv[1].trim();if((e.key||e.code)===k)\{var msg=JSON.stringify(\{t:'event',h:h,v:null\});if(window.__lumen_ws&&window.__lumen_ws.readyState===1)window.__lumen_ws.send(msg)\}\}\})"
     }
+    if name == "persist" {
+        return "(function()\{function S(el)\{var raw=el.getAttribute('data-lumen-persist')||'',ss=raw.indexOf('session:')===0,k=ss?raw.slice(8):raw,st=ss?sessionStorage:localStorage;if(!k)return;var old=st.getItem(k);if(old!==null)\{if(el.type==='checkbox')el.checked=old==='true';else if('value'in el)el.value=old\}function save()\{st.setItem(k,el.type==='checkbox'?String(el.checked):el.value)\}el.addEventListener('input',save);el.addEventListener('change',save)\}document.querySelectorAll('[data-lumen-persist]').forEach(S)\})()"
+    }
+    if name == "time" {
+        return "(function()\{function tick()\{document.querySelectorAll('[data-lumen-time]').forEach(function(el)\{var mode=el.getAttribute('data-lumen-time'),raw=el.getAttribute('datetime')||el.getAttribute('data-time'),at=Date.parse(raw);if(!isFinite(at))return;var d=Math.round((at-Date.now())/1000),n=Math.abs(d),u=n<60?'second':n<3600?'minute':n<86400?'hour':'day',q=u==='second'?n:u==='minute'?Math.round(n/60):u==='hour'?Math.round(n/3600):Math.round(n/86400);if(mode==='countdown')el.textContent=d<=0?'0s':q+(u==='second'?'s':u==='minute'?'m':u==='hour'?'h':'d');else if(typeof Intl!=='undefined'&&Intl.RelativeTimeFormat)el.textContent=new Intl.RelativeTimeFormat(undefined,\{numeric:'auto'\}).format(d<0?-q:q,u)\})\}tick();setInterval(tick,1000)\})()"
+    }
+    if name == "media" {
+        return "(function()\{document.querySelectorAll('[data-lumen-media]').forEach(function(el)\{var m=el.getAttribute('data-lumen-media');if(m==='lazy')el.loading='lazy';if(m==='autoplay'&&'play'in el&&typeof IntersectionObserver!=='undefined')new IntersectionObserver(function(es)\{es.forEach(function(e)\{if(e.isIntersecting)el.play().catch(function()\{\});else el.pause()\})\}).observe(el);if(m==='lightbox')el.addEventListener('click',function()\{var o=document.createElement('div'),c=el.cloneNode(true);o.setAttribute('role','dialog');o.setAttribute('aria-modal','true');o.style.cssText='position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:rgba(0,0,0,.85)';c.style.maxWidth='95vw';c.style.maxHeight='95vh';o.appendChild(c);o.onclick=function()\{o.remove()\};document.body.appendChild(o)\})\})\})()"
+    }
+    if name == "window" {
+        return "(function()\{function U()\{document.querySelectorAll('[data-lumen-window]').forEach(function(el)\{var m=el.getAttribute('data-lumen-window');if(m==='online')\{el.classList.toggle('lumen-online',navigator.onLine);el.classList.toggle('lumen-offline',!navigator.onLine)\}if(m==='theme')el.classList.toggle('lumen-dark',matchMedia('(prefers-color-scheme: dark)').matches);if(m==='resize')\{el.style.setProperty('--lumen-window-width',innerWidth+'px');el.style.setProperty('--lumen-window-height',innerHeight+'px')\}\})\}addEventListener('online',U);addEventListener('offline',U);addEventListener('resize',U);if(typeof matchMedia!=='undefined')matchMedia('(prefers-color-scheme: dark)').addEventListener('change',U);U()\})()"
+    }
+    if name == "nav" {
+        return "document.addEventListener('click',function(e)\{var a=e.target.closest&&e.target.closest('a[data-lumen-nav]');if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target||a.origin!==location.origin)return;e.preventDefault();history.pushState(\{\},'',a.href);var w=window.__lumen_ws;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:'lumen_nav',v:location.pathname+location.search\}))\})"
+    }
+    if name == "toggle" {
+        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-toggle]');if(!el)return;var s=el.getAttribute('data-lumen-toggle'),t=document.querySelector(s);if(!t)return;var hidden=!t.hidden;t.hidden=hidden;el.setAttribute('aria-expanded',String(!hidden))\})"
+    }
+    if name == "transition" {
+        return "(function()\{function E(el)\{var n=el.getAttribute('data-lumen-transition');el.classList.add(n+'-enter');requestAnimationFrame(function()\{requestAnimationFrame(function()\{el.classList.add(n+'-enter-active');el.classList.remove(n+'-enter')\})\});el.addEventListener('transitionend',function()\{el.classList.remove(n+'-enter-active')\},\{once:true\})\}document.querySelectorAll('[data-lumen-transition]').forEach(E)\})()"
+    }
+    if name == "anchor" {
+        return "(function()\{function P(el)\{var s=el.getAttribute('data-lumen-anchor'),a=document.querySelector(s);if(!a)return;function u()\{var r=a.getBoundingClientRect();el.style.position='fixed';el.style.left=r.left+'px';el.style.top=r.bottom+'px'\}u();addEventListener('resize',u);addEventListener('scroll',u,true)\}document.querySelectorAll('[data-lumen-anchor]').forEach(P)\})()"
+    }
     return ""
 }
 
@@ -4433,8 +4457,13 @@ fn _lumen_scan_directives(tpl) {
     // unscanned attr would silently never load its module). data-lumen-mod
     // (debounce/throttle/key modifiers) is handled by core, so it has no module.
     let attrs = ["data-lumen-copy", "data-lumen-focus", "data-lumen-scroll",
-                 "data-lumen-toast", "data-lumen-key"]
-    let names = ["clipboard", "focus", "scroll", "toast", "key"]
+                 "data-lumen-toast", "data-lumen-key", "data-lumen-persist",
+                 "data-lumen-time", "data-lumen-media", "data-lumen-window",
+                 "data-lumen-nav", "data-lumen-toggle", "data-lumen-transition",
+                 "data-lumen-anchor"]
+    let names = ["clipboard", "focus", "scroll", "toast", "key", "persist",
+                 "time", "media", "window", "nav", "toggle", "transition",
+                 "anchor"]
     for i in 0..attrs.len() {
         if tpl.index_of(attrs[i]) >= 0 {
             if _lumen_list_has(mods, names[i]) == false {

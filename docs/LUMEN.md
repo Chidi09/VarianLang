@@ -120,7 +120,9 @@ fn signup(s, values) {
 
 Repeated names become arrays. Checkbox changes send booleans, radio changes send the
 selected value, and multi-select changes send arrays. File fields send metadata
-(`name`, `size`, and MIME `type`); file bytes use Lumen's upload path rather than JSON.
+(`name`, `size`, and MIME `type`) rather than bytes. For file contents, submit a standard
+`multipart/form-data` request to a Zenith route and read it with `uploaded_file()` or
+`uploaded_files()`; WebSocket event JSON is intentionally not a file transport.
 
 The scaffolded starter wires `{{ color }}` into an SVG `fill`, so each click recomputes a
 colour server-side and Lumen morphs **only the changed attribute** into the DOM — a live
@@ -208,6 +210,33 @@ untouched by the morph (`cloneNode`/`innerHTML` never re-run scripts). This is t
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does **not** compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.
+
+### Opt-in browser directives
+
+LumenJS includes a curated set of browser-only behaviors. The compiler scans each
+template and emits only the modules that page uses; a page without these attributes
+ships the transport core alone. These directives contain presentation or browser API
+work only—validation, authorization, data fetching, prices, filtering, and other
+business rules still belong in Varian handlers.
+
+| Attribute | Browser behavior |
+| --- | --- |
+| `data-lumen-copy="text"` or a selector | Copy text through the Clipboard API |
+| `data-lumen-focus` | Focus an element when the page mounts |
+| `data-lumen-scroll="into-view\|lock\|restore"` | Browser scroll management |
+| `data-lumen-persist="key"` | Persist a control in local storage; prefix with `session:` for session storage |
+| `data-lumen-time="relative\|countdown"` | Update relative times or countdowns locally |
+| `data-lumen-media="lazy\|lightbox\|autoplay"` | Browser-native media behavior |
+| `data-lumen-window="online\|theme\|resize"` | Reflect browser/window state as classes or CSS variables |
+| `data-lumen-nav` | Same-origin History API navigation, reported to the server |
+| `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
+| `data-lumen-anchor="#target"` | Position a popover below an anchor element |
+| `data-lumen-toast` | Include the ephemeral toast presenter |
+| `data-lumen-key="Escape:close"` | Map browser key presses to Varian handlers |
+| `data-lumen-toggle="#target"` | Presentation-only local show/hide with `aria-expanded` |
+
+`data-lumen-toggle` must never hide protected data or enforce permissions; it is a
+latency escape hatch for tabs, accordions, and menus. Server state remains authoritative.
 
 ### Lumen UI (Component Registry)
 
