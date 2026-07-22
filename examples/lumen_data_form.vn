@@ -13,9 +13,9 @@ let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY
 let signup = data_form_component({
     submit_label: "Create account",
     fields: [
-        { name: "name",  label: "Name",  type: "text",  placeholder: "Ada Lovelace",
+        { name: "name",  label: "Name",  "type": "text",  placeholder: "Ada Lovelace",
           validator: validate.str().min(2) },
-        { name: "email", label: "Email", type: "email", placeholder: "ada@example.com",
+        { name: "email", label: "Email", "type": "email", placeholder: "ada@example.com",
           validator: validate.str().is_email() }
     ],
     on_submit: |values| {
