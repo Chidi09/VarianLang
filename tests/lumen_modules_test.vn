@@ -24,7 +24,7 @@ test "pure browser modules are implemented" {
     _assert_module("time", "RelativeTimeFormat")
     _assert_module("media", "IntersectionObserver")
     _assert_module("window", "prefers-color-scheme")
-    _assert_module("nav", "history.pushState")
+    _assert_module("nav", "a.pathname+a.search")
     _assert_module("prefetch", "rel='prefetch'")
     _assert_module("offline", "serviceWorker.register")
     _assert_module("transition", "requestAnimationFrame")
@@ -68,6 +68,14 @@ test "scroll restoration is route aware and initialized without a click" {
     assert_ne(js.index_of("popstate"), -1)
     assert_ne(js.index_of("a[data-lumen-nav]"), -1)
     assert_eq(_lumen_scan_directives("<main>plain</main>").len(), 0)
+}
+
+test "navigation reports intent without intercepting resilient links" {
+    let js = _lumen_module("nav")
+    assert_ne(js.index_of("window.__lumen_push('lumen_nav'"), -1)
+    assert_eq(js.index_of("preventDefault"), -1)
+    assert_eq(js.index_of("history.pushState"), -1)
+    assert_eq(js.index_of("popstate"), -1)
 }
 
 test "directive scanner tree-shakes and deduplicates modules" {

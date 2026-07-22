@@ -307,7 +307,7 @@ business rules still belong in Varian handlers.
 | `data-lumen-time="relative\|countdown"` | Update relative times or countdowns locally |
 | `data-lumen-media="lazy\|lightbox\|autoplay"` | Browser-native media behavior |
 | `data-lumen-window="online\|theme\|resize"` | Reflect browser/window state as classes or CSS variables |
-| `data-lumen-nav` | Same-origin History API navigation, reported to the server |
+| `data-lumen-nav` | Native same-origin navigation with best-effort intent reporting to the server; links are never intercepted |
 | `data-lumen-prefetch` | Prefetch a same-origin document on pointer or keyboard intent without intercepting navigation |
 | `data-lumen-offline` | Register an explicitly mounted Lumen service worker |
 | `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
