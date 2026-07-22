@@ -221,8 +221,8 @@
     <Feature icon="description" title="OpenAPI for free">
       Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.
     </Feature>
-    <Feature icon="track_changes" title="Multi-core by default">
-      Zenith clusters across threads with independent VMs, SIMD request parsing, writev single-syscall responses, and per-request arena allocation. Lumen's WebSocket event loop handles concurrent connections without threads.
+    <Feature icon="track_changes" title="Explicit multi-core scaling">
+      Zenith's <code>listen_cluster</code> uses isolated OS worker processes around a shared listener; each worker retains Varian's cooperative single-threaded scheduler. Plain HTTP responses use <code>writev</code>, and request structs use per-task arena allocation.
     </Feature>
   </Grid>
 </Card>
@@ -443,7 +443,7 @@ app.<span class="token-function">listen</span>(c.port)
 </div>
 
 <Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">shopping_cart</span> Session-backed Cart — <code>lib/api_cart.vn</code></Heading>
-<p>The cart is stored in the session cookie. <code>session_get</code> and <code>session_set</code> handle JWT-signed cookie encryption automatically.</p>
+<p>The cart is stored in a JWT-signed session cookie. <code>session_get</code> rejects tampering, but the payload is not encrypted and remains readable by the client, so secrets must never be stored in it.</p>
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">lib/api_cart.vn</span></div>

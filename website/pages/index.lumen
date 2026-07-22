@@ -285,7 +285,7 @@
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">bolt</span></div>
             <h3>Fast</h3>
-            <p>Compiled bytecode VM with computed-goto dispatch. ~10,500 req/s single-process Zenith, ~35k multi-worker. No hidden allocation tax.</p>
+            <p>Compiled bytecode VM with computed-goto dispatch. The checked-in plaintext benchmark records about 10,500 req/s for one Zenith process; multi-core scaling is explicit through isolated worker processes.</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">hub</span></div>
@@ -605,7 +605,7 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
             </p>
 
             <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
-              Database drivers for SQLite and Postgres are <strong style="color:var(--text-primary);">built into the runtime</strong> — no ORM dependency, no <code>package.json</code>, no <code>Cargo.toml</code>. Every route handler returns a <code>Response</code> struct. ~10,500 req/s single-process, ~35k with multiple workers. No async/await ceremony — Varian's green threads handle concurrency transparently.
+              Database drivers for SQLite and Postgres are <strong style="color:var(--text-primary);">built into the runtime</strong> — no ORM dependency, no <code>package.json</code>, no <code>Cargo.toml</code>. Every route handler normalizes to a <code>Response</code>. The checked-in plaintext benchmark records about 10,500 req/s for one process; <code>listen_cluster</code> provides explicit multi-process scaling.
             </p>
 
             <div class="code-block" style="margin-bottom:var(--space-4);">

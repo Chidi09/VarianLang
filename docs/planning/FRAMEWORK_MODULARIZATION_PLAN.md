@@ -22,7 +22,10 @@ To ensure zero risk to existing application code and compiler semantics, Phase 1
 3. **Zenith Request Boundary** (`vn_modules/zenith/request.vn`):
    - Extracted URL/query/form/cookie parsing and multipart upload accessors.
    - Preserves the ambient facade API and has direct package-boundary coverage.
-4. **Lumen Content & Security Leaves** (`vn_modules/lumen/content.vn`, `security.vn`):
+4. **Zenith Response Boundary** (`vn_modules/zenith/response.vn`):
+   - Extracted headers, cookies, redirects, typed bodies, and signed sessions.
+   - Preserves streaming lifecycle, rejects response-splitting inputs, and owns response facade tests.
+5. **Lumen Content & Security Leaves** (`vn_modules/lumen/content.vn`, `security.vn`):
    - Typed content collection discovery and live-channel origin policy are independently owned.
    - The facade retains ambient compatibility while mounts consume the extracted security policy.
 
@@ -122,7 +125,7 @@ tests assert exact module sets and byte ceilings.
 
 1. **Leaf extraction (complete here)**: one behavior-preserving leaf per framework, facades unchanged.
 2. **Action registry**: centralize Lumen detection/dependency metadata and enforce exact output budgets.
-3. **Framework seams**: request parsing is extracted; continue with response helpers, routing, forms, and resources one coherent subsystem at a time, with public facade compatibility tests.
+3. **Framework seams**: request and response boundaries are extracted; continue with routing, forms, and resources one coherent subsystem at a time, with public facade compatibility tests.
 4. **Opt-in prelude**: design explicit framework imports before claiming compiler parse-time improvements; retain a documented compatibility mode.
 5. **Conformance applications**: static content, authenticated CRUD, streaming UI, and large data examples exercised in real browsers.
 
@@ -132,5 +135,6 @@ The modularization is validated via the test suite:
 - `tests/lumen_directive_package_test.vn`: Validates package boundary, stability, and catalog scanner parity.
 - `tests/zenith_template_test.vn`: Validates template interpolation, control flow, raw rendering, and response wrapping.
 - `tests/zenith_request_package_test.vn`: Validates the extracted request parser/accessor boundary through the unchanged ambient API.
+- `tests/zenith_response_package_test.vn`: Validates response construction, stream preservation, and injection defenses through the unchanged ambient API.
 - `tests/lumen_modules_test.vn`: Validates directive scanning and tree-shaking.
 - `./vn test tests/`: Full regression suite execution across all system tests.

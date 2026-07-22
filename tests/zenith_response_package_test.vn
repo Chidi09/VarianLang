@@ -1,0 +1,47 @@
+// Facade and security contracts for vn_modules/zenith/response.vn.
+
+test "Zenith response package preserves stream lifecycle while adding headers" {
+    let streaming_resp = http.create_struct(
+        ["status", "body", "content_type", "_keep_open"],
+        [200, "", "text/event-stream", true]
+    )
+    let resp = with_header(streaming_resp, "X-Trace", "abc")
+    assert_eq(resp.status, 200)
+    assert_eq(resp._keep_open, true)
+    assert_eq(_validate.get_field(resp.headers, "X_Trace"), "abc")
+}
+
+test "Zenith response package builds safe cookies and redirects" {
+    let opts = http.create_struct(
+        ["path", "http_only", "secure", "same_site", "max_age"],
+        ["/account", true, true, "Strict", 60]
+    )
+    let cookie_value = build_cookie("session", "abc", opts)
+    assert_eq(cookie_value, "session=abc; Path=/account; Max-Age=60; SameSite=Strict; HttpOnly; Secure")
+    let moved = redirect_with("/new", 308)
+    assert_eq(moved.status, 308)
+    assert_eq(_validate.get_field(moved.headers, "Location"), "/new")
+}
+
+test "Zenith response package rejects response splitting inputs" {
+    let resp = http.create_struct(
+        ["status", "body", "content_type", "_keep_open"],
+        [200, "ok", "text/plain", false]
+    )
+    assert_throws(| | { with_header(resp, "X-Test", "safe\r\nInjected: yes") })
+    assert_throws(| | { with_header(resp, "Bad Header", "value") })
+    assert_throws(| | { build_cookie("session", "x; Admin=true", null) })
+    assert_throws(| | { build_cookie("bad name", "x", null) })
+    assert_throws(| | { build_cookie("session", "x", http.create_struct(["same_site"], ["Anything"])) })
+    assert_throws(| | { redirect_with("/safe\nInjected: yes", 302) })
+    assert_throws(| | { redirect_with("/safe", 200) })
+}
+
+test "Zenith response package exposes documented HTML and JSON helpers" {
+    let html = html_response("<h1>OK</h1>")
+    assert_eq(html.status, 200)
+    assert_eq(html.content_type, "text/html")
+    assert_eq(html.body, "<h1>OK</h1>")
+    assert_eq(html_response_with("missing", 404).status, 404)
+    assert_eq(json_response(http.create_struct(["ok"], [true]), 201).status, 201)
+}

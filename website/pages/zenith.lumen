@@ -206,7 +206,7 @@
   </a>
 </div>
 
-<p>Zenith (<code>vn_modules/zenith.vn</code>) and Meridian, the comptime ORM (<code>vn_modules/db.vn</code>) are Varian source files — not native C modules. Every file under <code>vn_modules/</code> is automatically concatenated as a prelude when you run your program, so <code>ZenithApp</code>, <code>new_app()</code>, etc. are always in scope — <strong>no <code>import</code> needed</strong>.</p>
+<p>Zenith's public facade (<code>vn_modules/zenith.vn</code>) and Meridian (<code>vn_modules/db.vn</code>) are Varian source files rather than native C modules. Top-level module files form the ambient prelude; the Zenith facade explicitly loads its modular request, response, and template package files, so <code>ZenithApp</code>, <code>new_app()</code>, and the helper APIs remain in scope without application imports.</p>
 
 <!-- ============ WHY ZENITH ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Zenith?</h2>
@@ -232,8 +232,8 @@
     <Feature icon="package_2" title="Deploys as one binary">
       <code>vn build --release</code> produces a single hardened executable. No runtime to install, no lockfile to reconcile, no "works on my machine."
     </Feature>
-    <Feature icon="track_changes" title="Multi-core out the box">
-      Clusters across threads with independent VMs, SIMD parsing, <code>writev</code> single-syscall responses, and a per-request arena that skips GC entirely.
+    <Feature icon="track_changes" title="Explicit multi-core scaling">
+      <code>listen_cluster</code> forks isolated worker processes around a shared listener. Each worker keeps the cooperative scheduler single-threaded, while plain HTTP responses use <code>writev</code> and request structs use per-task arenas.
     </Feature>
     <Feature icon="code" title="Python escape hatch">
       Anything not built in (S3, niche SDKs) is one <code>python.run()</code> call away. "Batteries included" never becomes "stuck when you need something exotic."
