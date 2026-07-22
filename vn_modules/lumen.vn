@@ -3643,11 +3643,41 @@ fn _lumen_validate_stream_chunks(chunks) {
     if kind != "array" and kind != "tuple" { throw("Lumen stream chunks must be an array") }
     for i in 0..chunks.len() {
         let chunk_kind = type_of(chunks[i])
-        if chunk_kind != "string" and chunk_kind != "function" and chunk_kind != "closure" {
-            throw("Lumen stream chunks must be strings or zero-argument functions")
+        let is_deferred = chunk_kind == "struct" and _validate.get_field(chunks[i], "_lumen_deferred") == true
+        if chunk_kind != "string" and chunk_kind != "function" and chunk_kind != "closure" and is_deferred == false {
+            throw("Lumen stream chunks must be strings, zero-argument functions, or lumen_defer boundaries")
         }
     }
     return chunks
+}
+
+fn _lumen_defer_id_valid(id) {
+    if type_of(id) != "string" or id == "" or id.len() > 96 { return false }
+    let allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:"
+    for i in 0..id.len() {
+        if allowed.index_of(id.substring(i, i + 1)) < 0 { return false }
+    }
+    return true
+}
+
+fn lumen_defer(id, fallback_html, resolver, error_html) {
+    if _lumen_defer_id_valid(id) == false { throw("Lumen deferred boundary id is invalid") }
+    if type_of(fallback_html) != "string" { throw("Lumen deferred fallback must be HTML text") }
+    if error_html != null and type_of(error_html) != "string" { throw("Lumen deferred error fallback must be HTML text") }
+    let resolver_kind = type_of(resolver)
+    if resolver_kind != "function" and resolver_kind != "closure" { throw("Lumen deferred resolver must be a function") }
+    return http.create_struct(
+        ["_lumen_deferred", "id", "fallback", "resolve", "error"],
+        [true, id, fallback_html, resolver, error_html]
+    )
+}
+
+fn _lumen_stream_document_tail_index(html) {
+    let body = html.index_of("</body>")
+    let doc = html.index_of("</html>")
+    if body >= 0 and doc >= 0 and doc < body { return doc }
+    if body >= 0 { return body }
+    return doc
 }
 
 fn lumen_stream_html(chunks, headers) {
@@ -3655,12 +3685,46 @@ fn lumen_stream_html(chunks, headers) {
     if headers == null { headers = http.create_struct([], []) }
     if type_of(headers) != "struct" { throw("Lumen stream headers must be a struct") }
     return stream_response(200, "text/html; charset=utf-8", headers, |stream| {
+        let deferred = []
+        let defer_runtime_sent = false
+        let document_tail = ""
         for i in 0..chunks.len() {
             let chunk = chunks[i]
-            if type_of(chunk) != "string" { chunk = chunk() }
-            if type_of(chunk) != "string" { throw("Lumen stream functions must return strings") }
-            stream = stream.write(chunk)
+            if type_of(chunk) == "struct" and _validate.get_field(chunk, "_lumen_deferred") == true {
+                if defer_runtime_sent == false {
+                    stream = stream.write("<script>" + _lumen_module("defer") + "</script>")
+                    defer_runtime_sent = true
+                }
+                let id = _validate.get_field(chunk, "id")
+                stream = stream.write("<lumen-defer data-lumen-defer=\"" + _sanitize.escape_html(id) + "\" aria-busy=\"true\" style=\"display:contents\">" + _validate.get_field(chunk, "fallback") + "</lumen-defer>")
+                deferred = deferred.push(chunk)
+            } else {
+                if type_of(chunk) != "string" { chunk = chunk() }
+                if type_of(chunk) != "string" { throw("Lumen stream functions must return strings") }
+                if i == chunks.len() - 1 {
+                    let tail_at = _lumen_stream_document_tail_index(chunk)
+                    if tail_at >= 0 {
+                        document_tail = chunk.substring(tail_at, chunk.len())
+                        chunk = chunk.substring(0, tail_at)
+                    }
+                }
+                stream = stream.write(chunk)
+            }
         }
+        for i in 0..deferred.len() {
+            let boundary = deferred[i]
+            let resolved = null
+            try { resolved = (_validate.get_field(boundary, "resolve"))() } catch e {
+                resolved = _validate.get_field(boundary, "error")
+            }
+            if resolved != null {
+                if type_of(resolved) != "string" { throw("Lumen deferred resolvers must return HTML text") }
+                stream = stream.write("<template data-lumen-defer-result=\"" + _sanitize.escape_html(_validate.get_field(boundary, "id")) + "\">" + resolved + "</template>")
+            } else {
+                stream = stream.write("<template data-lumen-defer-result=\"" + _sanitize.escape_html(_validate.get_field(boundary, "id")) + "\" data-lumen-defer-keep></template>")
+            }
+        }
+        if document_tail != "" { stream = stream.write(document_tail) }
         return stream
     })
 }

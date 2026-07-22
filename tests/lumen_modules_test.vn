@@ -26,11 +26,20 @@ test "pure browser modules are implemented" {
     _assert_module("window", "prefers-color-scheme")
     _assert_module("nav", "history.pushState")
     _assert_module("transition", "requestAnimationFrame")
+    _assert_module("defer", "data-lumen-defer-result")
     _assert_module("anchor", "getBoundingClientRect")
     _assert_module("inview", "intersectionRatio")
     _assert_module("sortable", "data-lumen-sort-item")
     _assert_module("toast", "__lumen_toast")
     _assert_module("key", "data-lumen-key")
+}
+
+test "deferred replacement action is emitted only for its marker" {
+    assert_eq(_lumen_action_list_has(_lumen_scan_directives("<main>static</main>"), "defer"), false)
+    let actions = _lumen_scan_directives("<lumen-defer data-lumen-defer=\"report\"></lumen-defer>")
+    assert_eq(_lumen_action_list_has(actions, "defer"), true)
+    let js = _lumen_client_js_with_manifest(actions)
+    assert_ne(js.index_of("data-lumen-defer-result"), -1)
 }
 
 test "core capability scanner selects interaction and virtual table actions" {

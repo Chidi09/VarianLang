@@ -43,6 +43,7 @@ fn _lumen_action_registry() {
         _lumen_action("nav", ["data-lumen-nav"], ["event-bridge"]),
         _lumen_action("toggle", ["data-lumen-toggle"], []),
         _lumen_action("transition", ["data-lumen-transition"], []),
+        _lumen_action("defer", ["data-lumen-defer"], []),
         _lumen_action("anchor", ["data-lumen-anchor"], []),
         _lumen_action("inview", ["data-lumen-inview"], ["event-bridge"]),
         _lumen_action("sortable", ["data-lumen-sortable"], ["event-bridge"])
@@ -150,6 +151,9 @@ fn _lumen_module(name) {
     }
     if name == "transition" {
         return "(function()\{function E(el)\{var n=el.getAttribute('data-lumen-transition');el.classList.add(n+'-enter');requestAnimationFrame(function()\{requestAnimationFrame(function()\{el.classList.add(n+'-enter-active');el.classList.remove(n+'-enter')\})\});el.addEventListener('transitionend',function()\{el.classList.remove(n+'-enter-active')\},\{once:true\})\}document.querySelectorAll('[data-lumen-transition]').forEach(E)\})()"
+    }
+    if name == "defer" {
+        return "(function()\{function R(t)\{var i=t.getAttribute('data-lumen-defer-result'),a=document.querySelectorAll('[data-lumen-defer]'),e=null;for(var j=0;j<a.length;j++)if(a[j].getAttribute('data-lumen-defer')===i)\{e=a[j];break\}if(e)\{if(t.hasAttribute('data-lumen-defer-keep'))e.setAttribute('aria-busy','false');else e.replaceWith(t.content);t.remove()\}\}new MutationObserver(function(ms)\{ms.forEach(function(m)\{m.addedNodes.forEach(function(n)\{if(n.nodeType!==1)return;if(n.matches&&n.matches('[data-lumen-defer-result]'))R(n);if(n.querySelectorAll)n.querySelectorAll('[data-lumen-defer-result]').forEach(R)\})\})\}).observe(document.documentElement,\{childList:true,subtree:true\});document.querySelectorAll('[data-lumen-defer-result]').forEach(R)\})()"
     }
     if name == "anchor" {
         return "(function()\{function P(el)\{var s=el.getAttribute('data-lumen-anchor'),a=document.querySelector(s);if(!a)return;function u()\{var r=a.getBoundingClientRect();el.style.position='fixed';el.style.left=r.left+'px';el.style.top=r.bottom+'px'\}u();addEventListener('resize',u);addEventListener('scroll',u,true)\}document.querySelectorAll('[data-lumen-anchor]').forEach(P)\})()"

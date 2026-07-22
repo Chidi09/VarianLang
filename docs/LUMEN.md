@@ -156,6 +156,12 @@ when its position is reached and its returned HTML becomes the next TLS-aware HT
 The primitive emits no client script, making it suitable for streamed documents and large
 server-rendered results where replacement-style fallback boundaries are unnecessary.
 
+Where a visible fallback should be replaced later, place
+`lumen_defer(id, fallback_html, resolver, error_html)` among the chunks. Lumen flushes all
+fallbacks with the surrounding document, resolves them afterward, and streams replacement
+templates as each resolver completes. Only pages using a deferred boundary receive the
+single deduplicated `defer` browser action; ordinary ordered streams remain zero-JS.
+
 ### The interactive dev console
 
 `vn dev` prints a Nuxt/Next-style console and then watches for changes:

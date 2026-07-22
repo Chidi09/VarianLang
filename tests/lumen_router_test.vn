@@ -143,3 +143,16 @@ test "stream chunks preserve ordered lazy server work without client JS" {
     assert_throws(| | { _lumen_validate_stream_chunks("not-an-array") })
     assert_throws(| | { _lumen_validate_stream_chunks([42]) })
 }
+
+test "deferred boundaries validate fallback resolver contracts" {
+    let boundary = lumen_defer("sales.summary", "<p>Loading</p>", | | { return "<p>Ready</p>" }, "<p>Failed</p>")
+    let chunks = _lumen_validate_stream_chunks(["<main>", boundary, "</main>"])
+    assert_eq(chunks.len(), 3)
+    assert_eq(boundary.id, "sales.summary")
+    assert_eq((boundary.resolve)(), "<p>Ready</p>")
+    assert_throws(| | { lumen_defer("bad id", "", | | { return "" }, null) })
+    assert_throws(| | { lumen_defer("ok", 42, | | { return "" }, null) })
+    assert_throws(| | { lumen_defer("ok", "", "not-callable", null) })
+    assert_eq(_lumen_stream_document_tail_index("<p>x</p></body></html>"), 8)
+    assert_eq(_lumen_stream_document_tail_index("<p>x</p>"), -1)
+}
