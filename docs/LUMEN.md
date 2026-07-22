@@ -147,6 +147,9 @@ then the page, so each loader can read accumulated values with `lumen_parent_dat
 Return `lumen_load(data, ["dependency:key"])` to declare stable invalidation keys;
 `lumen_load_dependencies(req)` exposes the deduplicated keys already declared by parents.
 This aggregation is server-native and adds no browser JavaScript.
+Returning `lumen_redirect(location, status)` from any layout or page loader immediately
+short-circuits descendant loaders and rendering, producing a validated 301/302/303/307/308
+response with `Location` and no client redirect script.
 Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
 successful status or a raw stack trace.
 

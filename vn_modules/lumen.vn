@@ -3664,16 +3664,29 @@ fn lumen_load(data, dependencies) {
     return http.create_struct(["_lumen_load_result", "data", "dependencies"], [true, data, clean])
 }
 
+fn lumen_redirect(location, status) {
+    if type_of(location) != "string" or location == "" or location.index_of("\r") >= 0 or location.index_of("\n") >= 0 {
+        throw("Lumen redirect location must be non-empty and contain no newlines")
+    }
+    if status != 301 and status != 302 and status != 303 and status != 307 and status != 308 {
+        throw("Lumen redirect status must be 301, 302, 303, 307, or 308")
+    }
+    return http.create_struct(["_lumen_redirect", "location", "status"], [true, location, status])
+}
+
 fn _lumen_loader_result(value) {
     if value == null { return http.create_struct(["data", "dependencies"], [http.create_struct([], []), []]) }
     if type_of(value) != "struct" { throw("Lumen load handlers must return a struct or lumen_load(...)") }
+    if _validate.get_field(value, "_lumen_redirect") == true {
+        return http.create_struct(["data", "dependencies", "redirect"], [http.create_struct([], []), [], value])
+    }
     if _validate.get_field(value, "_lumen_load_result") == true {
         return http.create_struct(
-            ["data", "dependencies"],
-            [_validate.get_field(value, "data"), _validate.get_field(value, "dependencies")]
+            ["data", "dependencies", "redirect"],
+            [_validate.get_field(value, "data"), _validate.get_field(value, "dependencies"), null]
         )
     }
-    return http.create_struct(["data", "dependencies"], [value, []])
+    return http.create_struct(["data", "dependencies", "redirect"], [value, [], null])
 }
 
 fn _lumen_merge_loader_data(state, data) {
@@ -3807,14 +3820,17 @@ fn lumen_stream_html(chunks, headers) {
 
 fn _lumen_run_loader(component, req, state, dependencies) {
     let loader = _lumen_handler(component, "load")
-    if loader == null { return http.create_struct(["state", "dependencies"], [state, dependencies]) }
+    if loader == null { return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, null]) }
     let result = _lumen_loader_result(loader(_lumen_loader_request(req, state, dependencies)))
+    if _validate.get_field(result, "redirect") != null {
+        return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, result.redirect])
+    }
     state = _lumen_merge_loader_data(state, result.data)
     for i in 0..result.dependencies.len() {
         let key = result.dependencies[i]
         if _lumen_list_has(dependencies, key) == false { dependencies = dependencies.push(key) }
     }
-    return http.create_struct(["state", "dependencies"], [state, dependencies])
+    return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, null])
 }
 
 fn _lumen_render_route(component, state, path, req) {
@@ -3825,13 +3841,19 @@ fn _lumen_render_route(component, state, path, req) {
             let loaded = _lumen_run_loader(layouts[i], req, state, dependencies)
             state = loaded.state
             dependencies = loaded.dependencies
+            if loaded.redirect != null {
+                return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, "", null, dependencies, loaded.redirect])
+            }
         }
         let loaded = _lumen_run_loader(component, req, state, dependencies)
         state = loaded.state
         dependencies = loaded.dependencies
+        if loaded.redirect != null {
+            return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, "", null, dependencies, loaded.redirect])
+        }
         _lumen_active_child_states = {}
         let html = (component.render_fn)(state)
-        return http.create_struct(["state", "html", "error", "dependencies"], [state, _lumen_apply_layouts(path, state, html), null, dependencies])
+        return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, _lumen_apply_layouts(path, state, html), null, dependencies, null])
     } catch e {
         let boundary = _lumen_get_error_for_path(path)
         if boundary == null { throw(e) }
@@ -3840,8 +3862,15 @@ fn _lumen_render_route(component, state, path, req) {
         error_state = _lumen_with_field(error_state, "error", _lumen_error_msg(e))
         error_state = _lumen_with_field(error_state, "status", 500)
         let html = (boundary.render_fn)(error_state)
-        return http.create_struct(["state", "html", "error", "dependencies"], [state, _lumen_apply_layouts(path, state, html), "" + e, []])
+        return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, _lumen_apply_layouts(path, state, html), "" + e, [], null])
     }
+}
+
+fn _lumen_redirect_response(redirect) {
+    return http.create_struct(
+        ["status", "body", "content_type", "headers"],
+        [redirect.status, "", "text/plain", http.create_struct(["Location"], [redirect.location])]
+    )
 }
 
 fn lumen_mount(app, path, component) {
@@ -3859,6 +3888,7 @@ fn lumen_mount(app, path, component) {
     let page = |req| {
         let state = (component.state_fn)()
         let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
         state = rendered.state
         let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
@@ -3908,6 +3938,7 @@ fn lumen_mount_dynamic(app, path, component, param) {
             state = _lumen_with_field(state, param, pval)
         }
         let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
         state = rendered.state
         let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
@@ -3953,6 +3984,7 @@ fn lumen_mount_data(app, path, component, provider) {
     let page = |req| {
         let state = (provider)(req)
         let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
         state = rendered.state
         let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)

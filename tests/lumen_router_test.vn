@@ -156,3 +156,29 @@ test "deferred boundaries validate fallback resolver contracts" {
     assert_eq(_lumen_stream_document_tail_index("<p>x</p></body></html>"), 8)
     assert_eq(_lumen_stream_document_tail_index("<p>x</p>"), -1)
 }
+
+test "layout redirects short circuit child loading and rendering" {
+    let child_calls = [0]
+    let layout = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<main>" + state.children + "</main>" },
+        ["load"],
+        [|req| { return lumen_redirect("/sign-in?next=%2Fprivate-unique", 303) }]
+    )
+    let page = lumen_component(
+        | | { return {} },
+        |state| { child_calls[0] = child_calls[0] + 100; return "<p>private</p>" },
+        ["load"],
+        [|req| { child_calls[0] = child_calls[0] + 1; return {} }]
+    )
+    lumen_register_component("PrivateUniqueLayout", layout)
+    let app = new_app()
+    lumen_mount(app, "/private-unique", page)
+    let response = app.handle(http.test_request("GET", "/private-unique", ""))
+    assert_eq(response.status, 303)
+    assert_eq(response.body, "")
+    assert_eq(_validate.get_field(response.headers, "Location"), "/sign-in?next=%2Fprivate-unique")
+    assert_eq(child_calls[0], 0)
+    assert_throws(| | { lumen_redirect("/bad\nheader", 302) })
+    assert_throws(| | { lumen_redirect("/bad-status", 304) })
+}
