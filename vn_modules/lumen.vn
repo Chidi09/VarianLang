@@ -3569,21 +3569,98 @@ fn _lumen_apply_layouts(path, state, inner) {
     return html
 }
 
+// Explicit server-loader result. Plain structs remain valid loader data; use
+// this wrapper only when the loader also wants to declare invalidation keys.
+// The private marker avoids reserving ordinary application field names.
+fn lumen_load(data, dependencies) {
+    if data == null { data = http.create_struct([], []) }
+    if dependencies == null { dependencies = [] }
+    if type_of(data) != "struct" { throw("Lumen load data must be a struct") }
+    if type_of(dependencies) != "array" and type_of(dependencies) != "tuple" {
+        throw("Lumen load dependencies must be an array")
+    }
+    let clean = []
+    for i in 0..dependencies.len() {
+        let key = dependencies[i]
+        if type_of(key) != "string" or key == "" { throw("Lumen load dependency keys must be non-empty strings") }
+        if _lumen_list_has(clean, key) == false { clean = clean.push(key) }
+    }
+    return http.create_struct(["_lumen_load_result", "data", "dependencies"], [true, data, clean])
+}
+
+fn _lumen_loader_result(value) {
+    if value == null { return http.create_struct(["data", "dependencies"], [http.create_struct([], []), []]) }
+    if type_of(value) != "struct" { throw("Lumen load handlers must return a struct or lumen_load(...)") }
+    if _validate.get_field(value, "_lumen_load_result") == true {
+        return http.create_struct(
+            ["data", "dependencies"],
+            [_validate.get_field(value, "data"), _validate.get_field(value, "dependencies")]
+        )
+    }
+    return http.create_struct(["data", "dependencies"], [value, []])
+}
+
+fn _lumen_merge_loader_data(state, data) {
+    if data == null { return state }
+    if type_of(data) != "struct" { throw("Lumen load data must be a struct") }
+    let keys = _validate.get_keys(data)
+    for i in 0..keys.len() {
+        state = _lumen_with_field(state, keys[i], _validate.get_field(data, keys[i]))
+    }
+    return state
+}
+
+fn _lumen_loader_request(req, data, dependencies) {
+    let context = _validate.get_field(req, "context")
+    if context == null { context = http.create_struct([], []) }
+    context = context.set("lumen_data", data)
+    context = context.set("lumen_dependencies", dependencies)
+    return req.set("context", context)
+}
+
+fn lumen_parent_data(req) {
+    let context = _validate.get_field(req, "context")
+    if context == null { return http.create_struct([], []) }
+    let data = _validate.get_field(context, "lumen_data")
+    if data == null { return http.create_struct([], []) }
+    return data
+}
+
+fn lumen_load_dependencies(req) {
+    let context = _validate.get_field(req, "context")
+    if context == null { return [] }
+    let dependencies = _validate.get_field(context, "lumen_dependencies")
+    if dependencies == null { return [] }
+    return dependencies
+}
+
+fn _lumen_run_loader(component, req, state, dependencies) {
+    let loader = _lumen_handler(component, "load")
+    if loader == null { return http.create_struct(["state", "dependencies"], [state, dependencies]) }
+    let result = _lumen_loader_result(loader(_lumen_loader_request(req, state, dependencies)))
+    state = _lumen_merge_loader_data(state, result.data)
+    for i in 0..result.dependencies.len() {
+        let key = result.dependencies[i]
+        if _lumen_list_has(dependencies, key) == false { dependencies = dependencies.push(key) }
+    }
+    return http.create_struct(["state", "dependencies"], [state, dependencies])
+}
+
 fn _lumen_render_route(component, state, path, req) {
     try {
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let keys = _validate.get_keys(loaded)
-                for i in 0..keys.len() {
-                    state = _lumen_with_field(state, keys[i], _validate.get_field(loaded, keys[i]))
-                }
-            }
+        let dependencies = []
+        let layouts = _lumen_get_layouts_for_path(path)
+        for i in 0..layouts.len() {
+            let loaded = _lumen_run_loader(layouts[i], req, state, dependencies)
+            state = loaded.state
+            dependencies = loaded.dependencies
         }
+        let loaded = _lumen_run_loader(component, req, state, dependencies)
+        state = loaded.state
+        dependencies = loaded.dependencies
         _lumen_active_child_states = {}
         let html = (component.render_fn)(state)
-        return http.create_struct(["state", "html", "error"], [state, _lumen_apply_layouts(path, state, html), null])
+        return http.create_struct(["state", "html", "error", "dependencies"], [state, _lumen_apply_layouts(path, state, html), null, dependencies])
     } catch e {
         let boundary = _lumen_get_error_for_path(path)
         if boundary == null { throw(e) }
@@ -3592,7 +3669,7 @@ fn _lumen_render_route(component, state, path, req) {
         error_state = _lumen_with_field(error_state, "error", _lumen_error_msg(e))
         error_state = _lumen_with_field(error_state, "status", 500)
         let html = (boundary.render_fn)(error_state)
-        return http.create_struct(["state", "html", "error"], [state, _lumen_apply_layouts(path, state, html), "" + e])
+        return http.create_struct(["state", "html", "error", "dependencies"], [state, _lumen_apply_layouts(path, state, html), "" + e, []])
     }
 }
 

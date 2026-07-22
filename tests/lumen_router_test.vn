@@ -87,3 +87,49 @@ test "nearest error boundary catches loader failures inside layouts" {
     assert_ne(response.body.index_of("caught"), -1)
     assert_ne(response.body.index_of("loader exploded"), -1)
 }
+
+test "nested layout loaders aggregate data and dependency keys in order" {
+    let outer = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<outer>" + state.children + "</outer>" },
+        ["load"],
+        [|req| { return lumen_load({ shared: "outer", tenant: "acme" }, ["tenant:acme", "shared"]) }]
+    )
+    let inner = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<inner>" + state.children + "</inner>" },
+        ["load"],
+        [|req| {
+            let parent = lumen_parent_data(req)
+            return lumen_load({ shared: "inner", inherited: parent.tenant }, ["shared", "project:7"])
+        }]
+    )
+    let page = lumen_component(
+        | | { return { shared: "initial", tenant: "", inherited: "", seen: "" } },
+        |state| { return "<p>" + state.shared + ":" + state.inherited + ":" + state.seen + "</p>" },
+        ["load"],
+        [|req| {
+            let parent = lumen_parent_data(req)
+            let deps = lumen_load_dependencies(req)
+            return lumen_load({ shared: "page", seen: parent.shared + "/" + deps.join("|") }, ["page:1"])
+        }]
+    )
+    lumen_register_component("LoaderUniqueLayout", outer)
+    lumen_register_component("LoaderUniqueChildLayout", inner)
+    let rendered = _lumen_render_route(page, (page.state_fn)(), "/loader-unique/child", http.test_request("GET", "/loader-unique/child", ""))
+    assert_eq(rendered.state.shared, "page")
+    assert_eq(rendered.state.inherited, "acme")
+    assert_eq(rendered.state.seen, "inner/tenant:acme|shared|project:7")
+    assert_eq(rendered.dependencies.len(), 4)
+    assert_eq(rendered.dependencies[0], "tenant:acme")
+    assert_eq(rendered.dependencies[1], "shared")
+    assert_eq(rendered.dependencies[2], "project:7")
+    assert_eq(rendered.dependencies[3], "page:1")
+    assert_ne(rendered.html.index_of("<outer><inner><p>page:acme:"), -1)
+}
+
+test "loader contracts reject ambiguous data and invalid dependencies" {
+    assert_throws(| | { lumen_load({}, [""]) })
+    assert_throws(| | { lumen_load({}, "not-an-array") })
+    assert_throws(| | { _lumen_loader_result("not-a-struct") })
+}

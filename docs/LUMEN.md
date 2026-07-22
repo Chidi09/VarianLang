@@ -142,6 +142,11 @@ Directories form a route tree. `layout.lumen` wraps descendant pages (outermost 
 innermost), `loading.lumen` supplies the nearest pending view, and `error.lumen` catches
 loader or render failures at the nearest boundary while retaining parent layouts. A page
 may export a `load(req)` handler; its returned fields merge into initial server state.
+Layouts may export the same handler. Lumen runs loaders outer-layout first, then inward,
+then the page, so each loader can read accumulated values with `lumen_parent_data(req)`.
+Return `lumen_load(data, ["dependency:key"])` to declare stable invalidation keys;
+`lumen_load_dependencies(req)` exposes the deduplicated keys already declared by parents.
+This aggregation is server-native and adds no browser JavaScript.
 Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
 successful status or a raw stack trace.
 
