@@ -2572,18 +2572,21 @@ fn _df_make_setter(core, name) {
 
 fn _df_make_live_setter(cfg, name) {
     return |s, v| {
-        s.values = _tpl_bind(s.values, name, v)
         let fields = _validate.get_field(cfg, "fields")
         let validator = null
+        let field = null
         let fi = 0
         while fi < fields.len() {
             let f = fields[fi]
             if _validate.get_field(f, "name") == name {
+                field = f
                 validator = _validate.get_field(f, "validator")
                 break
             }
             fi = fi + 1
         }
+        v = _df_coerce_field(field, v)
+        s.values = _tpl_bind(s.values, name, v)
         if validator != null {
             let res = _validate_parse(validator, v)
             if res.success {
@@ -2596,33 +2599,108 @@ fn _df_make_live_setter(cfg, name) {
     }
 }
 
+fn _df_coerce_field(field, value) {
+    if field == null { return value }
+    let field_type = _validate.get_field(field, "type")
+    if field_type == "number" and type_of(value) == "string" {
+        let parsed = null
+        try { parsed = json_decode(value) } catch e { return value }
+        let parsed_type = type_of(parsed)
+        if parsed_type == "int" or parsed_type == "float" { return parsed }
+    }
+    if field_type == "checkbox" {
+        if type_of(value) == "bool" { return value }
+        if value == "true" or value == "on" or value == "1" { return true }
+        if value == "false" or value == "off" or value == "0" or value == "" { return false }
+    }
+    return value
+}
+
+fn _df_find_field(fields, name) {
+    for i in 0..fields.len() {
+        if _validate.get_field(fields[i], "name") == name { return fields[i] }
+    }
+    return null
+}
+
+fn _df_passthrough_validator() {
+    let parse = |value| { return http.create_struct(["success", "data"], [true, value]) }
+    return http.create_struct(["parse"], [parse])
+}
+
+fn _df_contract(fields) {
+    let names = []
+    let schema_keys = []
+    let schema_values = []
+    let allowed_types = ["text", "email", "password", "number", "date", "datetime-local", "search", "url", "tel", "textarea", "select", "checkbox", "hidden"]
+    for i in 0..fields.len() {
+        let field = fields[i]
+        let name = _validate.get_field(field, "name")
+        if _lumen_is_simple_ident(name) == false { throw("Lumen form: field names must be identifiers") }
+        for j in 0..names.len() { if names[j] == name { throw("Lumen form: duplicate field '" + name + "'") } }
+        let field_type = _validate.get_field(field, "type")
+        if field_type == null { field_type = "text" }
+        let valid_type = false
+        for j in 0..allowed_types.len() { if allowed_types[j] == field_type { valid_type = true } }
+        if valid_type == false { throw("Lumen form: unsupported field type '" + field_type + "'") }
+        if field_type == "select" and _validate.get_field(field, "options") == null {
+            throw("Lumen form: select field '" + name + "' requires options")
+        }
+        names = names.push(name)
+        schema_keys = schema_keys.push(name)
+        let validator = _validate.get_field(field, "validator")
+        if validator == null { validator = _df_passthrough_validator() }
+        schema_values = schema_values.push(validator)
+    }
+    return http.create_struct(["names", "schema"], [names, http.create_struct(schema_keys, schema_values)])
+}
+
+fn _df_result(result) {
+    if result == null or type_of(result) != "struct" {
+        return http.create_struct(["ok", "message", "errors"], [true, null, http.create_struct([], [])])
+    }
+    let ok = _validate.get_field(result, "ok")
+    if ok == null { ok = true }
+    let message = _validate.get_field(result, "message")
+    let errors = _validate.get_field(result, "errors")
+    if errors == null { errors = http.create_struct([], []) }
+    return http.create_struct(["ok", "message", "errors"], [ok, message, errors])
+}
+
+fn _df_submission_values(current, fields, payload) {
+    let values = current
+    if payload == null or type_of(payload) != "struct" { return values }
+    for i in 0..fields.len() {
+        let name = _validate.get_field(fields[i], "name")
+        let value = _validate.get_field(payload, name)
+        if value != null { values = _tpl_bind(values, name, _df_coerce_field(fields[i], value)) }
+    }
+    return values
+}
+
 fn data_form(opts) {
     let fields = _validate.get_field(opts, "fields")
     if fields == null { fields = [] }
     let on_submit = _validate.get_field(opts, "on_submit")
     let submit_label = _validate.get_field(opts, "submit_label")
     if submit_label == null { submit_label = "Submit" }
+    let initial_values = _validate.get_field(opts, "initial_values")
+    if initial_values == null { initial_values = http.create_struct([], []) }
+    let action = _validate.get_field(opts, "action")
+    if action == null { action = "" }
+    let method = _validate.get_field(opts, "method")
+    if method == null { method = "post" }
+    method = method.lower()
+    if method != "get" and method != "post" { throw("Lumen form: native method must be get or post") }
+    let enhance = _validate.get_field(opts, "enhance")
+    if enhance == null { enhance = true }
 
-    // field-name list + name->validator schema for lumen_form
-    let names = []
-    let sch_keys = []
-    let sch_vals = []
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let nm = _validate.get_field(f, "name")
-        names = names.push(nm)
-        let v = _validate.get_field(f, "validator")
-        if v != null {
-            sch_keys = sch_keys.push(nm)
-            sch_vals = sch_vals.push(v)
-        }
-        fi = fi + 1
-    }
-    let schema = http.create_struct(sch_keys, sch_vals)
+    let contract = _df_contract(fields)
+    let names = contract.names
+    let schema = contract.schema
     let form = lumen_form(schema)
 
-    let st_values = [http.create_struct([], [])]
+    let st_values = [initial_values]
     let st_errors = [http.create_struct([], [])]
     let st_status = ["idle"]
     let st_message = [null]
@@ -2644,6 +2722,9 @@ fn data_form(opts) {
     }
 
     let set_field = |name, val| {
+        let field = _df_find_field(fields, name)
+        if field == null { throw("Lumen form: unknown field '" + name + "'") }
+        val = _df_coerce_field(field, val)
         st_values[0] = _tpl_bind(st_values[0], name, val)
         let err = (_validate_one)(name, val)
         st_errors[0] = _tpl_bind(st_errors[0], name, err)
@@ -2657,9 +2738,15 @@ fn data_form(opts) {
             st_errors[0] = http.create_struct([], [])
             if on_submit != null {
                 try {
-                    let _ = on_submit(r.values)
-                    st_status[0] = "saved"
-                    st_message[0] = null
+                    let outcome = _df_result(on_submit(r.values))
+                    if outcome.ok {
+                        st_status[0] = "saved"
+                        st_message[0] = outcome.message
+                    } else {
+                        st_status[0] = "error"
+                        st_message[0] = outcome.message
+                        st_errors[0] = outcome.errors
+                    }
                 } catch e {
                     st_status[0] = "error"
                     st_message[0] = "" + e
@@ -2677,7 +2764,7 @@ fn data_form(opts) {
     }
 
     let reset = | | {
-        st_values[0] = http.create_struct([], [])
+        st_values[0] = initial_values
         st_errors[0] = http.create_struct([], [])
         st_status[0] = "idle"
         st_message[0] = null
@@ -2685,9 +2772,76 @@ fn data_form(opts) {
     }
 
     return http.create_struct(
-        ["fields", "names", "submit_label", "values", "errors", "status", "message", "set_field", "submit", "reset"],
-        [fields, names, submit_label, values, errors, status, message, set_field, submit, reset]
+        ["fields", "names", "submit_label", "action", "method", "enhance", "values", "errors", "status", "message", "set_field", "submit", "reset"],
+        [fields, names, submit_label, action, method, enhance, values, errors, status, message, set_field, submit, reset]
     )
+}
+
+fn _df_render_field(field, values, errors, enhance) {
+    let name = _validate.get_field(field, "name")
+    let label = _validate.get_field(field, "label")
+    if label == null { label = name }
+    let field_type = _validate.get_field(field, "type")
+    if field_type == null { field_type = "text" }
+    let placeholder = _validate.get_field(field, "placeholder")
+    if placeholder == null { placeholder = "" }
+    let hint = _validate.get_field(field, "hint")
+    let current = _validate.get_field(values, name)
+    if current == null { current = "" }
+    let error = _validate.get_field(errors, name)
+    let id = "lmn-field-" + name
+    let handler = "df_set_" + name
+    let input_event = ""
+    let change_event = ""
+    if enhance {
+        input_event = " @input=\"" + handler + "\""
+        change_event = " @change=\"" + handler + "\""
+    }
+    let required = ""
+    if _validate.get_field(field, "required") == true { required = " required" }
+    let disabled = ""
+    if _validate.get_field(field, "disabled") == true { disabled = " disabled" }
+    let autocomplete = _validate.get_field(field, "autocomplete")
+    let autocomplete_attr = ""
+    if autocomplete != null { autocomplete_attr = " autocomplete=\"" + _sanitize.escape_html("" + autocomplete) + "\"" }
+    let described = ""
+    if error != null or hint != null { described = " aria-describedby=\"" + id + "-help\"" }
+    let invalid = ""
+    if error != null { invalid = " aria-invalid=\"true\"" }
+
+    let html = "<div class=\"lmn-field\"><label class=\"lmn-field-label\" for=\"" + id + "\">" + _sanitize.escape_html("" + label) + "</label>"
+    if field_type == "textarea" {
+        html = html + "<textarea id=\"" + id + "\" name=\"" + name + "\" class=\"lmn-input\"" + input_event + " placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\"" + required + disabled + autocomplete_attr + described + invalid + ">" + _sanitize.escape_html("" + current) + "</textarea>"
+    } else if field_type == "select" {
+        html = html + "<select id=\"" + id + "\" name=\"" + name + "\" class=\"lmn-input\"" + change_event + required + disabled + described + invalid + ">"
+        let options = _validate.get_field(field, "options")
+        for i in 0..options.len() {
+            let option = options[i]
+            let value = option
+            let option_label = option
+            if type_of(option) == "struct" {
+                value = _validate.get_field(option, "value")
+                option_label = _validate.get_field(option, "label")
+                if option_label == null { option_label = value }
+            }
+            let selected = ""
+            if "" + value == "" + current { selected = " selected" }
+            html = html + "<option value=\"" + _sanitize.escape_html("" + value) + "\"" + selected + ">" + _sanitize.escape_html("" + option_label) + "</option>"
+        }
+        html = html + "</select>"
+    } else if field_type == "checkbox" {
+        let checked = ""
+        if current == true { checked = " checked" }
+        html = html + "<input id=\"" + id + "\" name=\"" + name + "\" class=\"lmn-checkbox\" type=\"checkbox\" value=\"true\"" + change_event + checked + required + disabled + described + invalid + " />"
+    } else {
+        html = html + "<input id=\"" + id + "\" name=\"" + name + "\" class=\"lmn-input\" type=\"" + field_type + "\" value=\"" + _sanitize.escape_html("" + current) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\"" + input_event + required + disabled + autocomplete_attr + described + invalid + " />"
+    }
+    if error != null {
+        html = html + "<p id=\"" + id + "-help\" class=\"lmn-field-error\">" + _sanitize.escape_html("" + error) + "</p>"
+    } else if hint != null {
+        html = html + "<p id=\"" + id + "-help\" class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
+    }
+    return html + "</div>"
 }
 
 // Render a data_form core to live HTML (label + input/textarea + inline error per
@@ -2697,37 +2851,12 @@ fn _data_form_html(core) {
     let vals = (core.values)()
     let errs = (core.errors)()
 
-    let body = "<form class=\"lmn-form\" @submit=\"df_submit\">"
+    let submit_event = ""
+    if core.enhance { submit_event = " @submit=\"df_submit\"" }
+    let body = "<form class=\"lmn-form\" method=\"" + core.method + "\" action=\"" + _sanitize.escape_html("" + core.action) + "\"" + submit_event + ">"
     let fi = 0
     while fi < fields.len() {
-        let f = fields[fi]
-        let name = _validate.get_field(f, "name")
-        let label = _validate.get_field(f, "label")
-        if label == null { label = name }
-        let ftype = _validate.get_field(f, "type")
-        if ftype == null { ftype = "text" }
-        let placeholder = _validate.get_field(f, "placeholder")
-        if placeholder == null { placeholder = "" }
-        let hint = _validate.get_field(f, "hint")
-        let cur = _validate.get_field(vals, name)
-        if cur == null { cur = "" }
-        let err = _validate.get_field(errs, name)
-
-        let hh = "df_set_" + name
-        body = body + "<div class=\"lmn-field\"><label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>"
-        if ftype == "textarea" {
-            body = body + "<textarea class=\"lmn-input\" @input=\"" + hh + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\">" + _sanitize.escape_html("" + cur) + "</textarea>"
-        } else {
-            body = body + "<input class=\"lmn-input\" type=\"" + _sanitize.escape_html("" + ftype) + "\" value=\"" + _sanitize.escape_html("" + cur) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\" @input=\"" + hh + "\" />"
-        }
-        if err != null {
-            body = body + "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + err) + "</p>"
-        } else {
-            if hint != null {
-                body = body + "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
-            }
-        }
-        body = body + "</div>"
+        body = body + _df_render_field(fields[fi], vals, errs, core.enhance)
         fi = fi + 1
     }
 
@@ -2735,7 +2864,9 @@ fn _data_form_html(core) {
     let msg = (core.message)()
     let msg_html = ""
     if st == "saved" {
-        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">Saved.</p>"
+        let success_message = "Saved."
+        if msg != null { success_message = "" + msg }
+        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">" + _sanitize.escape_html(success_message) + "</p>"
     } else {
         if st == "error" and msg != null {
             msg_html = "<p class=\"lmn-form-msg\" data-tone=\"danger\">" + _sanitize.escape_html("" + msg) + "</p>"
@@ -2760,33 +2891,30 @@ fn data_form_component(opts) {
     let on_submit = _validate.get_field(opts, "on_submit")
     let submit_label = _validate.get_field(opts, "submit_label")
     if submit_label == null { submit_label = "Submit" }
+    let initial_values = _validate.get_field(opts, "initial_values")
+    if initial_values == null { initial_values = http.create_struct([], []) }
+    let action = _validate.get_field(opts, "action")
+    if action == null { action = "" }
+    let method = _validate.get_field(opts, "method")
+    if method == null { method = "post" }
+    method = method.lower()
+    if method != "get" and method != "post" { throw("Lumen form: native method must be get or post") }
+    let enhance = _validate.get_field(opts, "enhance")
+    if enhance == null { enhance = true }
 
-    let names = []
-    let sch_keys = []
-    let sch_vals = []
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let nm = _validate.get_field(f, "name")
-        names = names.push(nm)
-        let v = _validate.get_field(f, "validator")
-        if v != null {
-            sch_keys = sch_keys.push(nm)
-            sch_vals = sch_vals.push(v)
-        }
-        fi = fi + 1
-    }
-    let schema = http.create_struct(sch_keys, sch_vals)
+    let contract = _df_contract(fields)
+    let names = contract.names
+    let schema = contract.schema
     let form = lumen_form(schema)
 
     let cfg = http.create_struct(
-        ["fields", "names", "submit_label", "on_submit", "form"],
-        [fields, names, submit_label, on_submit, form]
+        ["fields", "names", "submit_label", "on_submit", "form", "initial_values", "action", "method", "enhance"],
+        [fields, names, submit_label, on_submit, form, initial_values, action, method, enhance]
     )
 
     let state_fn = | | {
         return http.create_struct(["values", "errors", "status", "message"],
-            [http.create_struct([], []), http.create_struct([], []), "idle", null])
+            [initial_values, http.create_struct([], []), "idle", null])
     }
 
     let render_fn = |s| { return _render_df_live(cfg, s) }
@@ -2796,15 +2924,22 @@ fn data_form_component(opts) {
         |s, v| {
             let form = _validate.get_field(cfg, "form")
             let on_submit = _validate.get_field(cfg, "on_submit")
+            s.values = _df_submission_values(s.values, fields, v)
             s.status = "saving"
             let r = (form.validate)(s.values)
             if r.ok {
                 s.errors = http.create_struct([], [])
                 if on_submit != null {
                     try {
-                        let _ = on_submit(r.values)
-                        s.status = "saved"
-                        s.message = null
+                        let outcome = _df_result(on_submit(r.values))
+                        if outcome.ok {
+                            s.status = "saved"
+                            s.message = outcome.message
+                        } else {
+                            s.status = "error"
+                            s.message = outcome.message
+                            s.errors = outcome.errors
+                        }
                     } catch e {
                         s.status = "error"
                         s.message = "" + e
@@ -2821,7 +2956,7 @@ fn data_form_component(opts) {
             return s
         },
         |s, v| {
-            s.values = http.create_struct([], [])
+            s.values = initial_values
             s.errors = http.create_struct([], [])
             s.status = "idle"
             s.message = null
@@ -2844,37 +2979,15 @@ fn _render_df_live(cfg, s) {
     let vals = s.values
     let errs = s.errors
 
-    let body = "<form class=\"lmn-form\" @submit=\"df_submit\">"
+    let method = _validate.get_field(cfg, "method")
+    let action = _validate.get_field(cfg, "action")
+    let enhance = _validate.get_field(cfg, "enhance")
+    let submit_event = ""
+    if enhance { submit_event = " @submit=\"df_submit\"" }
+    let body = "<form class=\"lmn-form\" method=\"" + method + "\" action=\"" + _sanitize.escape_html("" + action) + "\"" + submit_event + ">"
     let fi = 0
     while fi < fields.len() {
-        let f = fields[fi]
-        let name = _validate.get_field(f, "name")
-        let label = _validate.get_field(f, "label")
-        if label == null { label = name }
-        let ftype = _validate.get_field(f, "type")
-        if ftype == null { ftype = "text" }
-        let placeholder = _validate.get_field(f, "placeholder")
-        if placeholder == null { placeholder = "" }
-        let hint = _validate.get_field(f, "hint")
-        let cur = _validate.get_field(vals, name)
-        if cur == null { cur = "" }
-        let err = _validate.get_field(errs, name)
-
-        let hh = "df_set_" + name
-        body = body + "<div class=\"lmn-field\"><label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>"
-        if ftype == "textarea" {
-            body = body + "<textarea class=\"lmn-input\" @input=\"" + hh + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\">" + _sanitize.escape_html("" + cur) + "</textarea>"
-        } else {
-            body = body + "<input class=\"lmn-input\" type=\"" + _sanitize.escape_html("" + ftype) + "\" value=\"" + _sanitize.escape_html("" + cur) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\" @input=\"" + hh + "\" />"
-        }
-        if err != null {
-            body = body + "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + err) + "</p>"
-        } else {
-            if hint != null {
-                body = body + "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
-            }
-        }
-        body = body + "</div>"
+        body = body + _df_render_field(fields[fi], vals, errs, enhance)
         fi = fi + 1
     }
 
@@ -2882,7 +2995,9 @@ fn _render_df_live(cfg, s) {
     let msg = s.message
     let msg_html = ""
     if st == "saved" {
-        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">Saved.</p>"
+        let success_message = "Saved."
+        if msg != null { success_message = "" + msg }
+        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">" + _sanitize.escape_html(success_message) + "</p>"
     } else {
         if st == "error" and msg != null {
             msg_html = "<p class=\"lmn-form-msg\" data-tone=\"danger\">" + _sanitize.escape_html("" + msg) + "</p>"

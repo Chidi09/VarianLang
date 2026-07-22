@@ -7,6 +7,8 @@ test "submit events serialize successful form controls" {
     assert_ne(js.index_of("f.forEach"), -1)
     assert_ne(js.index_of("hasOwnProperty.call(o,k)"), -1)
     assert_ne(js.index_of("o[k]=[o[k]]"), -1)
+    assert_ne(js.index_of("input[type=checkbox][name]"), -1)
+    assert_ne(js.index_of("o[x.name]=x.checked"), -1)
     assert_ne(js.index_of("window.__lumen_dispatch"), -1)
 }
 

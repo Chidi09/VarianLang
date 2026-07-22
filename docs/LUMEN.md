@@ -424,6 +424,7 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | Tables and virtualization | TanStack Table / Virtual | **Built-in** — headless server queries, live refetch, bounded DOM windows, optional measured scroll action |
 | Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
 | Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
+| Progressive forms | SvelteKit actions / React Hook Form | **Built-in** — native fallback, optional exact-JS enhancement, typed results and accessible controls |
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
 | Typed content | Astro collections | **Built-in** — deterministic Markdown/JSON collections validated by Varian schemas |
 | SEO metadata | next/head, react-helmet | **Built-in** — `lumen_meta()` |
