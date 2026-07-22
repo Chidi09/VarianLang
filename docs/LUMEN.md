@@ -431,6 +431,17 @@ Mount a live component on a Zenith app at `path`. Registers two routes:
 - **`GET <path>/live`** — WebSocket upgrade endpoint. Upgrades to RFC 6455, then enters
   the per-connection event loop until the socket closes.
 
+Live upgrades require the browser's `Origin` to exactly match the request scheme and
+host. This check is independent of CORS and runs before the WebSocket handshake. Behind
+a TLS-terminating reverse proxy, configure the public origin explicitly at startup:
+
+```varian
+lumen_trust_live_origins(["https://app.example.com"])
+```
+
+Origins are exact `http(s)` origins: wildcards, paths, missing/`null` origins, and
+cross-origin requests are rejected.
+
 ## Wire Protocol
 
 Both directions are JSON text frames over a single WebSocket.

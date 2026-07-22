@@ -4242,6 +4242,51 @@ fn _lumen_redirect_response(redirect) {
     )
 }
 
+// Browser WebSockets are not covered by CORS. Enforce the handshake Origin
+// before upgrading so another site cannot drive a victim's authenticated live
+// session. Explicit origins cover TLS-terminating reverse proxies.
+let _lumen_live_trusted_origins = []
+
+fn _lumen_valid_origin(origin) {
+    if origin == null or origin == "" or origin == "null" { return false }
+    let authority_at = 7
+    if origin.index_of("https://") == 0 { authority_at = 8 }
+    else if origin.index_of("http://") != 0 { return false }
+    if origin.len() <= authority_at { return false }
+    return origin.index_of("/", authority_at) < 0 and origin.index_of("\\", authority_at) < 0 and
+           origin.index_of("?") < 0 and origin.index_of("#") < 0 and
+           origin.index_of("\r") < 0 and origin.index_of("\n") < 0
+}
+
+fn lumen_trust_live_origins(origins) {
+    if type_of(origins) != "array" { throw("Lumen trusted live origins must be an array") }
+    let exact = []
+    for i in 0..origins.len() {
+        let origin = origins[i]
+        if type_of(origin) != "string" or _lumen_valid_origin(origin) == false {
+            throw("Lumen trusted live origins must be exact http(s) origins without paths")
+        }
+        if _lumen_list_has(exact, origin) == false { exact = exact.push(origin) }
+    }
+    _lumen_live_trusted_origins = exact
+    return exact
+}
+
+fn _lumen_live_origin_allowed(req) {
+    let headers = _validate.get_field(req, "headers")
+    let origin = _validate.get_field(headers, "origin")
+    if _lumen_valid_origin(origin) == false { return false }
+    if _lumen_list_has(_lumen_live_trusted_origins, origin) { return true }
+    let scheme = _validate.get_field(req, "scheme")
+    let host = _validate.get_field(req, "host")
+    if scheme == null or host == null or host == "" { return false }
+    return origin == ("" + scheme + "://" + host)
+}
+
+fn _lumen_live_origin_error() {
+    return http.create_struct(["status","body","content_type"], [403, "Forbidden: invalid WebSocket origin", "text/plain"])
+}
+
 fn lumen_mount(app, path, component) {
     let ws_path = path + "/live"
     if path == "/" { ws_path = "/live" }
@@ -4277,6 +4322,7 @@ fn lumen_mount(app, path, component) {
         return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
@@ -4327,6 +4373,7 @@ fn lumen_mount_dynamic(app, path, component, param) {
         return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
@@ -4373,6 +4420,7 @@ fn lumen_mount_data(app, path, component, provider) {
         return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
