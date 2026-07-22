@@ -67,8 +67,8 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | Content collections | Astro content schemas | Typed build-time content sources with deterministic manifests | **gap** |
 | Server endpoints and middleware | Astro/SvelteKit routes and hooks | Zenith file routes, guards, middleware, typed request context | **partial** — routing exists; lifecycle/error contracts need conformance coverage |
 | Progressive form actions | SvelteKit actions/enhance | Native form fallback plus optional Lumen event transport | **partial** — transport exists; validation/result protocol and optimistic rollback remain gaps |
-| Nested layouts and error boundaries | SvelteKit layouts/errors | Route-tree layouts with explicit loading/error states | **gap** |
-| Data loading and invalidation | SvelteKit load/dependencies | Server-first loaders with declared invalidation keys | **gap** |
+| Nested layouts and error boundaries | SvelteKit layouts/errors | Inherited `layout.lumen`, nearest `loading.lumen`, and nearest `error.lumen` with parent-layout retention | **done** — route collector/build/runtime tests |
+| Data loading and invalidation | SvelteKit load/dependencies | Page `load(req)` merges server data; keyed resources declare invalidation keys | **partial** — initial load and resource invalidation ship; dependency-key aggregation across layouts remains planned |
 | Query cache | TanStack Query | Request-keyed server resource cache with stale windows, deduplication, previous-data retention, invalidation, and metrics | **done** — `lumen_cached_resource`, focused cache tests; expiry/garbage collection remains planned |
 | Mutations | TanStack Query/Form | Server mutation lifecycle with optimistic context, rollback/success callbacks, reset, and resource invalidation | **done** — `lumen_mutation`, focused lifecycle tests; background mutation execution remains planned |
 | Router search state | TanStack Router | Schema-validated URL state and deterministic route matching | **gap** |

@@ -1023,20 +1023,24 @@ fn _lumen_route(base) {
 // Returns an array of {path, route, comp, param} structs (one per .lumen page).
 // Files named [param].lumen produce a dynamic :param route segment and set the
 // param field so lumen_mount can inject req.params[param] into component state.
-fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_layout_paths, parent_loading, parent_loading_path) {
+fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_layout_paths, parent_loading, parent_loading_path, parent_error, parent_error_path) {
     if parent_layouts == null { parent_layouts = [] }
     if parent_layout_paths == null { parent_layout_paths = [] }
     if parent_loading == null { parent_loading = "" }
     if parent_loading_path == null { parent_loading_path = "" }
+    if parent_error == null { parent_error = "" }
+    if parent_error_path == null { parent_error_path = "" }
     let names = io.list_dir(dir)
     if names == null { return [] }
     let results = []
 
     let has_layout = false
     let has_loading = false
+    let has_error = false
     for ni in 0..names.len() {
         if names[ni] == "layout.lumen" { has_layout = true }
         if names[ni] == "loading.lumen" { has_loading = true }
+        if names[ni] == "error.lumen" { has_error = true }
     }
 
     let current_layouts = parent_layouts
@@ -1055,12 +1059,19 @@ fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_l
         current_loading_path = dir + "/loading.lumen"
     }
 
+    let current_error = parent_error
+    let current_error_path = parent_error_path
+    if has_error {
+        current_error = comp_prefix + "Error"
+        current_error_path = dir + "/error.lumen"
+    }
+
     for ni in 0..names.len() {
         let name = names[ni]
-        if name == "components" or name == "layout.lumen" or name == "loading.lumen" { continue }
+        if name == "components" or name == "layout.lumen" or name == "loading.lumen" or name == "error.lumen" { continue }
         let child = dir + "/" + name
         if io.list_dir(child) != null {
-            let sub = _lumen_collect_pages(child, route_prefix + "/" + name, comp_prefix + _lumen_pascal(name), current_layouts, current_layout_paths, current_loading, current_loading_path)
+            let sub = _lumen_collect_pages(child, route_prefix + "/" + name, comp_prefix + _lumen_pascal(name), current_layouts, current_layout_paths, current_loading, current_loading_path, current_error, current_error_path)
             for si in 0..sub.len() {
                 results.append(sub[si])
             }
@@ -1084,8 +1095,8 @@ fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_l
             if param != "" { comp_base = param }
             let comp = comp_prefix + _lumen_pascal(comp_base)
             results.append(http.create_struct(
-                ["path","route","comp","param","layouts","layout_paths","loading","loading_path"],
-                [child, route, comp, param, current_layouts, current_layout_paths, current_loading, current_loading_path]
+                ["path","route","comp","param","layouts","layout_paths","loading","loading_path","error","error_path"],
+                [child, route, comp, param, current_layouts, current_layout_paths, current_loading, current_loading_path, current_error, current_error_path]
             ))
         }
     }
@@ -1163,7 +1174,7 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
 
     let mounts = ""
     let count = 0
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
     for pi in 0..pages.len() {
         let p = pages[pi]
         let src = io.read_text(p.path)
@@ -1197,6 +1208,22 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
                         let ldir = pages_dir
                         if lslash >= 0 { ldir = lod_path.substring(0, lslash) }
                         work_bases = work_bases.push(ldir)
+                    }
+                }
+            }
+            if p.error != null and p.error != "" {
+                let err_comp = p.error
+                let err_path = p.error_path
+                if _lumen_list_has(compiled, err_comp) == false {
+                    let err_src = io.read_text(err_path)
+                    if err_src != null {
+                        combined = combined + lumen_compile_source(err_comp, err_src) + "\n"
+                        compiled = compiled.push(err_comp)
+                        work_paths = work_paths.push(err_path)
+                        let eslash = err_path.last_index_of("/")
+                        let edir = pages_dir
+                        if eslash >= 0 { edir = err_path.substring(0, eslash) }
+                        work_bases = work_bases.push(edir)
                     }
                 }
             }
@@ -1282,7 +1309,7 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
 // `out_dir` — no server, no WebSocket client, just flat files. Perfect for
 // docs, blogs, and marketing pages that don't need live interactivity.
 fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
     if pages.len() == 0 {
         throw("Lumen SSG: no .lumen files found in " + pages_dir)
     }
@@ -1381,7 +1408,7 @@ fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
 // prelude, which registers the components and writes the HTML. This mirrors how
 // `vn dev` generates `.lumen-build.vn` and then runs it.
 fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
     if pages.len() == 0 {
         throw("Lumen SSG: no .lumen files found in " + pages_dir)
     }
@@ -3270,6 +3297,73 @@ fn _lumen_get_loading_for_path(path) {
     return loading
 }
 
+fn _lumen_get_error_for_path(path) {
+    let segs = path.split("/")
+    let boundary = _lumen_get_component("Error")
+    let prefix = ""
+    for i in 0..segs.len() {
+        let seg = segs[i]
+        if seg != "" {
+            let clean = seg
+            if seg.starts_with(":") { clean = seg.substring(1, seg.len()) }
+            prefix = prefix + _lumen_pascal(clean)
+            let candidate = _lumen_get_component(prefix + "Error")
+            if candidate != null { boundary = candidate }
+        }
+    }
+    return boundary
+}
+
+fn _lumen_apply_layouts(path, state, inner) {
+    let html = inner
+    let layouts = _lumen_get_layouts_for_path(path)
+    for i in 0..layouts.len() {
+        let idx = layouts.len() - 1 - i
+        let lay = layouts[idx]
+        let lay_state = state
+        if lay.state_fn != null {
+            let defaults = (lay.state_fn)()
+            let keys = _validate.get_keys(defaults)
+            for j in 0..keys.len() {
+                let key = keys[j]
+                if _validate.get_field(lay_state, key) == null {
+                    lay_state = _lumen_with_field(lay_state, key, _validate.get_field(defaults, key))
+                }
+            }
+        }
+        lay_state = _lumen_with_field(lay_state, "children", html)
+        html = (lay.render_fn)(lay_state)
+    }
+    return html
+}
+
+fn _lumen_render_route(component, state, path, req) {
+    try {
+        let loader = _lumen_handler(component, "load")
+        if loader != null {
+            let loaded = loader(req)
+            if loaded != null {
+                let keys = _validate.get_keys(loaded)
+                for i in 0..keys.len() {
+                    state = _lumen_with_field(state, keys[i], _validate.get_field(loaded, keys[i]))
+                }
+            }
+        }
+        _lumen_active_child_states = {}
+        let html = (component.render_fn)(state)
+        return http.create_struct(["state", "html", "error"], [state, _lumen_apply_layouts(path, state, html), null])
+    } catch e {
+        let boundary = _lumen_get_error_for_path(path)
+        if boundary == null { throw(e) }
+        let error_state = http.create_struct([], [])
+        if boundary.state_fn != null { error_state = (boundary.state_fn)() }
+        error_state = _lumen_with_field(error_state, "error", _lumen_error_msg(e))
+        error_state = _lumen_with_field(error_state, "status", 500)
+        let html = (boundary.render_fn)(error_state)
+        return http.create_struct(["state", "html", "error"], [state, _lumen_apply_layouts(path, state, html), "" + e])
+    }
+}
+
 fn lumen_mount(app, path, component) {
     let ws_path = path + "/live"
     if path == "/" { ws_path = "/live" }
@@ -3284,38 +3378,9 @@ fn lumen_mount(app, path, component) {
     }
     let page = |req| {
         let state = (component.state_fn)()
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3328,7 +3393,9 @@ fn lumen_mount(app, path, component) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
         let ws = upgrade_websocket(req)
@@ -3360,38 +3427,9 @@ fn lumen_mount_dynamic(app, path, component, param) {
         if pval != null {
             state = _lumen_with_field(state, param, pval)
         }
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3404,7 +3442,9 @@ fn lumen_mount_dynamic(app, path, component, param) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
         let ws = upgrade_websocket(req)
@@ -3432,38 +3472,9 @@ fn lumen_mount_data(app, path, component, provider) {
     }
     let page = |req| {
         let state = (provider)(req)
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3476,7 +3487,9 @@ fn lumen_mount_data(app, path, component, provider) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
         let ws = upgrade_websocket(req)

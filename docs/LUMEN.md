@@ -138,6 +138,13 @@ demonstration of the model with zero client code.
 | `pages/about.lumen` | `/about` |
 | `pages/user-card.lumen` | `/user-card` (component name PascalCased to `UserCard`) |
 
+Directories form a route tree. `layout.lumen` wraps descendant pages (outermost to
+innermost), `loading.lumen` supplies the nearest pending view, and `error.lumen` catches
+loader or render failures at the nearest boundary while retaining parent layouts. A page
+may export a `load(req)` handler; its returned fields merge into initial server state.
+Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
+successful status or a raw stack trace.
+
 ### The interactive dev console
 
 `vn dev` prints a Nuxt/Next-style console and then watches for changes:

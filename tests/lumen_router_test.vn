@@ -36,3 +36,54 @@ test "build_dir compiles a pages directory into one runnable app" {
     assert_ne(app.index_of("app.serve_static(\"/\", \"public\")"), -1)
     assert_ne(app.index_of("http.serve(8099"), -1)
 }
+
+test "route collector inherits nested layout loading and error boundaries" {
+    let dir = "_lumen_router_boundaries"
+    io.mkdir(dir)
+    io.mkdir(dir + "/admin")
+    io.write_text(dir + "/layout.lumen", "<template><main>\{\{ children \}\}</main></template><script>fn state() \{ return \{ children: \"\" \} \}</script>")
+    io.write_text(dir + "/loading.lumen", "<template><p>Loading</p></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/error.lumen", "<template><p>\{\{ error \}\}</p></template><script>fn state() \{ return \{ error: \"\" \} \}</script>")
+    io.write_text(dir + "/admin/error.lumen", "<template><p>Admin \{\{ error \}\}</p></template><script>fn state() \{ return \{ error: \"\" \} \}</script>")
+    io.write_text(dir + "/admin/index.lumen", "<template><h1>Admin</h1></template><script>fn state() \{ return \{\} \}</script>")
+    let pages = _lumen_collect_pages(dir, "", "", [], [], "", "", "", "")
+    assert_eq(pages.len(), 1)
+    assert_eq(pages[0].route, "/admin")
+    assert_eq(pages[0].layouts[0], "Layout")
+    assert_eq(pages[0].loading, "Loading")
+    assert_eq(pages[0].error, "AdminError")
+    let out = "_lumen_router_boundaries_app.vn"
+    assert_eq(_lumen_build_dir(dir, out, 8100), 1)
+    let generated = io.read_text(out)
+    assert_ne(generated.index_of("lumen_register_component(\"Layout\""), -1)
+    assert_ne(generated.index_of("lumen_register_component(\"Loading\""), -1)
+    assert_ne(generated.index_of("lumen_register_component(\"AdminError\""), -1)
+}
+
+test "nearest error boundary catches loader failures inside layouts" {
+    let page = lumen_component(
+        | | { return {} },
+        |state| { return "<p>never</p>" },
+        ["load"],
+        [|req| { throw("loader exploded") }]
+    )
+    let boundary = lumen_component(
+        | | { return { error: "", status: 0 } },
+        |state| { return "<section>caught " + state.error + "</section>" },
+        [], []
+    )
+    let layout = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<main>" + state.children + "</main>" },
+        [], []
+    )
+    lumen_register_component("BoundaryUniqueError", boundary)
+    lumen_register_component("BoundaryUniqueLayout", layout)
+    let app = new_app()
+    lumen_mount(app, "/boundary-unique", page)
+    let response = app.handle(http.test_request("GET", "/boundary-unique", ""))
+    assert_eq(response.status, 500)
+    assert_ne(response.body.index_of("<main>"), -1)
+    assert_ne(response.body.index_of("caught"), -1)
+    assert_ne(response.body.index_of("loader exploded"), -1)
+}
