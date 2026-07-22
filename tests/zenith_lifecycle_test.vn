@@ -1,0 +1,111 @@
+fn _zenith_request(method, path, query) {
+    return http.create_struct(
+        ["method", "path", "query", "body", "json", "headers", "scheme", "host"],
+        [method, path, query, "", null, http.create_struct([], []), "https", "example.test"]
+    )
+}
+
+test "middleware preserves request data context and onion ordering" {
+    let app = new_app()
+    let order = []
+    app.add_middleware(|req, next| {
+        order.append("outer-before")
+        let enriched = request_with_context(req, "trace_id", "trace-7")
+        let response = next(enriched)
+        order.append("outer-after")
+        return with_header(response, "X-Outer", "yes")
+    })
+    app.add_middleware(|req, next| {
+        order.append("inner-before")
+        let response = next(req)
+        order.append("inner-after")
+        return response
+    })
+    app.get("/users/:name", |req| {
+        assert_eq(req.query, "tab=profile")
+        assert_eq(req.scheme, "https")
+        assert_eq(req.host, "example.test")
+        assert_eq(request_context(req, "trace_id", "missing"), "trace-7")
+        return "hello " + req.params.name
+    }, "user", null)
+
+    let response = app.handle(_zenith_request("get", "/users/Ada%20Lovelace", "tab=profile"))
+    assert_eq(response.status, 200)
+    assert_eq(response.body, "hello Ada Lovelace")
+    assert_eq(_get_req_field(response.headers, "X_Outer", null), "yes")
+    assert_eq(order.join(","), "outer-before,inner-before,inner-after,outer-after")
+}
+
+test "middleware can short circuit without invoking an endpoint" {
+    let app = new_app()
+    let called = [false]
+    app.add_middleware(|req, next| {
+        return http.create_struct(["status", "body", "content_type"], [401, "Denied", "text/plain"])
+    })
+    app.get("/private", |req| { called[0] = true; return "secret" }, "private", null)
+    let response = app.handle(_zenith_request("GET", "/private", ""))
+    assert_eq(response.status, 401)
+    assert_eq(called[0], false)
+}
+
+test "method contracts provide HEAD OPTIONS and 405 Allow semantics" {
+    let app = new_app()
+    let middleware_calls = [0]
+    app.add_middleware(|req, next| { middleware_calls[0] = middleware_calls[0] + 1; return next(req) })
+    app.get("/items", |req| { return with_header(json_response([{ id: 1 }], 200), "X-Route", "items") }, "items", null)
+    app.head("/explicit-head", |req| { return "must be removed" }, "head", null)
+
+    let head = app.handle(_zenith_request("HEAD", "/items", ""))
+    assert_eq(head.status, 200)
+    assert_eq(head.body, "")
+    assert_eq(head.content_type, "application/json")
+    assert_eq(_get_req_field(head.headers, "X_Route", null), "items")
+    assert_eq(app.handle(_zenith_request("HEAD", "/explicit-head", "")).body, "")
+
+    let wrong = app.handle(_zenith_request("POST", "/items", ""))
+    assert_eq(wrong.status, 405)
+    assert_ne(_get_req_field(wrong.headers, "Allow", "").index_of("GET"), -1)
+    assert_ne(_get_req_field(wrong.headers, "Allow", "").index_of("HEAD"), -1)
+
+    let options = app.handle(_zenith_request("OPTIONS", "/items", ""))
+    assert_eq(options.status, 204)
+    assert_ne(_get_req_field(options.headers, "Allow", "").index_of("OPTIONS"), -1)
+    assert_eq(app.handle(_zenith_request("GET", "/missing", "")).status, 404)
+    assert_eq(middleware_calls[0], 5)
+}
+
+test "endpoint values normalize while errors stay controlled" {
+    let app = new_app()
+    app.get("/none", |req| { return null }, "none", null)
+    app.get("/data", |req| { return { answer: 42 } }, "data", null)
+    app.get("/boom", |req| { throw("database password must not leak") }, "boom", null)
+    assert_eq(app.handle(_zenith_request("GET", "/none", "")).status, 204)
+    let data = app.handle(_zenith_request("GET", "/data", ""))
+    assert_eq(data.content_type, "application/json")
+    assert_eq(json_decode(data.body).answer, 42)
+    let failed = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(failed.status, 500)
+    assert_eq(failed.body.index_of("password"), -1)
+}
+
+test "custom error handlers receive normalized request context" {
+    let app = new_app()
+    app.add_middleware(|req, next| { return next(request_with_context(req, "request_id", "r-9")) })
+    app.on_error(|info, req| {
+        return json_response({ handled: true, request_id: request_context(req, "request_id", "missing") }, 503)
+    })
+    app.get("/boom", |req| { throw("boom") }, "boom", null)
+    let response = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(response.status, 503)
+    assert_eq(json_decode(response.body).handled, true)
+    assert_eq(json_decode(response.body).request_id, "r-9")
+}
+
+test "a failing custom error handler falls back safely" {
+    let app = new_app()
+    app.on_error(|info, req| { throw("secondary secret") })
+    app.get("/boom", |req| { throw("primary secret") }, "boom", null)
+    let response = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(response.status, 500)
+    assert_eq(response.body.index_of("secret"), -1)
+}

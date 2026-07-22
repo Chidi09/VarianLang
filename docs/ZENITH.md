@@ -130,6 +130,13 @@ route handler. There is no global "current app" or "current next" slot; the whol
 is built and passed explicitly through `_run_middleware`, which is why multiple `app`
 instances don't interfere with each other.
 
+The request passed down the chain retains `method`, `path`, `query`, `body`, `json`,
+`params`, `headers`, `ip`, `scheme`, `host`, multipart state, and a request-local
+`context` struct. Use `request_with(req, key, value)` to preserve the full contract while
+changing a field, or `request_with_context(req, key, value)` / `request_context(...)` for
+trace IDs, authenticated principals, and loader dependencies. Middleware unwinds in onion
+order and can short-circuit by returning a response without calling `next`.
+
 `vn_modules/shield.vn` ships ready-made security middleware: `cors(origins, methods,
 headers)`, `csrf()`, and `rate_limit(max_reqs, window_ms)` /
 `rate_limit_redis(conn, max_reqs, window_seconds)`. Add them with `app.add_middleware(...)`.
@@ -137,6 +144,9 @@ headers)`, `csrf()`, and `rate_limit(max_reqs, window_ms)` /
 ## Global Error Handler
 
 You can define a global error handler callback on the application using `app.on_error(|err, req| { ... })`. Any uncaught error during middleware execution or inside route handlers will be caught and passed to the callback. This lets you construct custom error pages, format JSON API error responses, and log exceptions systematically.
+
+The callback receives the request at the point of failure, including middleware context.
+If the error handler itself fails, Zenith returns its non-leaking default JSON 500.
 
 ```varian
 app.on_error(|err, req| {
@@ -220,6 +230,12 @@ print(app.handle(fake_req("GET", "/api/users/2")).body)
 behavior directly (see `examples/zenith_app_test.vn`). `app.listen(port)` is the
 production entry point: it wraps `app.handle` in `http.serve(port, |req| {
 return self.handle(req) })`.
+
+Handlers may return a `Response`, a string, JSON-like struct/array/tuple, or `null`;
+Zenith normalizes these to text 200, JSON 200, or empty 204 responses before middleware
+unwinds. Dynamic parameters are percent-decoded. GET routes automatically answer HEAD
+with identical status/headers and no body. Unsupported methods return 405 with `Allow`,
+and automatic OPTIONS returns 204 with `Allow`; all still traverse middleware.
 
 ## OpenAPI docs
 

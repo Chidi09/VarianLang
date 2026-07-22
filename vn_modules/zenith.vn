@@ -319,6 +319,75 @@ fn radix_lookup(root, route_key) {
     )
 }
 
+fn request_with(req, key, value) {
+    return req.set(key, value)
+}
+
+fn request_context(req, key, default_value) {
+    let context = _get_req_field(req, "context", null)
+    if context == null { return default_value }
+    return _get_req_field(context, key, default_value)
+}
+
+fn request_with_context(req, key, value) {
+    let context = _get_req_field(req, "context", null)
+    if context == null { context = http.create_struct([], []) }
+    context = context.set(key, value)
+    return req.set("context", context)
+}
+
+fn _zenith_allowed_methods(app, path) {
+    let candidates = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+    let allowed = []
+    for i in 0..candidates.len() {
+        if radix_lookup(app.root, candidates[i] + path) != null { allowed = allowed.push(candidates[i]) }
+    }
+    let has_get = false
+    let has_head = false
+    for i in 0..allowed.len() {
+        if allowed[i] == "GET" { has_get = true }
+        if allowed[i] == "HEAD" { has_head = true }
+    }
+    if has_get and has_head == false { allowed = allowed.push("HEAD") }
+    return allowed
+}
+
+fn _zenith_normalize_response(value) {
+    let value_type = type_of(value)
+    if value == null {
+        return Response { status: 204, body: "", content_type: "text/plain", _keep_open: false }
+    }
+    if value_type == "string" {
+        return Response { status: 200, body: value, content_type: "text/plain", _keep_open: false }
+    }
+    if value_type == "struct" and _get_req_field(value, "status", null) != null { return value }
+    if value_type == "struct" or value_type == "array" or value_type == "tuple" {
+        return json_response(value, 200)
+    }
+    return Response { status: 200, body: "" + value, content_type: "text/plain", _keep_open: false }
+}
+
+fn _zenith_head_response(resp) {
+    return Response {
+        status: _get_req_field(resp, "status", 200),
+        body: "",
+        content_type: _get_req_field(resp, "content_type", "text/plain"),
+        _keep_open: false,
+        headers: _get_req_field(resp, "headers", null)
+    }
+}
+
+fn _zenith_error_response(app, error, req) {
+    let info = errors.make(errors.kind(error), "" + error, "")
+    if app.error_handler != null {
+        try { return app.error_handler(info, req) } catch handler_error {}
+    }
+    return http.create_struct(
+        ["status", "body", "content_type"],
+        [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
+    )
+}
+
 // ─── App ───
 
 struct ZenithApp {
@@ -613,8 +682,10 @@ impl ZenithApp {
     // Synchronous request handling — usable directly in tests without a
     // running socket: app.handle(fake_req).
     fn handle(self, req) {
+        let method = _get_req_field(req, "method", "GET").upper()
+        let path = _get_req_field(req, "path", "/")
         // CORS preflight
-        if self._cors_enabled and req.method == "OPTIONS" {
+        if self._cors_enabled and method == "OPTIONS" {
             let cors_resp = Response {
                 status: 204,
                 body: "",
@@ -628,16 +699,21 @@ impl ZenithApp {
             return cors_resp
         }
 
-        let m = radix_lookup(self.root, req.method + req.path)
+        let m = radix_lookup(self.root, method + path)
+        if m == null and method == "HEAD" {
+            m = radix_lookup(self.root, "GET" + path)
+        }
         let handler = null
         let params = null
         let dir_segs = []
         if m != null {
             handler = m.handler
-            params = http.create_struct(m.param_names, m.param_values)
+            let decoded_values = []
+            for i in 0..m.param_values.len() { decoded_values = decoded_values.push(url_decode(m.param_values[i])) }
+            params = http.create_struct(m.param_names, decoded_values)
             dir_segs = m.dir_segs
-        } else if req.method == "GET" {
-            handler = _static_handler_for(self, req.path)
+        } else if method == "GET" or method == "HEAD" {
+            handler = _static_handler_for(self, path)
         }
         let body = _get_req_field(req, "body", "")
         let json = _get_req_field(req, "json", null)
@@ -646,27 +722,35 @@ impl ZenithApp {
         let socket_fd = _get_req_field(req, "socket_fd", -1)
         let query = _get_req_field(req, "query", "")
         let _multipart = _get_req_field(req, "_multipart", null)
+        let scheme = _get_req_field(req, "scheme", "http")
+        let host = _get_req_field(req, "host", "localhost")
+        let context = _get_req_field(req, "context", null)
+        if context == null { context = http.create_struct([], []) }
+
+        let allowed = []
+        if handler == null { allowed = _zenith_allowed_methods(self, path) }
+        if handler == null and method == "OPTIONS" and allowed.len() > 0 {
+            allowed = allowed.push("OPTIONS")
+            let method_response = with_header(Response { status: 204, body: "", content_type: "text/plain", _keep_open: false }, "Allow", allowed.join(", "))
+            handler = |r| { return method_response }
+        } else if handler == null and allowed.len() > 0 {
+            let method_response = with_header(Response { status: 405, body: "Method Not Allowed", content_type: "text/plain", _keep_open: false }, "Allow", allowed.join(", "))
+            handler = |r| { return method_response }
+        }
 
         let req2 = http.create_struct(
-            ["method", "path", "query", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
-            [req.method, req.path, query, body, json, params, 0, handler, headers, ip, socket_fd, dir_segs, _multipart]
+            ["method", "path", "query", "body", "json", "params", "context", "scheme", "host", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
+            [method, path, query, body, json, params, context, scheme, host, 0, handler, headers, ip, socket_fd, dir_segs, _multipart]
         )
         let result = null
         try {
             result = _run_middleware(self, req2)
         } catch e {
-            print("CRASHED:", e)
-            let info = errors.make(errors.kind(e), "" + e, "")
-            if self.error_handler != null {
-                result = self.error_handler(info, req)
-            } else {
-                // default: clean JSON 500, never leak internals to the client
-                result = http.create_struct(
-                    ["status", "body", "content_type"],
-                    [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
-                )
-            }
+            result = _zenith_error_response(self, e, req2)
         }
+
+        result = _zenith_normalize_response(result)
+        if method == "HEAD" { result = _zenith_head_response(result) }
 
         // Inject CORS response headers for non-preflight responses
         if self._cors_enabled and result != null {
@@ -771,13 +855,17 @@ fn _run_middleware(app, req) {
     let idx = req._middleware_idx
     if idx < app.middlewares.len() {
         let mw = app.middlewares[idx]
-        let next_req = http.create_struct(
-            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
-            [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler, req.headers, req.ip, req.socket_fd, req.dir_segs, req._multipart]
-        )
-        return mw(next_req, |r| {
-            return _run_middleware(app, r)
-        })
+        let next_req = request_with(req, "_middleware_idx", idx + 1)
+        try {
+            return mw(next_req, |r| {
+                if _get_req_field(r, "_middleware_idx", null) == null {
+                    r = request_with(r, "_middleware_idx", idx + 1)
+                }
+                return _run_middleware(app, r)
+            })
+        } catch e {
+            return _zenith_error_response(app, e, next_req)
+        }
     } else {
         let handler = req._route_handler
         if handler == null {
@@ -802,7 +890,7 @@ fn _run_middleware(app, req) {
                 }
             }
         }
-        return handler(req)
+        try { return _zenith_normalize_response(handler(req)) } catch e { return _zenith_normalize_response(_zenith_error_response(app, e, req)) }
     }
 }
 
