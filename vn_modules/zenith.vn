@@ -474,8 +474,6 @@ fn new_app() {
         _compress_enabled: false,
         _compress_threshold: 1024
     }
-    radix_insert(app.root, "GET/admin/jobs", _admin_jobs_handler, "LiveDashboard GET")
-    radix_insert(app.root, "POST/admin/jobs", _admin_jobs_handler, "LiveDashboard POST")
     // Auto-register SEO routes
     app.get("/sitemap.xml", |req| {
         if app._sitemap_instance == null {
@@ -518,18 +516,13 @@ fn _ends_with(s, suffix) {
     return s.substring(s_len - suf_len, s_len) == suffix
 }
 
-fn _ts_strip(code) {
-    code = regex.replace("interface[[:space:]]+[^{]+\\{[^}]*\\}", code, "")
-    code = regex.replace("type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[^;]+;", code, "")
-    code = regex.replace(":[[:space:]]*(string|number|boolean|any|void|unknown)", code, "")
-    code = regex.replace("[[:space:]]+as[[:space:]]+[A-Za-z0-9_]+", code, "")
-    return code
-}
-
 fn _mime_type_for_path(path) {
     if _ends_with(path, ".html") { return "text/html" }
     if _ends_with(path, ".css") { return "text/css" }
-    if _ends_with(path, ".ts") { return "application/javascript" }
+    if (_ends_with(path, ".js") or _ends_with(path, ".mjs")) { return "application/javascript" }
+    // Zenith is a static server, not a TypeScript compiler. Serving source as
+    // text avoids telling browsers that a lossy regex rewrite is executable JS.
+    if _ends_with(path, ".ts") { return "text/plain" }
     if _ends_with(path, ".json") { return "application/json" }
     if _ends_with(path, ".png") { return "image/png" }
     if _ends_with(path, ".jpg") { return "image/jpeg" }
@@ -574,15 +567,6 @@ fn _static_handler_for(app, path) {
             }
             let full_path = mount.directory + "/" + rel
             return | req | {
-                if _ends_with(full_path, ".ts") {
-                    let ts_text = io.read_text(full_path)
-                    if ts_text == null {
-                        return Response { status: 404, body: "Not Found", content_type: "text/plain" }
-                    }
-                    let js_code = _ts_strip(ts_text)
-                    return Response { status: 200, body: js_code, content_type: "application/javascript" }
-                }
-
                 let bytes = io.read_bytes(full_path)
                 if bytes == null {
                     return Response { status: 404, body: "Not Found", content_type: "text/plain" }
@@ -647,6 +631,18 @@ impl ZenithApp {
     // assets) -- it's just a fallback when no explicit route matches.
     fn serve_static(self, prefix, directory) {
         self.static_mounts = self.static_mounts.push(StaticMount { prefix: prefix, directory: directory })
+    }
+
+    // The queue dashboard can mutate durable job state, so it must never be
+    // exposed by every app implicitly. Applications opt in after installing
+    // their authentication/authorization middleware.
+    fn enable_job_dashboard(self, endpoint) {
+        if type_of(endpoint) != "string" or !endpoint.starts_with("/") {
+            throw("job dashboard endpoint must start with /")
+        }
+        self.get(endpoint, _admin_jobs_handler, "Background job dashboard", null)
+        self.post(endpoint, _admin_jobs_handler, "Background job controls", null)
+        return self
     }
 
     fn seo_register(self, sitemap_instance) {
@@ -1246,8 +1242,9 @@ fn _execute_guard_file(file_path, guard_code, req) {
 }
 
 fn _admin_jobs_handler(req) {
-    let conn = sqlite.connect("aurora.db")
-    let action = _get_req_field(req.query, "action", "")
+    _queue_init_db()
+    let conn = _queue_db
+    let action = query(req, "action", "")
     if req.method == "POST" {
         let body_action = _get_req_field(req.json, "action", "")
         if body_action == "" { body_action = action }
@@ -1257,6 +1254,7 @@ fn _admin_jobs_handler(req) {
             sqlite.query(conn, "DELETE FROM vn_jobs")
         } else if body_action == "retry_one" {
             let jid = _get_req_field(req.json, "id", "")
+            if jid == "" { jid = query(req, "id", "") }
             if jid != "" {
                 sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE id = ?", [jid])
             }
@@ -1297,12 +1295,23 @@ fn _admin_jobs_handler(req) {
         else if job.status == "failed" { badge_color = "bg-red-500/10 text-red-500 border-red-500/20" }
         let action_btn = ""
         if job.status == "failed" {
-            action_btn = "<button onclick=\"retryJob(" + job.id + ")\" class=\"px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition\">Retry</button>"
+            action_btn = "<form method=\"post\" action=\"" + _sanitize.escape_html(req.path) + "?action=retry_one&amp;id=" + job.id + "\"><button type=\"submit\">Retry</button></form>"
         }
-        rows_html = rows_html + "<tr class=\"border-b border-slate-800 hover:bg-slate-900/50 transition-colors\"><td class=\"py-3 px-4 text-slate-400 font-mono text-xs\">#" + job.id + "</td><td class=\"py-3 px-4 font-semibold text-slate-200\">" + job.name + "</td><td class=\"py-3 px-4\"><span class=\"px-2.5 py-1 text-xs font-medium rounded-full border " + badge_color + "\">" + job.status + "</span></td><td class=\"py-3 px-4 text-slate-400 text-sm\">" + job.attempts + "</td><td class=\"py-3 px-4 text-red-400 text-xs font-mono max-w-xs truncate\" title=\"" + err_str + "\">" + err_str + "</td><td class=\"py-3 px-4 text-slate-500 text-xs\">" + job.created_at + "</td><td class=\"py-3 px-4 text-right\">" + action_btn + "</td></tr>"
+        let safe_name = _sanitize.escape_html("" + job.name)
+        let safe_status = _sanitize.escape_html("" + job.status)
+        let safe_error = _sanitize.escape_html("" + err_str)
+        let safe_created = _sanitize.escape_html("" + job.created_at)
+        rows_html = rows_html + "<tr class=\"border-b border-slate-800 hover:bg-slate-900/50 transition-colors\"><td class=\"py-3 px-4 text-slate-400 font-mono text-xs\">#" + job.id + "</td><td class=\"py-3 px-4 font-semibold text-slate-200\">" + safe_name + "</td><td class=\"py-3 px-4\"><span class=\"px-2.5 py-1 text-xs font-medium rounded-full border " + badge_color + "\">" + safe_status + "</span></td><td class=\"py-3 px-4 text-slate-400 text-sm\">" + job.attempts + "</td><td class=\"py-3 px-4 text-red-400 text-xs font-mono max-w-xs truncate\" title=\"" + safe_error + "\">" + safe_error + "</td><td class=\"py-3 px-4 text-slate-500 text-xs\">" + safe_created + "</td><td class=\"py-3 px-4 text-right\">" + action_btn + "</td></tr>"
     }
     let rows_cell = rows_html
     if rows_cell == "" { rows_cell = "<tr><td colspan=\"7\" class=\"text-center py-8 text-slate-500\">No tasks in pipeline.</td></tr>" }
-    let html = "<!DOCTYPE html><html lang=\"en\" class=\"dark\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>vn_jobs LiveDashboard</title><script src=\"https://cdn.tailwindcss.com\"></script><style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap'); body { font-family: 'Outfit', sans-serif; } pre, code { font-family: 'JetBrains Mono', monospace; }</style></head><body class=\"bg-[#0B1020] text-slate-200 min-h-screen\"><div class=\"max-w-7xl mx-auto px-4 py-8\"><div class=\"flex justify-between items-center mb-8 border-b border-slate-800 pb-6\"><div><h1 class=\"text-3xl font-bold tracking-tight text-white flex items-center gap-3\"><span class=\"h-3 w-3 rounded-full bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.5)]\"></span>vn_jobs LiveDashboard</h1><p class=\"text-slate-400 text-sm mt-1\">Stateful, SQLite-backed background task pipeline metrics</p></div><div class=\"flex gap-3\"><button onclick=\"postAction('retry_all')\" class=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition shadow-lg shadow-indigo-600/20\">Retry All Failed</button><button onclick=\"postAction('clear_all')\" class=\"px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-lg border border-slate-700 transition\">Clear Queue</button></div></div><div class=\"grid grid-cols-2 md:grid-cols-5 gap-4 mb-8\"><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Total Tasks</p><p class=\"text-3xl font-bold text-white mt-1\">" + total + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Pending</p><p class=\"text-3xl font-bold text-yellow-500 mt-1\">" + pending + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Running</p><p class=\"text-3xl font-bold text-blue-500 mt-1\">" + running + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Completed</p><p class=\"text-3xl font-bold text-green-500 mt-1\">" + completed + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Failed</p><p class=\"text-3xl font-bold text-red-500 mt-1\">" + failed + "</p></div></div><div class=\"bg-slate-900/20 border border-slate-800/80 rounded-xl overflow-hidden backdrop-blur-sm\"><div class=\"px-6 py-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/40\"><h2 class=\"font-semibold text-lg text-white\">Active Job Queue (Last 20)</h2><span class=\"text-xs text-slate-500 animate-pulse flex items-center gap-1.5\"><span class=\"h-2 w-2 rounded-full bg-green-500\"></span>Live updating</span></div><div class=\"overflow-x-auto\"><table class=\"w-full text-left border-collapse\"><thead><tr class=\"border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase bg-slate-900/10\"><th class=\"py-3 px-4\">ID</th><th class=\"py-3 px-4\">Job Type</th><th class=\"py-3 px-4\">Status</th><th class=\"py-3 px-4\">Attempts</th><th class=\"py-3 px-4\">Error Logs</th><th class=\"py-3 px-4\">Created At</th><th class=\"py-3 px-4 text-right\">Actions</th></tr></thead><tbody>" + rows_cell +"</tbody></table></div></div></div><script>function postAction(act) { fetch('/admin/jobs?action=' + act, { method: 'POST' }).then(() => location.reload()); } function retryJob(id) { fetch('/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retry_one', id: id }) }).then(() => location.reload()); } setTimeout(() => location.reload(), 3000);</script></body></html>"
-    return http.create_struct(["status", "body", "content_type"], [200, html, "text/html"])
+    // Deliberately server rendered: administrative controls do not need a
+    // client framework, third-party CDN, polling loop, or inline JavaScript.
+    let safe_path = _sanitize.escape_html(req.path)
+    let summary = "<p>Total: " + total + " · Pending: " + pending + " · Running: " + running + " · Completed: " + completed + " · Failed: " + failed + "</p>"
+    let controls = "<form method=\"post\" action=\"" + safe_path + "?action=retry_all\"><button type=\"submit\">Retry all failed</button></form>" +
+        "<form method=\"post\" action=\"" + safe_path + "?action=clear_all\"><button type=\"submit\">Clear queue</button></form>"
+    let table = "<table><thead><tr><th>ID</th><th>Job</th><th>Status</th><th>Attempts</th><th>Error</th><th>Created</th><th>Action</th></tr></thead><tbody>" + rows_cell + "</tbody></table>"
+    let safe_html = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Varian jobs</title></head><body><main><h1>Background jobs</h1>" + summary + controls + table + "</main></body></html>"
+    return http.create_struct(["status", "body", "content_type"], [200, safe_html, "text/html"])
 }

@@ -5,6 +5,20 @@ fn _zenith_request(method, path, query) {
     )
 }
 
+test "job dashboard is absent by default and explicitly opt in" {
+    let app = new_app()
+    assert_eq(app.handle(_zenith_request("GET", "/admin/jobs", "")).status, 404)
+    assert_throws(| | { app.enable_job_dashboard("admin/jobs") })
+    app.enable_job_dashboard("/operations/jobs")
+    assert_eq(app.handle(_zenith_request("GET", "/operations/jobs", "")).status, 200)
+}
+
+test "static MIME handling never pretends TypeScript is JavaScript" {
+    assert_eq(_mime_type_for_path("client.js"), "application/javascript")
+    assert_eq(_mime_type_for_path("client.mjs"), "application/javascript")
+    assert_eq(_mime_type_for_path("client.ts"), "text/plain")
+}
+
 test "middleware preserves request data context and onion ordering" {
     let app = new_app()
     let order = []

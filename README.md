@@ -147,7 +147,7 @@ Use Lumen standalone (`vn lumen new myapp`) for a frontend-only project, or as p
 
 | Concern | React / Vue / Svelte | Lumen |
 |---|---|---|
-| **Rendering model** | Client VDOM + hydration — 50–400 KB framework | Server-driven HTML over WebSocket — ~2 KB inline script **Lumen JS** |
+| **Rendering model** | Client VDOM + hydration runtime | Server-driven HTML over WebSocket — live core held below **4.1 KB uncompressed**, plus only selected browser actions |
 | **Hydration mismatch** | Common bug | Impossible — server owns all state and rendering |
 | **UI components** | None built-in (need MUI, Chakra, Shadcn) | 28 components — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, etc., zero imports |
 | **State management** | External library (Zustand, Pinia, stores) | `lumen_store()` built in |
@@ -293,11 +293,11 @@ vn build main.vn --release    # Compile the composed app to a native binary
 | Concern | Next.js / Nuxt | Aurora (Zenith + Lumen) |
 |---|---|---|
 | **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere** — same language, same runtime, same binary |
-| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Zero client JS** by default — ~2 KB inline **Lumen JS** script |
+| **Client bundle** | Bundled client framework and application code | Static export can emit **zero JS**; live pages use a sub-4.1 KB uncompressed core plus only the browser actions selected by the page |
 | **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step for the frontend |
 | **Data loading** | `getServerSideProps` / `loader` / server actions | `lumen_mount_data()` — data provider runs on GET + WS reconnect |
 | **API + pages** | Separate `app/api/` and `app/` directories | Same `main.vn`, same `ZenithApp` instance |
-| **Background jobs** | External workers (Bull, Sidekiq) | `WorkerPool.spawn()` + `cron()` — built in |
+| **Background jobs** | External workers (Bull, Sidekiq) | SQLite-backed named jobs with bounded retries, worker pools, inspection, retry, and `cron()` |
 | **Swagger docs** | Manual setup or `next-swagger-doc` plugin | Automatic — `app.enable_docs("/docs")` |
 | **Security middleware** | Manual — helmet, cors, csurf, express-rate-limit | `cors()`, `rate_limit()`, `csrf()` from `shield.vn` — built in |
 | **Deploy** | Node.js runtime + `node_modules` required | **Single native binary** — no runtime, no deps |
@@ -349,6 +349,7 @@ app.listen(3000)
 | **Routing** | Radix (segment) trie — O(depth) lookup. All HTTP methods: GET/POST/PUT/DELETE/PATCH/OPTIONS/HEAD |
 | **Middleware** | Closure chain with `next(req)` — CORS, CSRF, auth, logging, etc. |
 | **Static serving** | `serve_static(prefix, dir)` with path-traversal protection, MIME resolution |
+| **Job operations** | Explicit opt-in `enable_job_dashboard(path)`; install auth/authorization middleware before exposing it |
 | **WebSocket** | Full RFC 6455 — masking, opcodes, close frames |
 | **SSE** | `sse_handshake(req)` → `SseSender.send(data)` |
 | **OpenAPI** | `enable_docs(endpoint)` → `/openapi.json` + Swagger UI with schema registration |
@@ -386,7 +387,7 @@ needed. Every function and struct below is in scope the moment you run `vn`.
 | `shield.vn` | Security middleware — `cors()`, `csrf()`, `rate_limit()`, `rate_limit_redis()` |
 | `auth.vn` | Auth middleware — `zenith_auth.jwt(secret)`, `zenith_auth.session_store()`, `zenith_auth.session(store, cookie)` + password helpers |
 | `db.vn` | **Meridian** — compile-time SQL query builder: `select()`, `bind()`, `run_sqlite()`, `run_postgres()`, `test_transaction()` |
-| `queue.vn` | Background jobs — `WorkerPool.spawn(n)`, `.submit(fn)`, `.stop()` — also `cron(interval_ms, handler)` |
+| `queue.vn` | Background jobs — `queue_configure`, `queue_register_job`, `queue_submit_job`, `queue_job`, `queue_retry`, `new_worker_pool`, and `cron` |
 | `mail.vn` | Email — `send_smtp(host, port, ...)`, `send_resend(api_key, ...)` |
 | `storage.vn` | Local file blob store — `new_storage(dir)`, `.put(key, bytes)`, `.get(key)`, `.delete(key)` |
 | `observe.vn` | Structured logging (`Logger.info`/`.warn`/`.error`/`.info_with`) + Prometheus metrics handler |

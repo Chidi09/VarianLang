@@ -183,21 +183,20 @@ aurora-chat/
 
 ## What Aurora ships at once
 
-Aurora is **Lumen + Zenith + every built-in module** behind a single manifest convention
-(`kind = "aurora"`). Where Next.js needs Next + React + React Router + your own API server
-+ Bull + Prisma + Zod + Winston + your own auth + your own email + your own rate limiter,
-Aurora ships a single binary that is all of those things.
+Aurora composes **Lumen + Zenith** in one Varian process behind a single manifest convention
+(`kind = "aurora"`). Applications can use the built-in database, validation, authentication,
+queue, mail, storage, logging, and security modules without a package-manager dependency tree.
 
 | Capability | Next.js + Express | Aurora |
 |---|---|---|
 | **What you install** | `npx create-next-app` → 300 MB `node_modules` | `vn new myapp` → **zero downloads** |
 | **Language** | JS/TS (client) + JS/TS (server) + SQL (DB) | **Varian everywhere** |
-| **Client framework** | React (400 KB gzipped) | **~2 KB Lumen JS** inline |
+| **Client framework** | React client runtime where interactive | Static export can use **zero JS**; live pages use a core capped below **4.1 KB uncompressed** plus selected actions |
 | **Server framework** | Express / Fastify + 16+ packages | **Zenith** — built in |
 | **Router** | React Router + Express Router | **One radix trie** — client + server |
-| **Auth** | `next-auth` / `jsonwebtoken` + session store | **Built-in** — `auth.jwt()`, `auth.session_store()`, `auth.sha1_base64()` |
+| **Auth** | Authentication package + session store | **Built-in** — `zenith_auth.jwt()`, `zenith_auth.session_store()`, `zenith_auth.session()` and password helpers |
 | **ORM** | Prisma / Drizzle / Knex | **Built-in** — comptime `select().where().build()`, zero runtime cost |
-| **Background jobs** | Bull / Sidekiq + Redis | **Built-in** — `WorkerPool.spawn()`, `cron()` |
+| **Background jobs** | External queue service or process | **Built-in** — durable SQLite named jobs, bounded retries, worker pools, and `cron()` |
 | **Email** | Nodemailer / Resend SDK | **Built-in** — `send_smtp()`, `send_resend()` |
 | **File storage** | multer / boto3 SDK | **Built-in** — `Storage.put()/.get()/.delete()` |
 | **Structured logging** | Winston / Pino | **Built-in** — JSON `Logger.info_with()` |
@@ -208,6 +207,11 @@ Aurora ships a single binary that is all of those things.
 | **CORS** | cors package | **Built-in** — `cors()` |
 | **Swagger docs** | swagger-jsdoc + swagger-ui | **Built-in** — `app.enable_docs("/docs")` |
 | **Python bridge** | Subprocess / n/a | **Built-in** — `python.run()` for S3/R2/GCS SDKs |
+
+Administrative queue controls are not exposed automatically. After installing the
+application's authentication and authorization middleware, opt in with
+`app.enable_job_dashboard("/operations/jobs")`. The dashboard uses the database selected
+by `queue_configure(...)` and is entirely server-rendered, so it adds no browser runtime.
 | **Deploy** | Node.js runtime + `node_modules` | **Single native binary** — `vn build --release` |
 | **Total packages** | **30+** (React + Next + Express + Prisma + Zod + Bull + Winston + cors + helmet + csurf + express-rate-limit + jsonwebtoken + nodemailer + multer + swagger-jsdoc + prom-client + …) | **1 binary** |
 

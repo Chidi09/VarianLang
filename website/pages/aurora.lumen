@@ -716,8 +716,8 @@ app.<span class="token-function">listen</span>(c.port)
   </tr>
   <tr>
     <td>Dependencies</td>
-    <td><strong>Zero</strong> — everything built in via <code>vn_modules/</code> prelude</td>
-    <td><code>package.json</code> with 1000+ transitive deps; separate DB driver, ORM, auth library, validation library, testing library</td>
+    <td><strong>No package install</strong> — framework and standard modules ship with Varian</td>
+    <td><code>package.json</code> plus the packages selected for database, auth, validation, and testing</td>
   </tr>
   <tr>
     <td>Database</td>
@@ -731,8 +731,8 @@ app.<span class="token-function">listen</span>(c.port)
   </tr>
   <tr>
     <td>UI model</td>
-    <td><strong>Server-driven</strong> — zero JS by default, exact opt-in browser actions, no hydration step</td>
-    <td>React Server Components + client components — 100KB+ React runtime, hydration mismatch bugs</td>
+    <td><strong>Server-driven</strong> — zero JS for static output; live pages use a sub-4.1 KB uncompressed core plus exact opt-in browser actions, with no hydration step</td>
+    <td>React Server Components plus client components and their required browser runtime</td>
   </tr>
   <tr>
     <td>Build output</td>
@@ -743,6 +743,11 @@ app.<span class="token-function">listen</span>(c.port)
     <td>API docs</td>
     <td><strong>Auto-generated</strong> OpenAPI spec from route summaries — <code>app.enable_docs("/docs")</code></td>
     <td>Swagger/OpenAPI setup requires additional libraries and decorator configuration</td>
+  </tr>
+  <tr>
+    <td>Job operations</td>
+    <td><strong>Explicit opt-in</strong> — protect the route with application auth, then call <code>app.enable_job_dashboard("/operations/jobs")</code>; the dashboard adds zero browser JavaScript</td>
+    <td>Queue-provider dashboard or a separately built administration surface</td>
   </tr>
   <tr>
     <td>Live reload</td>
