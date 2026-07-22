@@ -1,0 +1,18 @@
+test "native document transitions emit CSS and no browser action" {
+    let css = lumen_view_transitions()
+    assert_ne(css.index_of("@view-transition"), -1)
+    assert_ne(css.index_of("navigation: auto"), -1)
+    assert_ne(css.index_of("prefers-reduced-motion"), -1)
+    assert_eq(_lumen_scan_directives(css).len(), 0)
+    let core = _lumen_client_js_with_manifest([])
+    assert_eq(_lumen_client_js_with_manifest(_lumen_scan_directives(css)).len(), core.len())
+}
+
+test "shared transition elements use validated CSS identifiers" {
+    let html = lumen_view_transition("hero-image_2", "<img src=\"/hero.webp\" alt=\"\">")
+    assert_ne(html.index_of("view-transition-name:hero-image_2"), -1)
+    assert_ne(html.index_of("<img"), -1)
+    assert_throws(| | { lumen_view_transition("", "x") })
+    assert_throws(| | { lumen_view_transition("2hero", "x") })
+    assert_throws(| | { lumen_view_transition("hero;display:none", "x") })
+}

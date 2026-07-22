@@ -3636,6 +3636,35 @@ fn lumen_prefetch_link(href, content) {
     return "<a href=\"" + _sanitize.escape_html(url) + "\" data-lumen-prefetch>" + content + "</a>"
 }
 
+// Enable browser-native same-origin cross-document view transitions. Browsers
+// without the feature keep normal navigation, and reduced-motion users get no
+// generated transition animation. This emits CSS only and adds zero JS.
+fn lumen_view_transitions() {
+    return "<style>@view-transition \{ navigation: auto; \}" +
+           "@media (prefers-reduced-motion: reduce) \{::view-transition-group(*) \{ animation-duration: 0s; \}\}</style>"
+}
+
+fn _lumen_view_transition_name(name) {
+    let value = "" + name
+    if value == "" { throw "lumen_view_transition: name must not be empty" }
+    let first = value.substring(0, 1)
+    let initial = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-"
+    let rest = initial + "0123456789"
+    if initial.index_of(first) < 0 { throw "lumen_view_transition: name must be a CSS identifier" }
+    for i in 1..value.len() {
+        if rest.index_of(value.substring(i, i + 1)) < 0 {
+            throw "lumen_view_transition: name must be a CSS identifier"
+        }
+    }
+    return value
+}
+
+// Give corresponding elements on two documents the same native transition name.
+fn lumen_view_transition(name, content) {
+    let safe_name = _lumen_view_transition_name(name)
+    return "<div style=\"view-transition-name:" + safe_name + "\">" + content + "</div>"
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }

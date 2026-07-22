@@ -328,6 +328,15 @@ For known likely destinations, `lumen_prefetch(href)` emits a native
 small intent-prefetch action only when such a link appears. Repeated hover/focus intent is
 deduplicated and cross-origin destinations are left entirely to normal navigation.
 
+### Native document transitions
+
+`lumen_view_transitions()` enables same-origin cross-document View Transitions
+with the browser's native `@view-transition { navigation: auto }` rule. It falls
+back to ordinary navigation in unsupported browsers, disables generated animation
+for reduced-motion users, and ships zero JavaScript. Wrap matching elements on the
+old and new documents with `lumen_view_transition(name, content)` for validated,
+stable shared-element names.
+
 ### Lumen UI (Component Registry)
 
 Lumen ships with an official, Shadcn-inspired component registry called **Lumen UI**. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in `pages/components/`) so you fully own and customize the code.
