@@ -28,6 +28,9 @@ To ensure zero risk to existing application code and compiler semantics, Phase 1
 5. **Lumen Content & Security Leaves** (`vn_modules/lumen/content.vn`, `security.vn`):
    - Typed content collection discovery and live-channel origin policy are independently owned.
    - The facade retains ambient compatibility while mounts consume the extracted security policy.
+6. **Lumen Server Resource Boundary** (`vn_modules/lumen/resources.vn`):
+   - Extracted basic and keyed resources, cache ownership/GC, infinite queries, and mutation lifecycle state.
+   - The subsystem remains server-owned and adds no browser payload; existing focused suites exercise the unchanged ambient facade.
 
 ---
 
@@ -125,7 +128,7 @@ tests assert exact module sets and byte ceilings.
 
 1. **Leaf extraction (complete here)**: one behavior-preserving leaf per framework, facades unchanged.
 2. **Action registry**: centralize Lumen detection/dependency metadata and enforce exact output budgets.
-3. **Framework seams**: request and response boundaries are extracted; continue with routing, forms, and resources one coherent subsystem at a time, with public facade compatibility tests.
+3. **Framework seams**: Zenith request/response and Lumen resources are extracted; continue with routing and forms one coherent subsystem at a time, with public facade compatibility tests.
 4. **Opt-in prelude**: design explicit framework imports before claiming compiler parse-time improvements; retain a documented compatibility mode.
 5. **Conformance applications**: static content, authenticated CRUD, streaming UI, and large data examples exercised in real browsers.
 
@@ -137,4 +140,5 @@ The modularization is validated via the test suite:
 - `tests/zenith_request_package_test.vn`: Validates the extracted request parser/accessor boundary through the unchanged ambient API.
 - `tests/zenith_response_package_test.vn`: Validates response construction, stream preservation, and injection defenses through the unchanged ambient API.
 - `tests/lumen_modules_test.vn`: Validates directive scanning and tree-shaking.
+- `tests/lumen_cached_resource_test.vn`, `tests/lumen_infinite_resource_test.vn`, and `tests/lumen_mutation_test.vn`: Validate the extracted server-resource boundary and filtered-test independence.
 - `./vn test tests/`: Full regression suite execution across all system tests.

@@ -59,6 +59,18 @@ test "recursive duplicate load observes pending entry without fetching twice" {
 }
 
 test "resource cache exposes hit miss dedupe and entry metrics" {
+    // Establish each counter inside this test so --filter does not make the
+    // assertion depend on earlier tests sharing the process-global cache.
+    let key = ["metrics", 606]
+    let fetch = | | {
+        let duplicate = lumen_cached_resource(key, | | { return "wrong" }, { stale_ms: 60000 })
+        assert_eq((duplicate.state)().fetching, true)
+        return "value"
+    }
+    let first = lumen_cached_resource(key, fetch, { stale_ms: 60000 })
+    let second = lumen_cached_resource(key, | | { return "wrong" }, { stale_ms: 60000 })
+    assert_eq((first.state)().data, "value")
+    assert_eq((second.state)().data, "value")
     let stats = lumen_resource_cache_stats()
     assert_eq(stats.hits >= 1, 1)
     assert_eq(stats.misses >= 1, 1)
