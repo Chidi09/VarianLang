@@ -689,8 +689,10 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
             if (op == BC_CONSTANT || op == BC_CONSTANT_LONG || op == BC_DEFINE_GLOBAL ||
                 op == BC_GET_GLOBAL || op == BC_SET_GLOBAL || op == BC_JUMP ||
                 op == BC_JUMP_IF_FALSE || op == BC_JUMP_IF_NOT_NIL || op == BC_JUMP_IF_NIL || op == BC_LOOP ||
-                op == BC_MAKE_FUNCTION || op == BC_TRY || op == BC_MEMBER || op == BC_MEMBER_SAFE || op == BC_SET_MEMBER) {
+                op == BC_MAKE_FUNCTION || op == BC_MEMBER || op == BC_MEMBER_SAFE || op == BC_SET_MEMBER) {
                 size = 3;
+            } else if (op == BC_TRY) {
+                size = 4; /* opcode + catch jump + captured local count */
             } else if (op == BC_GET_LOCAL || op == BC_SET_LOCAL || op == BC_CALL ||
                        op == BC_RETURN_N || op == BC_GET_UPVALUE || op == BC_SET_UPVALUE ||
                        op == BC_ARRAY || op == BC_TUPLE ||
@@ -1303,12 +1305,13 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
                     break;
                 case BC_TRY: {
                     uint16_t t_offset = (fn->code[offset + 1] << 8) | fn->code[offset + 2];
+                    uint8_t local_count = fn->code[offset + 3];
                     fprintf(out, "        if (t->try_count >= TASK_TRY_MAX) { runtime_error(vm, \"Too many nested try blocks\"); return; }\n");
-                    fprintf(out, "        t->try_stack[t->try_count].catch_offset = %d;\n", offset + 3 + t_offset);
-                    fprintf(out, "        t->try_stack[t->try_count].stack_depth = t->stack_top;\n");
+                    fprintf(out, "        t->try_stack[t->try_count].catch_offset = %d;\n", offset + 4 + t_offset);
+                    fprintf(out, "        t->try_stack[t->try_count].stack_depth = (int)(frame->slots - t->stack) + %d;\n", local_count);
                     fprintf(out, "        t->try_stack[t->try_count].frame_index = t->frame_count - 1;\n");
                     fprintf(out, "        t->try_count++;\n");
-                    offset += 3;
+                    offset += 4;
                     break;
                 }
                 case BC_POP_TRY:

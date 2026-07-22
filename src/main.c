@@ -2488,6 +2488,10 @@ int main(int argc, char *argv[]) {
                 fprintf(f, "  ObjFunction *main_fn = varian_aot_load(&vm);\n"
                            "  vm.main_fn = main_fn;\n"
                            "  int res = vm_run(&vm, false) ? 0 : 1;\n"
+                           "  for (int i = 0; i < vm.asset_count; i++) free(vm.assets[i].path);\n"
+                           "  free(vm.assets);\n"
+                           "  vm.assets = NULL;\n"
+                           "  vm.asset_count = 0;\n"
                            "  vm_free(&vm);\n"
                            "  return res;\n"
                            "}\n");
