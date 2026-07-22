@@ -59,7 +59,7 @@ fn state() {
 fn _gen_lines_html(lines) {
     let n = 10
     if lines != null {
-        n = string_to_int("" + lines)
+        n = lines
     }
     let out = ""
     for i in 0..n {

@@ -219,7 +219,7 @@
         <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">wifi</span>
         <Heading size="base" as="h4">HTML-over-WebSocket</Heading>
       </div>
-      <Text style="color:var(--text-secondary);line-height:1.6;">A 5 KB client sends events; the server re-renders and morphs only the changed DOM nodes. No Varian in the browser, no VDOM, no serialization — just raw HTML diffs over a persistent connection.</Text>
+      <Text style="color:var(--text-secondary);line-height:1.6;">Static pages ship no JavaScript. Interactive pages receive only the browser actions selected by their directives; live events use a persistent connection and the server returns focused HTML patches. No Varian runtime, VDOM, or hydration step in the browser.</Text>
     </div>
 
     <div>
@@ -499,8 +499,8 @@ untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-r
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.</Text>
-<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS <Heading size="xl" as="h3">LumenJS &amp; event modifiersamp; event modifiers</Heading>
-<Text>Lumen ships a tiny (~2.5 KB gzipped) client-side JavaScript runtime called
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS &amp; event modifiers</Heading>
+<Text>When a page opts into live behavior, Lumen emits a small client-side action runtime called
 <strong>LumenJS</strong>. It is not a framework you write against — it is a transport layer
 that Lumen emits on your behalf. The user never writes JS; they write Varian.
 LumenJS handles WebSocket reconnect with exponential backoff, event delegation,

@@ -30,6 +30,8 @@ WORKDIR /app
 COPY --from=site /src/vn /usr/local/bin/vn
 COPY --from=site /src/vn_modules /app/vn_modules
 COPY --from=site /src/website /app/website
+ENV VARIAN_HOME=/app
+WORKDIR /app/website
 EXPOSE 8080
 # Production serve: no hot-reload, no LUMEN_DEV overlay (that's dev-only).
-CMD ["vn", "run", "website/site.vn"]
+CMD ["vn", "run", "site.vn"]

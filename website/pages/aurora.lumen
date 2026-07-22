@@ -201,16 +201,16 @@
 <Card>
   <Grid cols="2" gap="6">
     <Feature icon="language" title="One language, the entire stack">
-      Backend API routes, database queries, session management, HTML templates, and UI components — all Varian. Share types, validation, and business logic between server and client with no serialization boundary.
+      Backend API routes, database queries, session management, HTML templates, and UI components — all Varian on the server. Share validation and business logic across those layers while Lumen keeps the browser boundary deliberately small and explicit.
     </Feature>
     <Feature icon="flash_on" title="Zero-config scaffolding">
       <code>vn new myapp</code> creates a complete fullstack project: <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, <code>constellation.toml</code>. <code>vn dev</code> starts a live-reload dev server. No config files to write.
     </Feature>
     <Feature icon="autorenew" title="Server-driven UI">
-      Lumen components render on the server. A 5 KB client forwards events over WebSocket; the server re-renders and morphs only the changed DOM nodes. Zero hydration bugs, zero client framework, zero Varian in the browser.
+      Lumen components render on the server and ship zero JavaScript by default. Interactive pages emit only the small browser actions their directives require; live events travel over WebSocket and receive focused HTML patches. No hydration step and no Varian runtime in the browser.
     </Feature>
     <Feature icon="neurology" title="Comptime ORM + DB drivers">
-      SQLite and Postgres drivers built in. The comptime ORM checks SQL strings at compile time and generates bound queries. <code>bind()</code> throws on parameter count mismatch — not at runtime.
+      SQLite and Postgres drivers built in. Meridian can build static query shapes during <code>comptime</code> and generates bound queries. <code>bind()</code> rejects a parameter-count mismatch before the query is sent to the database.
     </Feature>
     <Feature icon="inventory_2" title="Batteries included">
       JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.
@@ -740,7 +740,7 @@ app.<span class="token-function">listen</span>(c.port)
   </tr>
   <tr>
     <td>UI model</td>
-    <td><strong>Server-driven</strong> — HTML-over-WebSocket, 5 KB client, zero hydration bugs</td>
+    <td><strong>Server-driven</strong> — zero JS by default, exact opt-in browser actions, no hydration step</td>
     <td>React Server Components + client components — 100KB+ React runtime, hydration mismatch bugs</td>
   </tr>
   <tr>
