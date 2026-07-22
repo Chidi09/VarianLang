@@ -215,13 +215,19 @@ queue, mail, storage, logging, and security modules without a package-manager de
 | **CORS** | cors package | **Built-in** — `cors()` |
 | **Swagger docs** | swagger-jsdoc + swagger-ui | **Built-in** — `app.enable_docs("/docs")` |
 | **Python bridge** | Subprocess / n/a | **Built-in** — `python.run()` for S3/R2/GCS SDKs |
+| **Deploy** | Node.js runtime + `node_modules` | **Single native binary** — `vn build --release` |
+| **Total packages** | **30+** (React + Next + Express + Prisma + Zod + Bull + Winston + cors + helmet + csurf + express-rate-limit + jsonwebtoken + nodemailer + multer + swagger-jsdoc + prom-client + …) | **1 binary** |
 
 Administrative queue controls are not exposed automatically. After installing the
 application's authentication and authorization middleware, opt in with
 `app.enable_job_dashboard("/operations/jobs")`. The dashboard uses the database selected
 by `queue_configure(...)` and is entirely server-rendered, so it adds no browser runtime.
-| **Deploy** | Node.js runtime + `node_modules` | **Single native binary** — `vn build --release` |
-| **Total packages** | **30+** (React + Next + Express + Prisma + Zod + Bull + Winston + cors + helmet + csurf + express-rate-limit + jsonwebtoken + nodemailer + multer + swagger-jsdoc + prom-client + …) | **1 binary** |
+
+Release compilation performs conservative whole-program reachability before native code
+generation. Unreferenced ambient prelude functions are omitted, while application entry
+points, transitive dependencies, module initialization, and dynamically dispatched methods
+remain available. This keeps the batteries-included development model without forcing every
+unused framework helper into the production translation unit.
 
 ### Engineering patterns Aurora proves
 

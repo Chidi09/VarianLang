@@ -216,7 +216,7 @@
       JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.
     </Feature>
     <Feature icon="package_2" title="Deploys as one binary">
-      <code>vn build main.vn --release</code> produces a native executable containing the composed Zenith and Lumen program plus embedded public assets. No <code>node_modules</code> or separate application runtime is required.
+      <code>vn build main.vn --release</code> produces a native executable containing the composed Zenith and Lumen program plus embedded public assets. Conservative whole-program reachability removes unused ambient prelude functions while retaining transitive dependencies and dynamic methods. No <code>node_modules</code> or separate application runtime is required.
     </Feature>
     <Feature icon="description" title="OpenAPI for free">
       Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.

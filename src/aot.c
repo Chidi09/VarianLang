@@ -31,6 +31,254 @@ static void collect_functions(Value val, ObjFunction ***funcs, int *count, int *
     }
 }
 
+typedef struct {
+    AstNode *node;
+    const char *name;
+    bool reachable;
+} ReleaseFunction;
+
+typedef struct {
+    ReleaseFunction *functions;
+    int count;
+    bool changed;
+} ReleaseReachability;
+
+static void release_scan_node(AstNode *node, ReleaseReachability *reach);
+
+static void release_mark_name(ReleaseReachability *reach, const char *name) {
+    if (!name) return;
+    for (int i = 0; i < reach->count; i++) {
+        if (!reach->functions[i].reachable &&
+            strcmp(reach->functions[i].name, name) == 0) {
+            reach->functions[i].reachable = true;
+            reach->changed = true;
+        }
+    }
+}
+
+static void release_scan_many(AstNode **nodes, int count,
+                              ReleaseReachability *reach) {
+    for (int i = 0; i < count; i++) release_scan_node(nodes[i], reach);
+}
+
+/* Conservatively discover references to top-level functions. Identifier
+ * shadowing can retain an extra function but can never remove a required one;
+ * that is the right tradeoff for a dynamic language release optimizer. */
+static void release_scan_node(AstNode *node, ReleaseReachability *reach) {
+    if (!node) return;
+    switch (node->kind) {
+        case NODE_PROGRAM:
+            release_scan_many(node->program.stmts, node->program.stmt_count, reach);
+            break;
+        case NODE_BLOCK:
+            release_scan_many(node->block.stmts, node->block.stmt_count, reach);
+            break;
+        case NODE_LET_DECL:
+        case NODE_CONST_DECL:
+            release_scan_node(node->let_decl.initializer, reach);
+            break;
+        case NODE_FN_DECL:
+            release_scan_many(node->fn_decl.decorator_values,
+                              node->fn_decl.decorator_count, reach);
+            release_scan_node(node->fn_decl.body, reach);
+            break;
+        case NODE_EXPR_STMT:
+            release_scan_node(node->expr_stmt.expr, reach);
+            break;
+        case NODE_IF:
+            release_scan_node(node->if_stmt.condition, reach);
+            release_scan_node(node->if_stmt.then_branch, reach);
+            release_scan_node(node->if_stmt.else_branch, reach);
+            break;
+        case NODE_WHILE:
+            release_scan_node(node->while_stmt.condition, reach);
+            release_scan_node(node->while_stmt.body, reach);
+            break;
+        case NODE_FOR:
+            release_scan_node(node->for_stmt.iterable, reach);
+            release_scan_node(node->for_stmt.body, reach);
+            break;
+        case NODE_LOOP:
+            release_scan_node(node->loop_stmt.body, reach);
+            break;
+        case NODE_RETURN:
+            release_scan_many(node->return_stmt.values,
+                              node->return_stmt.value_count, reach);
+            break;
+        case NODE_ASSIGN:
+            release_scan_node(node->assign.target, reach);
+            release_scan_node(node->assign.value, reach);
+            break;
+        case NODE_BINARY:
+            release_scan_node(node->binary.left, reach);
+            release_scan_node(node->binary.right, reach);
+            break;
+        case NODE_UNARY:
+            release_scan_node(node->unary.operand, reach);
+            break;
+        case NODE_CALL:
+            release_scan_node(node->call.callee, reach);
+            release_scan_many(node->call.args, node->call.arg_count, reach);
+            break;
+        case NODE_INDEX:
+            release_scan_node(node->index.object, reach);
+            release_scan_node(node->index.index, reach);
+            break;
+        case NODE_MEMBER:
+        case NODE_QUESTION_DOT:
+            release_scan_node(node->member.object, reach);
+            break;
+        case NODE_IDENTIFIER:
+            release_mark_name(reach, node->identifier.name);
+            break;
+        case NODE_INTERPOLATED_STRING:
+            release_scan_many(node->interpolated_string.parts,
+                              node->interpolated_string.part_count, reach);
+            break;
+        case NODE_ARRAY_LITERAL:
+        case NODE_TUPLE_LITERAL:
+            release_scan_many(node->array_literal.elements,
+                              node->array_literal.element_count, reach);
+            break;
+        case NODE_STRUCT_DECL:
+            release_scan_many(node->struct_decl.decorator_values,
+                              node->struct_decl.decorator_count, reach);
+            for (int i = 0; i < node->struct_decl.field_count; i++)
+                release_scan_many(node->struct_decl.field_decorator_values[i],
+                                  node->struct_decl.field_decorator_counts[i], reach);
+            break;
+        case NODE_SCHEMA_DECL:
+            release_scan_many(node->schema_decl.decorator_values,
+                              node->schema_decl.decorator_count, reach);
+            for (int i = 0; i < node->schema_decl.field_count; i++)
+                release_scan_many(node->schema_decl.field_decorator_values[i],
+                                  node->schema_decl.field_decorator_counts[i], reach);
+            break;
+        case NODE_STRUCT_LITERAL:
+            release_scan_many(node->struct_literal.field_values,
+                              node->struct_literal.field_count, reach);
+            break;
+        case NODE_ENUM_LITERAL:
+            release_scan_many(node->enum_literal.values,
+                              node->enum_literal.value_count, reach);
+            break;
+        case NODE_MATCH:
+            release_scan_node(node->match_stmt.value, reach);
+            release_scan_many(node->match_stmt.arms, node->match_stmt.arm_count, reach);
+            break;
+        case NODE_MATCH_ARM:
+            release_scan_node(node->match_arm.pattern, reach);
+            release_scan_node(node->match_arm.body, reach);
+            break;
+        case NODE_CHAN_SEND:
+            release_scan_node(node->chan_send.channel, reach);
+            release_scan_node(node->chan_send.value, reach);
+            break;
+        case NODE_CHAN_RECEIVE:
+            release_scan_node(node->chan_receive.channel, reach);
+            break;
+        case NODE_AWAIT:
+            release_scan_node(node->await.expr, reach);
+            break;
+        case NODE_ASSERT:
+            release_scan_node(node->assert_stmt.condition, reach);
+            break;
+        case NODE_TEST:
+            release_scan_node(node->test_decl.body, reach);
+            break;
+        case NODE_PROPAGATE:
+            release_scan_node(node->propagate.expr, reach);
+            break;
+        case NODE_TRY:
+            release_scan_node(node->try_stmt.try_body, reach);
+            release_scan_node(node->try_stmt.catch_body, reach);
+            break;
+        case NODE_COMPTIME:
+            release_scan_node(node->comptime.body, reach);
+            break;
+        case NODE_DISPATCH_CALL:
+            release_scan_node(node->dispatch_call.object, reach);
+            release_scan_many(node->dispatch_call.args,
+                              node->dispatch_call.arg_count, reach);
+            break;
+        case NODE_INT_LITERAL:
+        case NODE_FLOAT_LITERAL:
+        case NODE_STRING_LITERAL:
+        case NODE_BOOL_LITERAL:
+        case NODE_NULL_LITERAL:
+        case NODE_BREAK:
+        case NODE_CONTINUE:
+        case NODE_ACTOR_DECL:
+        case NODE_ENUM_DECL:
+        case NODE_TRAIT_DECL:
+        case NODE_FFI_DECL:
+            break;
+    }
+}
+
+static int release_prune_unused_functions(AstNode *program,
+                                          int user_source_offset) {
+    if (!program || program->kind != NODE_PROGRAM || user_source_offset <= 0)
+        return 0;
+
+    int function_count = 0;
+    for (int i = 0; i < program->program.stmt_count; i++)
+        if (program->program.stmts[i]->kind == NODE_FN_DECL) function_count++;
+    if (function_count == 0) return 0;
+
+    ReleaseReachability reach = {0};
+    reach.functions = calloc((size_t)function_count, sizeof(ReleaseFunction));
+    if (!reach.functions) return 0;
+    reach.count = function_count;
+
+    int at = 0;
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        if (stmt->kind != NODE_FN_DECL) continue;
+        reach.functions[at].node = stmt;
+        reach.functions[at].name = stmt->fn_decl.name;
+        /* User functions are externally visible program behavior. Methods and
+         * module initializers can be reached through dynamic dispatch. */
+        reach.functions[at].reachable = stmt->loc.offset >= user_source_offset ||
+            stmt->fn_decl.is_pub || stmt->fn_decl.is_method ||
+            stmt->fn_decl.is_module_init;
+        at++;
+    }
+
+    /* Every retained top-level statement executes during initialization. */
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        if (stmt->kind != NODE_FN_DECL) release_scan_node(stmt, &reach);
+    }
+    do {
+        reach.changed = false;
+        for (int i = 0; i < reach.count; i++)
+            if (reach.functions[i].reachable)
+                release_scan_node(reach.functions[i].node, &reach);
+    } while (reach.changed);
+
+    int write = 0;
+    int removed = 0;
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        bool keep = true;
+        if (stmt->kind == NODE_FN_DECL && stmt->loc.offset < user_source_offset) {
+            keep = false;
+            for (int j = 0; j < reach.count; j++) {
+                if (reach.functions[j].node == stmt) {
+                    keep = reach.functions[j].reachable;
+                    break;
+                }
+            }
+        }
+        if (keep) program->program.stmts[write++] = stmt;
+        else removed++;
+    }
+    program->program.stmt_count = write;
+    free(reach.functions);
+    return removed;
+}
+
 static void output_val_serialize(FILE *out, Value val, ObjFunction **funcs, int fn_count) {
     switch (val.type) {
         case VAL_NIL:
@@ -111,6 +359,12 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
         return 1;
     }
     semantic_result_free(sem);
+
+    int pruned_functions = release_prune_unused_functions(program, user_source_offset);
+    if (pruned_functions > 0) {
+        fprintf(stderr, "[Kiln] Removed %d unreachable prelude function%s.\n",
+                pruned_functions, pruned_functions == 1 ? "" : "s");
+    }
 
     Chunk chunk;
     chunk_init(&chunk);

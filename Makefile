@@ -218,6 +218,7 @@ test: $(TARGET)
 	@echo "Running semantic analysis and regression test suite..."
 	./tests/semantic_test.sh
 	./tests/formatter_test.sh
+	./tests/aot_reachability_test.sh
 	./$(TARGET) run examples/hello.vn
 	./$(TARGET) run examples/generics.vn
 	./$(TARGET) run examples/enums.vn
