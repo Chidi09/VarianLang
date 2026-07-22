@@ -936,17 +936,6 @@ fn _run_middleware(app, req) {
     }
 }
 
-fn _zenith_guard_matches(prefix, path) {
-    if prefix == "/" { return true }
-    let wanted = _split_path(prefix)
-    let actual = _split_path(path)
-    if actual.len() < wanted.len() { return false }
-    for i in 0..wanted.len() {
-        if !wanted[i].starts_with(":") and wanted[i] != actual[i] { return false }
-    }
-    return true
-}
-
 // ─── OpenAPI ───
 
 fn _convert_path(path_str) {
@@ -1224,78 +1213,3 @@ fn _swagger_handler(app, req) {
 // top-level prelude (see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
 // It needs the `Response` struct above, so this `use` must come after it.
 use "zenith"
-
-fn _admin_jobs_handler(req) {
-    _queue_init_db()
-    let conn = _queue_db
-    let action = query(req, "action", "")
-    if req.method == "POST" {
-        let body_action = _get_req_field(req.json, "action", "")
-        if body_action == "" { body_action = action }
-        if body_action == "retry_all" {
-            sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE status = 'failed'")
-        } else if body_action == "clear_all" {
-            sqlite.query(conn, "DELETE FROM vn_jobs")
-        } else if body_action == "retry_one" {
-            let jid = _get_req_field(req.json, "id", "")
-            if jid == "" { jid = query(req, "id", "") }
-            if jid != "" {
-                sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE id = ?", [jid])
-            }
-        }
-    }
-    let total = 0
-    let pending = 0
-    let running = 0
-    let completed = 0
-    let failed = 0
-    try {
-        let total_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs")
-        if total_res != null and total_res.len() > 0 { total = total_res[0].count }
-        let pending_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'pending'")
-        if pending_res != null and pending_res.len() > 0 { pending = pending_res[0].count }
-        let running_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'running'")
-        if running_res != null and running_res.len() > 0 { running = running_res[0].count }
-        let completed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'completed'")
-        if completed_res != null and completed_res.len() > 0 { completed = completed_res[0].count }
-        let failed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'failed'")
-        if failed_res != null and failed_res.len() > 0 { failed = failed_res[0].count }
-    } catch e {
-        sqlite.query(conn, "CREATE TABLE IF NOT EXISTS vn_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, attempts INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
-    }
-    let jobs = []
-    try {
-        jobs = sqlite.query(conn, "SELECT id, name, status, attempts, error, created_at FROM vn_jobs ORDER BY id DESC LIMIT 20")
-    } catch e {}
-    if jobs == null { jobs = [] }
-    let rows_html = ""
-    for i in 0..jobs.len() {
-        let job = jobs[i]
-        let err_str = ""
-        if job.error != null { err_str = job.error }
-        let badge_color = "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
-        if job.status == "running" { badge_color = "bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse" }
-        else if job.status == "completed" { badge_color = "bg-green-500/10 text-green-500 border-green-500/20" }
-        else if job.status == "failed" { badge_color = "bg-red-500/10 text-red-500 border-red-500/20" }
-        let action_btn = ""
-        if job.status == "failed" {
-            action_btn = "<form method=\"post\" action=\"" + _sanitize.escape_html(req.path) + "?action=retry_one&amp;id=" + job.id + "\"><button type=\"submit\">Retry</button></form>"
-        }
-        let safe_name = _sanitize.escape_html("" + job.name)
-        let safe_status = _sanitize.escape_html("" + job.status)
-        let safe_error = _sanitize.escape_html("" + err_str)
-        let safe_created = _sanitize.escape_html("" + job.created_at)
-        rows_html = rows_html + "<tr class=\"border-b border-slate-800 hover:bg-slate-900/50 transition-colors\"><td class=\"py-3 px-4 text-slate-400 font-mono text-xs\">#" + job.id + "</td><td class=\"py-3 px-4 font-semibold text-slate-200\">" + safe_name + "</td><td class=\"py-3 px-4\"><span class=\"px-2.5 py-1 text-xs font-medium rounded-full border " + badge_color + "\">" + safe_status + "</span></td><td class=\"py-3 px-4 text-slate-400 text-sm\">" + job.attempts + "</td><td class=\"py-3 px-4 text-red-400 text-xs font-mono max-w-xs truncate\" title=\"" + safe_error + "\">" + safe_error + "</td><td class=\"py-3 px-4 text-slate-500 text-xs\">" + safe_created + "</td><td class=\"py-3 px-4 text-right\">" + action_btn + "</td></tr>"
-    }
-    let rows_cell = rows_html
-    if rows_cell == "" { rows_cell = "<tr><td colspan=\"7\" class=\"text-center py-8 text-slate-500\">No tasks in pipeline.</td></tr>" }
-    // Deliberately server rendered: administrative controls do not need a
-    // client framework, third-party CDN, polling loop, or inline JavaScript.
-    let safe_path = _sanitize.escape_html(req.path)
-    let summary = "<p>Total: " + total + " · Pending: " + pending + " · Running: " + running + " · Completed: " + completed + " · Failed: " + failed + "</p>"
-    let controls = "<form method=\"post\" action=\"" + safe_path + "?action=retry_all\"><button type=\"submit\">Retry all failed</button></form>" +
-        "<form method=\"post\" action=\"" + safe_path + "?action=clear_all\"><button type=\"submit\">Clear queue</button></form>"
-    let table = "<table><thead><tr><th>ID</th><th>Job</th><th>Status</th><th>Attempts</th><th>Error</th><th>Created</th><th>Action</th></tr></thead><tbody>" + rows_cell + "</tbody></table>"
-    let safe_html = "<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Varian jobs</title></head><body><main><h1>Background jobs</h1>" + summary + controls + table + "</main></body></html>"
-    return http.create_struct(["status", "body", "content_type"], [200, safe_html, "text/html"])
-}
