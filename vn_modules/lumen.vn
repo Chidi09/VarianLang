@@ -198,6 +198,9 @@ let _lumen_reactive_started = [false]
 let _lumen_table_version = [http.create_struct([], [])]
 let _lumen_qcache = [http.create_struct([], [])]
 let _lumen_cache_stats = [http.create_struct(["hits", "misses"], [0, 0])]
+let _lumen_resource_cache = [http.create_struct([], [])]
+let _lumen_resource_versions = [http.create_struct([], [])]
+let _lumen_resource_stats = [http.create_struct(["hits", "misses", "deduped"], [0, 0, 0])]
 let _lumen_watched_tables = [http.create_struct([], [])]
 
 let _lumen_presence_data = http.create_struct([], [])
@@ -1514,6 +1517,118 @@ fn lumen_resource(fetcher) {
     return http.create_struct(
         ["state", "refetch"],
         [snapshot, run]
+    )
+}
+
+// ─── Keyed server resource cache ───
+// A Varian-native query primitive: request keys are deterministic JSON values,
+// data is shared across component instances, freshness is explicit, recursive
+// duplicate loads collapse, and invalidation never requires browser state.
+fn _lumen_resource_key(key) {
+    return json_encode(key)
+}
+
+fn _lumen_resource_version(cache_key) {
+    let version = _validate.get_field(_lumen_resource_versions[0], cache_key)
+    if version == null { return 0 }
+    return version
+}
+
+fn _lumen_resource_state(cache_key, entry, stale) {
+    if entry == null {
+        return http.create_struct(
+            ["key", "status", "loading", "fetching", "stale", "error", "data", "updated_at"],
+            [cache_key, "pending", true, false, true, null, null, null]
+        )
+    }
+    let error = _validate.get_field(entry, "error")
+    let status = "success"
+    if error != null { status = "error" }
+    if _validate.get_field(entry, "fetching") { status = "pending" }
+    return http.create_struct(
+        ["key", "status", "loading", "fetching", "stale", "error", "data", "updated_at"],
+        [cache_key, status, status == "pending", _validate.get_field(entry, "fetching"), stale,
+         error, _validate.get_field(entry, "data"), _validate.get_field(entry, "updated_at")]
+    )
+}
+
+fn lumen_cached_resource(key, fetcher, opts) {
+    let cache_key = _lumen_resource_key(key)
+    let stale_ms = 30000
+    if opts != null {
+        let configured = _validate.get_field(opts, "stale_ms")
+        if configured != null { stale_ms = configured }
+    }
+    let holder = [_lumen_resource_state(cache_key, null, true)]
+    let load = |force| {
+        let now = time.now_ms()
+        let version = _lumen_resource_version(cache_key)
+        let entry = _validate.get_field(_lumen_resource_cache[0], cache_key)
+        if entry != null {
+            if _validate.get_field(entry, "fetching") {
+                let deduped = _validate.get_field(_lumen_resource_stats[0], "deduped")
+                _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "deduped", deduped + 1)
+                holder[0] = _lumen_resource_state(cache_key, entry, true)
+                return holder[0]
+            }
+            let same_version = _validate.get_field(entry, "version") == version
+            let age = now - _validate.get_field(entry, "updated_at")
+            let fresh = same_version and age <= stale_ms
+            if force == false and fresh {
+                let hits = _validate.get_field(_lumen_resource_stats[0], "hits")
+                _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "hits", hits + 1)
+                holder[0] = _lumen_resource_state(cache_key, entry, false)
+                return holder[0]
+            }
+        }
+        let previous = null
+        if entry != null { previous = _validate.get_field(entry, "data") }
+        let pending = http.create_struct(
+            ["data", "error", "updated_at", "version", "fetching"],
+            [previous, null, now, version, true]
+        )
+        _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, pending)
+        holder[0] = _lumen_resource_state(cache_key, pending, true)
+        let final = null
+        try {
+            let data = fetcher()
+            final = http.create_struct(
+                ["data", "error", "updated_at", "version", "fetching"],
+                [data, null, time.now_ms(), version, false]
+            )
+        } catch e {
+            final = http.create_struct(
+                ["data", "error", "updated_at", "version", "fetching"],
+                [previous, "" + e, time.now_ms(), version, false]
+            )
+        }
+        _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, final)
+        let misses = _validate.get_field(_lumen_resource_stats[0], "misses")
+        _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "misses", misses + 1)
+        holder[0] = _lumen_resource_state(cache_key, final, false)
+        return holder[0]
+    }
+    let initial = (load)(false)
+    let state = | | { return holder[0] }
+    let refetch = | | { return (load)(true) }
+    let invalidate = | | { lumen_resource_invalidate(key); holder[0] = _lumen_resource_state(cache_key, _validate.get_field(_lumen_resource_cache[0], cache_key), true); return holder[0] }
+    return http.create_struct(["state", "refetch", "invalidate"], [state, refetch, invalidate])
+}
+
+fn lumen_resource_invalidate(key) {
+    let cache_key = _lumen_resource_key(key)
+    let version = _lumen_resource_version(cache_key)
+    _lumen_resource_versions[0] = _tpl_bind(_lumen_resource_versions[0], cache_key, version + 1)
+    return null
+}
+
+fn lumen_resource_cache_stats() {
+    return http.create_struct(
+        ["hits", "misses", "deduped", "entries"],
+        [_validate.get_field(_lumen_resource_stats[0], "hits"),
+         _validate.get_field(_lumen_resource_stats[0], "misses"),
+         _validate.get_field(_lumen_resource_stats[0], "deduped"),
+         _validate.get_keys(_lumen_resource_cache[0]).len()]
     )
 }
 

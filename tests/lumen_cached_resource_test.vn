@@ -1,0 +1,67 @@
+test "keyed resources share fresh data across component instances" {
+    let calls = [0]
+    let fetch = | | { calls[0] = calls[0] + 1; return calls[0] * 10 }
+    let a = lumen_cached_resource(["users", 1], fetch, { stale_ms: 60000 })
+    let b = lumen_cached_resource(["users", 1], fetch, { stale_ms: 60000 })
+    assert_eq(calls[0], 1)
+    assert_eq((a.state)().data, 10)
+    assert_eq((b.state)().data, 10)
+    assert_eq((b.state)().stale, false)
+}
+
+test "resource keys distinguish structured inputs deterministically" {
+    let a = lumen_cached_resource(["profile", 1], | | { return "one" }, { stale_ms: 60000 })
+    let b = lumen_cached_resource(["profile", 2], | | { return "two" }, { stale_ms: 60000 })
+    assert_eq((a.state)().data, "one")
+    assert_eq((b.state)().data, "two")
+    assert_ne((a.state)().key, (b.state)().key)
+}
+
+test "invalidation marks current data stale and next instance refetches" {
+    let calls = [0]
+    let key = ["invalidate", 101]
+    let fetch = | | { calls[0] = calls[0] + 1; return calls[0] }
+    let a = lumen_cached_resource(key, fetch, { stale_ms: 60000 })
+    let stale = (a.invalidate)()
+    assert_eq(stale.stale, true)
+    assert_eq(stale.data, 1)
+    let b = lumen_cached_resource(key, fetch, { stale_ms: 60000 })
+    assert_eq(calls[0], 2)
+    assert_eq((b.state)().data, 2)
+}
+
+test "forced refetch preserves previous data when fetch fails" {
+    let calls = [0]
+    let fetch = | | {
+        calls[0] = calls[0] + 1
+        if calls[0] > 1 { throw("offline") }
+        return "cached"
+    }
+    let r = lumen_cached_resource(["failure", 202], fetch, { stale_ms: 60000 })
+    let failed = (r.refetch)()
+    assert_eq(failed.status, "error")
+    assert_eq(failed.data, "cached")
+    assert_eq(failed.error.contains("offline"), true)
+}
+
+test "recursive duplicate load observes pending entry without fetching twice" {
+    let calls = [0]
+    let key = ["dedupe", 303]
+    let fetch = | | {
+        calls[0] = calls[0] + 1
+        let duplicate = lumen_cached_resource(key, | | { calls[0] = calls[0] + 100; return 0 }, { stale_ms: 60000 })
+        assert_eq((duplicate.state)().fetching, true)
+        return 42
+    }
+    let r = lumen_cached_resource(key, fetch, { stale_ms: 60000 })
+    assert_eq(calls[0], 1)
+    assert_eq((r.state)().data, 42)
+}
+
+test "resource cache exposes hit miss dedupe and entry metrics" {
+    let stats = lumen_resource_cache_stats()
+    assert_eq(stats.hits >= 1, 1)
+    assert_eq(stats.misses >= 1, 1)
+    assert_eq(stats.deduped >= 1, 1)
+    assert_eq(stats.entries >= 1, 1)
+}
