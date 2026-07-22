@@ -1,0 +1,46 @@
+fn _csrf_req(method, cookie, body, header_token) {
+    let header_keys = []
+    let header_values = []
+    if cookie != null { header_keys = header_keys.push("cookie"); header_values = header_values.push(cookie) }
+    if header_token != null { header_keys = header_keys.push("x_csrf_token"); header_values = header_values.push(header_token) }
+    return http.create_struct(
+        ["method", "headers", "body"],
+        [method, http.create_struct(header_keys, header_values), body]
+    )
+}
+
+test "csrf middleware injects its first cookie token into same-origin post forms" {
+    let middleware = csrf()
+    let response = middleware(_csrf_req("GET", null, "", null), |req| {
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [200, "<form method=\"post\" action=\"/save\"><button>Save</button></form>", "text/html; charset=utf-8"]
+        )
+    })
+    let cookie = _validate.get_field(response.headers, "set_cookie")
+    let token = cookie.substring("csrf_token=".len(), cookie.index_of(";"))
+    assert_ne(token, "")
+    assert_ne(response.body.index_of("name=\"_csrf\" value=\"" + token + "\""), -1)
+}
+
+test "csrf injection skips get external and already protected forms" {
+    let injected = _csrf_inject_forms("<form method=\"post\" action=\"/save\"></form>", "secret")
+    assert_ne(injected.index_of("name=\"_csrf\" value=\"secret\""), -1)
+    let html = "<form method=\"get\" action=\"/search\"></form>" +
+               "<form method=\"post\" action=\"https://payments.test/pay\"></form>" +
+               "<form method=\"post\" action=\"/save\"><input name=\"_csrf\" value=\"own\"></form>"
+    let result = _csrf_inject_forms(html, "secret")
+    assert_eq(lumen_test_count(result, "name=\"_csrf\""), 1)
+    assert_eq(result.index_of("value=\"secret\""), -1)
+}
+
+test "csrf accepts native form tokens and enhanced header tokens" {
+    let middleware = csrf()
+    let next = |req| { return http.create_struct(["status", "body", "content_type"], [200, "ok", "text/plain"]) }
+    let native = middleware(_csrf_req("POST", "csrf_token=abc123", "name=Ada&_csrf=abc123", null), next)
+    assert_eq(native.status, 200)
+    let enhanced = middleware(_csrf_req("POST", "csrf_token=abc123", "", "abc123"), next)
+    assert_eq(enhanced.status, 200)
+    let invalid = middleware(_csrf_req("POST", "csrf_token=abc123", "_csrf=wrong", null), next)
+    assert_eq(invalid.status, 403)
+}

@@ -124,6 +124,12 @@ selected value, and multi-select changes send arrays. File fields send metadata
 `multipart/form-data` request to a Zenith route and read it with `uploaded_file()` or
 `uploaded_files()`; WebSocket event JSON is intentionally not a file transport.
 
+Applications using `shield.csrf()` do not need to hand-wire tokens into native forms.
+The middleware adds its double-submit token to same-origin POST forms in HTML responses,
+accepts that `_csrf` field on ordinary submissions, and accepts `x_csrf_token` from an
+enhanced transport. GET forms, cross-origin actions, and forms that already supply a
+token are left unchanged.
+
 The scaffolded starter wires `{{ color }}` into an SVG `fill`, so each click recomputes a
 colour server-side and Lumen morphs **only the changed attribute** into the DOM — a live
 demonstration of the model with zero client code.
