@@ -1,0 +1,148 @@
+// db/seed.vn — Seed the database with 1200 products and 50 orders for stress testing.
+
+use "lib/app_db.vn"
+
+let conn = db_init("aurora-chat.db")
+
+// Clear existing tables for clean seeding
+sqlite.query(conn, "DELETE FROM order_items")
+sqlite.query(conn, "DELETE FROM orders")
+sqlite.query(conn, "DELETE FROM products")
+
+let cats = ["electronics", "home", "apparel", "books", "toys"]
+let adjs = ["Ultra", "Smart", "Eco", "Pro", "Vintage", "Modern", "Classic", "Premium", "Elite", "Pocket", "Wireless", "Deluxe"]
+let adjs_slug = ["ultra", "smart", "eco", "pro", "vintage", "modern", "classic", "premium", "elite", "pocket", "wireless", "deluxe"]
+
+let electro_nouns = ["Gadget", "Device", "Adapter", "Screen", "Charger", "Cable", "Sensor", "Controller", "Player", "Hub"]
+let electro_slugs = ["gadget", "device", "adapter", "screen", "charger", "cable", "sensor", "controller", "player", "hub"]
+
+let home_nouns = ["Lamp", "Chair", "Table", "Vase", "Rug", "Clock", "Frame", "Mirror", "Shelf", "Organizer"]
+let home_slugs = ["lamp", "chair", "table", "vase", "rug", "clock", "frame", "mirror", "shelf", "organizer"]
+
+let apparel_nouns = ["Shirt", "Pants", "Jacket", "Socks", "Hat", "Shoes", "Scarf", "Belt", "Sweater", "Gloves"]
+let apparel_slugs = ["shirt", "pants", "jacket", "socks", "hat", "shoes", "scarf", "belt", "sweater", "gloves"]
+
+let books_nouns = ["Guide", "Journal", "Novel", "Manual", "Anthology", "Chronicle", "Logbook", "Atlas", "Tome", "Planner"]
+let books_slugs = ["guide", "journal", "novel", "manual", "anthology", "chronicle", "logbook", "atlas", "tome", "planner"]
+
+let toys_nouns = ["Blocks", "Puzzle", "Figure", "Robot", "Doll", "Train", "Car", "Ball", "Boardgame", "Kit"]
+let toys_slugs = ["blocks", "puzzle", "figure", "robot", "doll", "train", "car", "ball", "boardgame", "kit"]
+
+let electro_images = ["https://images.unsplash.com/photo-1496181133206-80ce9b88a853?w=400&h=300&fit=crop", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e?w=400&h=300&fit=crop"]
+let home_images = ["https://images.unsplash.com/photo-1507473885765-e6ed057ab6fe?w=400&h=300&fit=crop", "https://images.unsplash.com/photo-1586210579191-33b45e38fa2c?w=400&h=300&fit=crop"]
+let apparel_images = ["https://images.unsplash.com/photo-1553062407-98eeb64c6a62?w=400&h=300&fit=crop", "https://images.unsplash.com/photo-1543163521-1bf539c55dd2?w=400&h=300&fit=crop"]
+let books_images = ["https://images.unsplash.com/photo-1544947950-fa07a98d237f?w=400&h=300&fit=crop", "https://images.unsplash.com/photo-1512820790803-83ca734da794?w=400&h=300&fit=crop"]
+let toys_images = ["https://images.unsplash.com/photo-1531315630201-bb15abeb1653?w=400&h=300&fit=crop", "https://images.unsplash.com/photo-1558060370-d644479cb6f7?w=400&h=300&fit=crop"]
+
+let sql_values = ""
+let count = 0
+
+// Seed 1200 Products
+for i in 0..1200 {
+    let cat_idx = i % 5
+    let category = cats[cat_idx]
+    let adj = adjs[(i / 5) % 12]
+    let adj_slug = adjs_slug[(i / 5) % 12]
+    
+    let noun = ""
+    let noun_slug = ""
+    if cat_idx == 0 {
+        noun = electro_nouns[(i / 60) % 10]
+        noun_slug = electro_slugs[(i / 60) % 10]
+    }
+    if cat_idx == 1 {
+        noun = home_nouns[(i / 60) % 10]
+        noun_slug = home_slugs[(i / 60) % 10]
+    }
+    if cat_idx == 2 {
+        noun = apparel_nouns[(i / 60) % 10]
+        noun_slug = apparel_slugs[(i / 60) % 10]
+    }
+    if cat_idx == 3 {
+        noun = books_nouns[(i / 60) % 10]
+        noun_slug = books_slugs[(i / 60) % 10]
+    }
+    if cat_idx == 4 {
+        noun = toys_nouns[(i / 60) % 10]
+        noun_slug = toys_slugs[(i / 60) % 10]
+    }
+    
+    let name = "Aurora " + adj + " " + noun + " " + i
+    let slug = "aurora-" + adj_slug + "-" + noun_slug + "-" + i
+    let price_cents = 199 + (i * 137) % 499000
+    let stock = (i * 7) % 501
+    
+    let img = ""
+    if cat_idx == 0 { img = electro_images[i % 2] }
+    if cat_idx == 1 { img = home_images[i % 2] }
+    if cat_idx == 2 { img = apparel_images[i % 2] }
+    if cat_idx == 3 { img = books_images[i % 2] }
+    if cat_idx == 4 { img = toys_images[i % 2] }
+    
+    let desc = "High quality " + category + " item for everyday use"
+    let featured = 0
+    if (i % 10) == 0 { featured = 1 }
+    
+    let val = "('" + name + "', '" + slug + "', " + price_cents + ", " + stock + ", '" + img + "', '" + desc + "', '" + category + "', " + featured + ")"
+    
+    if sql_values == "" {
+        sql_values = val
+    } else {
+        sql_values = sql_values + ", " + val
+    }
+    
+    count = count + 1
+    if count == 100 {
+        sqlite.query(conn, "INSERT INTO products (name, slug, price_cents, stock, image, description, category, featured) VALUES " + sql_values)
+        sql_values = ""
+        count = 0
+    }
+}
+if count > 0 {
+    sqlite.query(conn, "INSERT INTO products (name, slug, price_cents, stock, image, description, category, featured) VALUES " + sql_values)
+}
+
+// Seed 50 Orders + Order Items
+let statuses = ["pending", "paid", "shipped", "delivered", "cancelled"]
+let order_values = ""
+let item_values = ""
+
+for o_id in 1..51 {
+    let session_key = "sess_" + o_id
+    let status = statuses[o_id % 5]
+    
+    let p1 = ((o_id * 17) % 1200) + 1
+    let p2 = ((o_id * 31) % 1200) + 1
+    let p3 = ((o_id * 43) % 1200) + 1
+    
+    let pr1 = 199 + ((p1 - 1) * 137) % 499000
+    let pr2 = 199 + ((p2 - 1) * 137) % 499000
+    let pr3 = 199 + ((p3 - 1) * 137) % 499000
+    
+    let total = pr1 + pr2 + pr3
+    
+    let o_val = "(1, '" + session_key + "', " + total + ", '" + status + "')"
+    if order_values == "" {
+        order_values = o_val
+    } else {
+        order_values = order_values + ", " + o_val
+    }
+    
+    let item1 = "(" + o_id + ", " + p1 + ", 1, " + pr1 + ")"
+    let item2 = "(" + o_id + ", " + p2 + ", 1, " + pr2 + ")"
+    let item3 = "(" + o_id + ", " + p3 + ", 1, " + pr3 + ")"
+    
+    if item_values == "" {
+        item_values = item1 + ", " + item2 + ", " + item3
+    } else {
+        item_values = item_values + ", " + item1 + ", " + item2 + ", " + item3
+    }
+}
+
+sqlite.query(conn, "INSERT INTO orders (user_id, session_key, total_cents, status) VALUES " + order_values)
+sqlite.query(conn, "INSERT INTO order_items (order_id, product_id, qty, price_cents) VALUES " + item_values)
+
+// Print summary
+let prod_count_res = sqlite.query(conn, "SELECT COUNT(*) AS c FROM products")
+let order_count_res = sqlite.query(conn, "SELECT COUNT(*) AS c FROM orders")
+print("Seeded " + prod_count_res[0].c + " products, " + order_count_res[0].c + " orders")

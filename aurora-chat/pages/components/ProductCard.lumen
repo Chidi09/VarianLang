@@ -1,0 +1,179 @@
+<template>
+<div class="product-card">
+  <div class="card-img-wrap">
+    <img class="card-img" src="{{! image }}" alt="{{! name }}" loading="lazy" />
+    <div class="card-stock" data-tone="{{#if stock}}success{{else}}danger{{/if}}">
+      <span class="stock-dot"></span>
+      {{#if stock}}In Stock{{else}}Out of Stock{{/if}}
+    </div>
+  </div>
+  <div class="card-body">
+    <h3 class="card-title">{{! name }}</h3>
+    <p class="card-price"><Price value="{{! price }}" /></p>
+    <div class="card-footer">
+      <span class="card-rating">★ ★ ★ ★ ★</span>
+      <button class="card-btn" onclick="addToCart(event, '{{! id }}')">+ Add</button>
+    </div>
+  </div>
+</div>
+</template>
+
+<style scoped>
+.product-card {
+  background:var(--lumen-surface);
+  border:1px solid var(--lumen-border);
+  border-radius:12px;
+  overflow:hidden;
+  transition:transform 0.2s ease, box-shadow 0.2s ease;
+}
+.product-card:hover {
+  transform:translateY(-4px);
+  box-shadow:0 12px 32px -8px rgba(0,0,0,0.12);
+}
+.card-img-wrap {
+  position:relative;
+  width:100%;
+  height:200px;
+  overflow:hidden;
+  background:var(--lumen-surface-2);
+}
+.card-img {
+  width:100%;
+  height:100%;
+  object-fit:cover;
+  display:block;
+  transition:transform 0.3s ease;
+}
+.product-card:hover .card-img {
+  transform:scale(1.05);
+}
+.card-stock {
+  position:absolute;
+  top:10px;
+  left:10px;
+  display:flex;
+  align-items:center;
+  gap:5px;
+  padding:3px 10px;
+  border-radius:999px;
+  font-size:0.75rem;
+  font-weight:600;
+  background:rgba(255,255,255,0.9);
+  backdrop-filter:blur(4px);
+}
+.card-stock[data-tone="success"] {
+  color:#0b7a52;
+}
+.card-stock[data-tone="success"] .stock-dot {
+  background:#4dd4ac;
+}
+.card-stock[data-tone="danger"] {
+  color:#b91c1c;
+}
+.card-stock[data-tone="danger"] .stock-dot {
+  background:#f87171;
+}
+.dark .card-stock {
+  background:rgba(0,0,0,0.7);
+}
+.stock-dot {
+  width:6px;
+  height:6px;
+  border-radius:50%;
+}
+.card-body {
+  padding:1rem;
+}
+.card-title {
+  font-size:1rem;
+  font-weight:600;
+  margin:0 0 0.25rem;
+  color:var(--lumen-fg);
+  line-height:1.3;
+}
+.card-price {
+  font-size:1.125rem;
+  font-weight:700;
+  margin:0 0 0.75rem;
+  color:var(--lumen-primary);
+}
+.card-footer {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.card-rating {
+  font-size:0.75rem;
+  color:var(--lumen-muted-fg);
+  letter-spacing:2px;
+}
+.card-btn {
+  padding:0.4rem 0.85rem;
+  border-radius:8px;
+  font-size:0.8125rem;
+  font-weight:600;
+  background:var(--lumen-fg);
+  color:var(--lumen-bg);
+  border:none;
+  cursor:pointer;
+  transition:opacity 0.15s ease;
+}
+.card-btn:hover {
+  opacity:0.85;
+}
+/* Global toast styles (inserted by client JS) */
+:global(.aurora-toast) {
+  position:fixed;
+  bottom:24px;
+  right:24px;
+  background:var(--lumen-fg);
+  color:var(--lumen-bg);
+  padding:12px 24px;
+  border-radius:12px;
+  font-weight:600;
+  box-shadow:0 8px 32px rgba(0,0,0,0.15);
+  animation:toast-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  z-index:9999;
+}
+@keyframes toast-in {
+  from {
+    transform:translateY(20px);
+    opacity:0;
+  }
+  to {
+    transform:translateY(0);
+    opacity:1;
+  }
+}
+</style>
+
+<script>
+fn state() {
+    return { id: 0, name: "Product", price: "$0.00", stock: 0, image: "" }
+}
+
+</script>
+<client>
+window.addToCart = async function(event, id) {
+  event.preventDefault();
+  let btn = event.target;
+  let originalText = btn.textContent;
+  btn.textContent = '...';
+  try {
+    let res = await fetch('/api/cart/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({qty: 1}) });
+    if (res.ok) {
+      window.dispatchEvent(new CustomEvent('cart-updated'));
+      btn.textContent = '✓ Added';
+      let toast = document.createElement('div');
+      toast.className = 'aurora-toast';
+      toast.textContent = '✓ Added to your cart';
+      document.body.appendChild(toast);
+      setTimeout(() => { toast.style.opacity = '0'; setTimeout(() => toast.remove(), 300); }, 3000);
+      setTimeout(() => btn.textContent = originalText, 2000);
+    }
+  } catch (e) {
+    btn.textContent = 'Error';
+    setTimeout(() => btn.textContent = originalText, 2000);
+  }
+};
+</client>

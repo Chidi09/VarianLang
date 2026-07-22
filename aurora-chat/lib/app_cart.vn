@@ -1,0 +1,107 @@
+// app_cart.vn — DB-backed cart with crypto-signed session key cookie.
+// Uses the carts table (session_key, product_id, qty UNIQUE).
+
+
+fn cart_session_key(req, c) {
+    let cookie_header = _validate.get_field(req.headers, "cookie")
+    if cookie_header != null {
+        let parts = cookie_header.split(";")
+        for i in 0..parts.len() {
+            let part = _sanitize.trim(parts[i])
+            if part.starts_with("cart_sk=") {
+                let value = part.substring(8, part.len())
+                let sep = value.index_of(".")
+                if sep >= 0 {
+                    let raw = value.substring(0, sep)
+                    let sig = value.substring(sep + 1, value.len())
+                    let valid = crypto.hmac_verify(c.secret_key, raw, sig)
+                    if valid { return raw }
+                }
+                return value
+            }
+        }
+    }
+    let new_key = crypto.random_string(16)
+    return new_key
+}
+
+fn _set_cart_cookie(resp, session_key, secret) {
+    let sig = crypto.hmac(secret, session_key)
+    let cookie_val = session_key + "." + sig
+    let set_cookie_val = "cart_sk=" + cookie_val + "; Path=/; HttpOnly; SameSite=Lax"
+
+    let resp_headers = _validate.get_field(resp, "headers")
+    if resp_headers == null {
+        resp_headers = http.create_struct(["set_cookie"], [set_cookie_val])
+    } else {
+        let keys = _validate.get_keys(resp_headers)
+        let vals = []
+        for i in 0..keys.len() {
+            vals = vals.push(_validate.get_field(resp_headers, keys[i]))
+        }
+        keys = keys.push("set_cookie")
+        vals = vals.push(set_cookie_val)
+        resp_headers = http.create_struct(keys, vals)
+    }
+    return http.create_struct(
+        ["status", "body", "content_type", "headers"],
+        [resp.status, resp.body, resp.content_type, resp_headers]
+    )
+}
+
+fn cart_add(conn, session_key, product_id, qty) {
+    if session_key == null or session_key == "" { return }
+    let existing = sqlite.query(conn, "SELECT id, qty FROM carts WHERE session_key = ? AND product_id = ?", [session_key, product_id])
+    if existing.len() > 0 {
+        let new_qty = existing[0].qty + qty
+        sqlite.query(conn, "UPDATE carts SET qty = ? WHERE id = ?", [new_qty, existing[0].id])
+    } else {
+        sqlite.query(conn, "INSERT INTO carts (session_key, product_id, qty) VALUES (?, ?, ?)", [session_key, product_id, qty])
+    }
+}
+
+fn cart_items(conn, c, session_key) {
+    if session_key == null or session_key == "" {
+        return http.create_struct(["items", "total_cents"], [[], 0])
+    }
+    let rows = sqlite.query(conn, "SELECT c.qty, p.id, p.name, p.price_cents, p.image, p.stock FROM carts c JOIN products p ON c.product_id = p.id WHERE c.session_key = ?", [session_key])
+    let items = []
+    let total_cents = 0
+    for i in 0..rows.len() {
+        let r = rows[i]
+        let line_cents = r.price_cents * r.qty
+        total_cents = total_cents + line_cents
+        items = items.push(http.create_struct(
+            ["product_id", "name", "price_cents", "qty", "line_cents", "image", "stock"],
+            [r.id, r.name, r.price_cents, r.qty, line_cents, r.image, r.stock]
+        ))
+    }
+    return http.create_struct(["items", "total_cents"], [items, total_cents])
+}
+
+fn register_cart_api(app, conn, c) {
+    app.get("/api/cart", |req| {
+        let sk = cart_session_key(req, c)
+        let result = cart_items(conn, c, sk)
+        return json_res(result, 200)
+    }, "Get cart", http.create_struct(
+        ["response_schema", "response_status"], ["object", 200]
+    ))
+
+    app.post("/api/cart", |req| {
+        let json = req.json
+        let product_id = _validate.get_field(json, "product_id")
+        let qty = _validate.get_field(json, "qty")
+        if product_id == null { return err_res("Missing product_id", 400) }
+        if qty == null { qty = 1 }
+        let sk = cart_session_key(req, c)
+        cart_add(conn, sk, product_id, qty)
+
+        let result = cart_items(conn, c, sk)
+        let resp = json_res(result, 200)
+        return _set_cart_cookie(resp, sk, c.secret_key)
+    }, "Add to cart", http.create_struct(
+        ["request_schema", "response_schema", "response_status"],
+        ["object", "object", 200]
+    ))
+}

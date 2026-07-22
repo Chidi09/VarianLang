@@ -1,0 +1,68 @@
+<template>
+<Page>
+  <Nav />
+  <Section>
+    <Container size="md">
+      <Stack gap="6">
+        <Heading size="4xl" as="h1">Your Cart</Heading>
+        {{#if hasItems}}
+          <Stack gap="4">
+            {{#each items as item}}
+              <Card>
+                <Row gap="4" justify="space-between" align="center">
+                  <Stack gap="1">
+                    <Heading size="base" as="h3">{{! item.name }}</Heading>
+                    <Text size="sm" muted={true}>{{! item.price }} each</Text>
+                  </Stack>
+                  <Row gap="3" align="center">
+                    <Row gap="2" align="center">
+                      <Button onclick="updateCart('{{! item.id }}', {{! item.qty }} - 1)">−</Button>
+                      <Text>{{! item.qty }}</Text>
+                      <Button onclick="updateCart('{{! item.id }}', 1, true)">+</Button>
+                    </Row>
+                    <Text>{{! item.lineTotal }}</Text>
+                    <Button variant="ghost" onclick="removeFromCart('{{! item.id }}')">✕</Button>
+                  </Row>
+                </Row>
+              </Card>
+            {{/each}}
+          </Stack>
+          <Divider />
+          <Row justify="space-between" align="center">
+            <Heading size="2xl" as="h2">Total: {{! total }}</Heading>
+            <Button href="/checkout">Proceed to Checkout</Button>
+          </Row>
+        {{else}}
+          <Card pad="8" style="text-align:center">
+            <Text muted={true}>Your cart is empty.</Text>
+            <Spacer size="4" />
+            <Button href="/catalog">Browse Products</Button>
+          </Card>
+        {{/if}}
+      </Stack>
+    </Container>
+  </Section>
+  <Footer />
+</Page>
+</template>
+
+<script>
+fn state() {
+    return { hasItems: false, items: [], total: "$0.00" }
+}
+
+</script>
+<client>
+window.updateCart = async function(id, qty, isAdd) {
+  if (!isAdd && qty < 1) return window.removeFromCart(id);
+  let reqQty = isAdd ? 1 : -1;
+  await fetch('/api/cart/' + id, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({qty: reqQty}) });
+  window.dispatchEvent(new CustomEvent('cart-updated'));
+  window.location.reload();
+};
+window.removeFromCart = async function(id) {
+  await fetch('/api/cart/' + id, { method: 'DELETE' });
+  window.dispatchEvent(new CustomEvent('cart-updated'));
+  window.location.reload();
+};
+</client>

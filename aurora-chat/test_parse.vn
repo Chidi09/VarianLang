@@ -1,0 +1,13 @@
+use "lib/app_misc.vn"
+use "lib/app_chat.vn"
+
+let t1 = _parse_action("Here is your lamp. <<ACTION:{\"tool\":\"search\",\"query\":\"Lamp\",\"product_id\":0,\"qty\":1}>>")
+print("t1 tool: " + t1.tool + " | query: " + t1.query + " | clean: " + t1.clean_text)
+
+let t2 = _parse_action("I found a robot. <<ACTION:search:{\"query\":\"Robot\"}>>")
+print("t2 tool: " + t2.tool + " | query: " + t2.query + " | clean: " + t2.clean_text)
+
+let t3 = _parse_action("Sure, adding 184. {\"tool\":\"add_to_cart\",\"product_id\":184}")
+print("t3 tool: " + t3.tool + " | product_id: ")
+print(t3.product_id)
+print("clean: " + t3.clean_text)

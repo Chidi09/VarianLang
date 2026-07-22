@@ -1,0 +1,91 @@
+<template>
+<Page class="flex min-h-screen bg-[#051424]">
+  <Sidebar active_datasets={true} />
+
+  <div class="flex-1 flex flex-col min-h-screen overflow-x-hidden relative pb-12">
+    <div class="fixed inset-0 z-[-1] pointer-events-none">
+      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#3b82f6]/10 rounded-full blur-[150px]"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#1d4ed8]/10 rounded-full blur-[150px]"></div>
+    </div>
+
+    <Header />
+
+    <main class="flex-grow pt-24 px-10 max-w-[1440px] mx-auto w-full flex flex-col gap-6">
+      <!-- Title Header -->
+      <div class="flex justify-between items-center border-b border-[#3b494b]/20 pb-4">
+        <div>
+          <h2 class="font-bold text-2xl text-white">Dataset Explorer</h2>
+          <p class="text-xs text-[#b9cacb] mt-1">Direct read-only stream from your SQLite database.</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-4 py-2 rounded-lg border border-[#3b82f6] text-[#3b82f6] text-xs font-semibold hover:bg-[#3b82f6]/10 transition-colors" onclick="window.location.reload()">
+            Refresh Data
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Data Table Container -->
+      <div class="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden">
+        <div class="p-4 border-b border-[#3b494b]/20 flex justify-between items-center bg-[#122131]/30">
+          <h3 class="font-bold text-white flex items-center gap-2 text-sm">
+            <span class="material-symbols-outlined text-[#3b82f6]">database</span>
+            Extracted Telemetry Feed
+          </h3>
+          <span class="text-xs text-[#b9cacb] font-mono">Showing latest 100 rows</span>
+        </div>
+
+        <div class="overflow-x-auto flex-grow max-h-[70vh]">
+          <table class="w-full text-left border-collapse">
+            <thead>
+              <tr class="border-b border-[#3b494b]/20 bg-[#010f1f]/50 text-[#b9cacb] text-[11px] font-bold uppercase tracking-wider">
+                <th class="px-6 py-4 w-16">ID</th>
+                <th class="px-6 py-4">Title</th>
+                <th class="px-6 py-4">Target URL</th>
+                <th class="px-6 py-4">Status</th>
+                <th class="px-6 py-4">Preview</th>
+                <th class="px-6 py-4 text-right">Extracted At</th>
+                <th class="px-6 py-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody class="text-xs text-white divide-y divide-[#3b494b]/10 bg-[#0d1c2d]/20">
+              {{#each datasets as d}}
+                <tr class="hover:bg-[#2c3a4c]/20 transition-colors">
+                  <td class="px-6 py-4 font-mono text-[#3b82f6]">#DAT-{{ d.id }}</td>
+                  <td class="px-6 py-4 font-semibold">{{ d.title }}</td>
+                  <td class="px-6 py-4 font-mono truncate max-w-[200px]" title="{{ d.url }}">{{ d.url }}</td>
+                  <td class="px-6 py-4">
+                    {{#if d.status == 'success'}}
+                      <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20 text-[10px] font-semibold">
+                        SUCCESS
+                      </span>
+                    {{else}}
+                      <span class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] font-semibold">
+                        FAILED
+                      </span>
+                    {{/if}}
+                  </td>
+                  <td class="px-6 py-4">
+                    <div class="bg-[#020617] p-2.5 rounded border border-[#3b494b]/20 max-w-[300px] overflow-x-auto">
+                      <pre class="font-mono text-[10px] text-[#dcb8ff] leading-relaxed">{{ d.extracted_json }}</pre>
+                    </div>
+                  </td>
+                  <td class="px-6 py-4 text-right font-mono text-[#b9cacb]">{{ d.created }}</td>
+                  <td class="px-6 py-4 text-right">
+                    <a href="/datasets/{{ d.id }}" class="px-3 py-1.5 bg-[#3b82f6]/10 text-[#3b82f6] border border-[#3b82f6]/30 rounded-lg hover:bg-[#3b82f6]/20 transition-colors text-[10px] font-bold uppercase tracking-wider inline-flex items-center gap-1"><span class="material-symbols-outlined text-[14px]">visibility</span> View</a>
+                  </td>
+                </tr>
+              {{/each}}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </main>
+  </div>
+</Page>
+</template>
+
+<script>
+fn state() {
+    return { datasets: [] }
+}
+</script>

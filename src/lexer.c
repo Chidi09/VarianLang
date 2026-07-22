@@ -549,6 +549,11 @@ void lexer_init(Lexer *lexer, const char *source, const char *filename) {
     lexer->had_error = false;
     lexer->error_message[0] = '\0';
     lexer->expr_start = true;
+    lexer->user_source_offset = 0;
+}
+
+void lexer_set_user_source_offset(Lexer *lexer, int offset) {
+    lexer->user_source_offset = offset > 0 ? offset : 0;
 }
 
 Token lexer_next(Lexer *lexer) {

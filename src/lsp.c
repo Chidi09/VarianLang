@@ -1,5 +1,6 @@
 #include "lsp.h"
 #include "lint.h"
+#include "semantic.h"
 #include "fmt.h"
 #include "varian.h"
 #include "lexer.h"
@@ -46,7 +47,8 @@ static struct {
     char *text;
 } g_docs[MAX_DOCS];
 
-static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out, int *out_line_offset);
+static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out,
+                          int *out_line_offset, int *out_user_offset);
 static int g_doc_count = 0;
 
 static void update_doc(const char *uri, const char *text) {
@@ -243,16 +245,35 @@ static void run_lint_and_publish(const char *uri, const char *text) {
     char *processed = is_lumen_file(uri) ? blank_lumen_html(text) : strdup(text);
     lint_buffer(processed, uri, &ctx);
 
-    /* Cross-check Lumen <template> bindings against the <script> AST */
-    if (is_lumen_file(uri)) {
-        int line_offset = 0;
-        Arena *arena = NULL;
-        AstNode *program = parse_doc(processed, uri, &arena, &line_offset);
-        if (program) {
+    int sem_line_offset = 0;
+    Arena *sem_arena = NULL;
+    int sem_user_offset = 0;
+    AstNode *sem_program = parse_doc(processed, uri, &sem_arena, &sem_line_offset,
+                                     &sem_user_offset);
+    if (sem_program) {
+        SemanticResult *sem = semantic_analyze(sem_program);
+        if (sem) {
+            for (int i = 0; i < sem->count; i++) {
+                SemanticDiagnostic *diag = &sem->diagnostics[i];
+                if (diag->filename && strcmp(diag->filename, "<prelude>") == 0) continue;
+                int rel = diag->offset - sem_user_offset;
+                if (rel < 0) continue;
+                int line = 1, col = 1;
+                for (int j = 0; processed[j] && j < rel; j++) {
+                    if (processed[j] == '\n') { line++; col = 1; }
+                    else col++;
+                }
+                lsp_lint_sink(&sink, line, col, diag->code, diag->message);
+            }
+            semantic_result_free(sem);
+        }
+
+        /* Cross-check Lumen <template> bindings against the <script> AST */
+        if (is_lumen_file(uri)) {
             int handler_count = 0;
             const char *handlers[128];
-            for (int i = 0; i < program->program.stmt_count; i++) {
-                AstNode *s = program->program.stmts[i];
+            for (int i = 0; i < sem_program->program.stmt_count; i++) {
+                AstNode *s = sem_program->program.stmts[i];
                 if (s->kind == NODE_FN_DECL && strcmp(s->fn_decl.name, "state") != 0) {
                     if (handler_count < 128) {
                         handlers[handler_count++] = s->fn_decl.name;
@@ -294,8 +315,8 @@ static void run_lint_and_publish(const char *uri, const char *text) {
                     }
                 }
             }
-            arena_destroy(arena);
         }
+        if (sem_arena) arena_destroy(sem_arena);
     }
     free(processed);
 
@@ -837,7 +858,8 @@ static AstNode *find_decl(AstNode *program, const char *name) {
 /* Parse `source` (with vn_modules prelude) into an AST.  Returns the program
  * node on success, NULL on parse error.  *arena_out is set so the caller can
  * arena_destroy when done. */
-static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out, int *out_line_offset) {
+static AstNode *parse_doc(const char *source, const char *path, Arena **arena_out,
+                          int *out_line_offset, int *out_user_offset) {
     bool inside_vn = (strstr(path, "vn_modules/") != NULL);
     char *full_source = NULL;
     int line_offset = 0;
@@ -856,9 +878,11 @@ static AstNode *parse_doc(const char *source, const char *path, Arena **arena_ou
     } else {
         full_source = is_lumen_file(path) ? blank_lumen_html(source) : strdup(source);
     }
+    if (out_user_offset) *out_user_offset = prelude ? (int)strlen(prelude) + 1 : 0;
 
     Lexer lexer;
     lexer_init(&lexer, full_source, path);
+    if (prelude) lexer_set_user_source_offset(&lexer, (int)strlen(prelude) + 1);
 
     *arena_out = arena_create(0);
     Parser parser;
@@ -993,7 +1017,7 @@ static void handle_hover(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -1413,7 +1437,7 @@ static void handle_definition(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -1487,7 +1511,7 @@ static void handle_document_symbols(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program || program->kind != NODE_PROGRAM) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -1733,7 +1757,7 @@ static void handle_references(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -1843,7 +1867,7 @@ static void handle_rename(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
@@ -1951,7 +1975,7 @@ static void handle_signature_help(int id, const char *json, const char *uri) {
 
     int line_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);

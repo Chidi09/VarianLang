@@ -215,8 +215,16 @@ $(LIB_TARGET): $(LIB_OBJS)
 	ar rcs $@ $^
 
 test: $(TARGET)
-	@echo "Running lexer/parser tests..."
-	@./$(TARGET) examples/test.vn 2>&1 || true
+	@echo "Running semantic analysis and regression test suite..."
+	./tests/semantic_test.sh
+	./$(TARGET) run examples/hello.vn
+	./$(TARGET) run examples/generics.vn
+	./$(TARGET) run examples/enums.vn
+	./$(TARGET) run examples/union_type_test.vn
+	./$(TARGET) run examples/named_args_test.vn
+	./$(TARGET) run examples/traits.vn
+	./$(TARGET) run tests/closures_test.vn
+	./$(TARGET) run tests/closure_capture_test.vn
 
 run: $(TARGET)
 	@echo "Varian REPL (type 'exit' to quit)"

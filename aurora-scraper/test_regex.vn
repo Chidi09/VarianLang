@@ -1,0 +1,1 @@
+let m = regex.match("session=([a-zA-Z0-9]+)", "session=hello"); print(m[1])

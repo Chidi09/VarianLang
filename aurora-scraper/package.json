@@ -1,0 +1,19 @@
+{
+  "name": "aurora-scraper",
+  "version": "1.0.0",
+  "description": "Built with [Aurora](https://aurora.dev) — the fullstack Varian platform.",
+  "main": "index.js",
+  "directories": {
+    "lib": "lib",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "tailwindcss": "^3.4.19"
+  }
+}

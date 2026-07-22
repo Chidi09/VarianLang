@@ -1,0 +1,7 @@
+fn caller() {
+    target_fn()
+}
+fn target_fn() {
+    print("forward call ok")
+}
+caller()

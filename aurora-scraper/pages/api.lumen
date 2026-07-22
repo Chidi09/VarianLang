@@ -1,0 +1,153 @@
+<template>
+<Page class="flex min-h-screen bg-[#051424]">
+  <Sidebar active_api={true} />
+
+  <div class="flex-1 flex flex-col min-h-screen overflow-x-hidden relative pb-12">
+    <div class="fixed inset-0 z-[-1] pointer-events-none">
+      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#3b82f6]/10 rounded-full blur-[150px]"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#1d4ed8]/10 rounded-full blur-[150px]"></div>
+    </div>
+
+    <Header />
+
+    <main class="flex-grow pt-24 px-10 max-w-[1440px] mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- API Keys Manager (Left column - 6 cols) -->
+      <section class="lg:col-span-6 flex flex-col gap-6">
+        <div class="glass-panel rounded-xl p-6 flex flex-col gap-6">
+          <div class="flex justify-between items-center border-b border-[#3b494b]/20 pb-4">
+            <h3 class="font-bold text-white flex items-center gap-2 text-sm">
+              <span class="material-symbols-outlined text-[#3b82f6]">vpn_key</span>
+              API Authorization Keys
+            </h3>
+          </div>
+          
+          <!-- Key Generation Form -->
+          <form class="bg-[#122131]/30 p-4 rounded-lg border border-[#3b494b]/20 flex gap-4" onsubmit="createApiKey(event)">
+            <input id="key-name" class="flex-grow bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2 text-white text-xs input-glow" placeholder="e.g. Production Key" type="text" required />
+            <button type="submit" class="btn-gradient text-white text-xs font-semibold px-4 py-2 rounded-lg">
+              Generate Key
+            </button>
+          </form>
+
+          <!-- Keys List -->
+          <div class="flex flex-col gap-4">
+            {{#each api_keys as k}}
+              <div class="bg-[#122131]/20 p-4 rounded-lg border border-[#3b494b]/20 flex justify-between items-center">
+                <div>
+                  <h4 class="font-semibold text-sm text-white">{{ k.name }}</h4>
+                  <p class="text-[10px] text-[#b9cacb] mt-1">Generated: {{ k.created }}</p>
+                </div>
+                <div class="flex items-center gap-2 bg-[#020617] px-3 py-1.5 rounded border border-[#3b494b]/30 font-mono text-xs text-[#3b82f6]">
+                  <code>{{ k.token }}</code>
+                </div>
+              </div>
+            {{/each}}
+          </div>
+        </div>
+      </section>
+
+      <!-- Webhooks Manager (Right column - 6 cols) -->
+      <section class="lg:col-span-6 flex flex-col gap-6">
+        <div class="glass-panel rounded-xl p-6 flex flex-col gap-6">
+          <div class="flex justify-between items-center border-b border-[#3b494b]/20 pb-4">
+            <h3 class="font-bold text-white flex items-center gap-2 text-sm">
+              <span class="material-symbols-outlined text-[#dcb8ff]">webhook</span>
+              Webhook Event Listeners
+            </h3>
+          </div>
+
+          <!-- Webhook Registration Form -->
+          <form class="bg-[#122131]/30 p-4 rounded-lg border border-[#3b494b]/20 flex flex-col gap-4" onsubmit="createWebhook(event)">
+            <div class="grid grid-cols-2 gap-4">
+              <div class="flex flex-col gap-2">
+                <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Listener Name</label>
+                <input id="webhook-name" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2 text-white text-xs input-glow" placeholder="e.g. Data Sync Server" type="text" required />
+              </div>
+              <div class="flex flex-col gap-2">
+                <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Events</label>
+                <input id="webhook-events" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2 text-white text-xs input-glow" placeholder="e.g. success,failed" type="text" required />
+              </div>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Target Endpoint URL</label>
+              <input id="webhook-url" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2 text-white text-xs input-glow" placeholder="https://api.yourdomain.com/webhooks" type="url" required />
+            </div>
+            <button type="submit" class="btn-gradient text-white text-xs font-semibold py-2.5 rounded-lg">
+              Add Endpoint
+            </button>
+          </form>
+
+          <!-- Webhooks List -->
+          <div class="flex flex-col gap-4">
+            {{#each webhooks as w}}
+              <div class="bg-[#122131]/20 p-4 rounded-lg border border-[#3b494b]/20 flex flex-col gap-2">
+                <div class="flex justify-between items-center">
+                  <h4 class="font-semibold text-sm text-white">{{ w.name }}</h4>
+                  <span class="text-[9px] font-bold px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20">ACTIVE</span>
+                </div>
+                <div class="font-mono text-xs text-[#b9cacb] bg-[#020617] p-2 rounded border border-[#3b494b]/20 truncate">
+                  {{ w.url }}
+                </div>
+                <div class="flex gap-2">
+                  <span class="text-[9px] px-2 py-0.5 rounded bg-[#273647] text-[#b9cacb] font-mono">{{ w.events }}</span>
+                </div>
+              </div>
+            {{/each}}
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+</Page>
+</template>
+
+<script>
+fn state() {
+    return { api_keys: [], webhooks: [] }
+}
+</script>
+
+<client>
+window.createApiKey = async function(event) {
+    event.preventDefault();
+    let name = document.getElementById("key-name").value;
+    let btn = event.target.querySelector("button");
+    btn.disabled = true;
+    
+    try {
+        let res = await fetch("/api/keys", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name })
+        });
+        if (res.ok) window.location.reload();
+        else alert("Failed to generate API Key");
+    } catch(e) {
+        alert("Error: " + e);
+    }
+    btn.disabled = false;
+};
+
+window.createWebhook = async function(event) {
+    event.preventDefault();
+    let name = document.getElementById("webhook-name").value;
+    let url = document.getElementById("webhook-url").value;
+    let events = document.getElementById("webhook-events").value;
+    let btn = event.target.querySelector("button");
+    btn.disabled = true;
+    
+    try {
+        let res = await fetch("/api/webhooks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: name, url: url, events: events })
+        });
+        if (res.ok) window.location.reload();
+        else alert("Failed to add webhook");
+    } catch(e) {
+        alert("Error: " + e);
+    }
+    btn.disabled = false;
+};
+</client>

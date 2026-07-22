@@ -8,6 +8,7 @@
 #include "vnb.h"
 #include "lint.h"
 #include "lsp.h"
+#include "semantic.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@
  * cluster worker threads can independently re-load the same script. */
 const char *g_varian_script_path = NULL;
 static int g_prelude_line_count = 0;
+static int g_prelude_byte_count = 0;
 
 static uint64_t fnv1a_hash(const char *str, size_t len) {
     uint64_t hash = 0xcbf29ce484222325ULL;
@@ -264,32 +266,46 @@ static const char *resolve_vn_modules_dir(void) {
 }
 
 /* ─── Read source with module prelude from vn_modules/ ─── */
+static int s_module_depth = 0;
+
 char *read_file_with_modules(const char *path) {
+    s_module_depth++;
     char *main_source = read_file(path);
-    if (!main_source) return NULL;
+    if (!main_source) { s_module_depth--; return NULL; }
 
     const char *mod_dir = resolve_vn_modules_dir();
     char *prelude = mod_dir ? read_directory_sources(mod_dir) : NULL;
     if (!prelude) {
-        g_prelude_line_count = 0;
+        if (s_module_depth == 1) {
+            g_prelude_line_count = 0;
+            g_prelude_byte_count = 0;
+        }
+        s_module_depth--;
         return main_source;
     }
 
     size_t prelude_len = strlen(prelude);
-    g_prelude_line_count = 1; // Since we append a newline below
+    int prelude_lines = 0;
     for (size_t i = 0; i < prelude_len; i++) {
-        if (prelude[i] == '\n') g_prelude_line_count++;
+        if (prelude[i] == '\n') prelude_lines++;
+    }
+    prelude_lines++; /* +1 for the separator '\n' between prelude and main_source */
+
+    if (s_module_depth == 1) {
+        g_prelude_line_count = prelude_lines;
+        g_prelude_byte_count = (int)prelude_len + 1;
     }
 
     size_t main_len = strlen(main_source);
     char *combined = (char *)malloc(prelude_len + 1 + main_len + 1);
-    if (!combined) { free(prelude); return main_source; }
+    if (!combined) { free(prelude); s_module_depth--; return main_source; }
     memcpy(combined, prelude, prelude_len);
     combined[prelude_len] = '\n';
     memcpy(combined + prelude_len + 1, main_source, main_len);
     combined[prelude_len + 1 + main_len] = '\0';
     free(prelude);
     free(main_source);
+    s_module_depth--;
     return combined;
 }
 
@@ -306,10 +322,24 @@ static void print_source_caret(const char *source, int line, int col) {
     fprintf(stderr, "^\n");
 }
 
+static void user_loc_from_offset(const char *source, int user_offset, int offset,
+                                 int *line_out, int *col_out) {
+    int line = 1, col = 1;
+    if (offset < user_offset) offset = user_offset;
+    for (int i = user_offset; source[i] && i < offset; i++) {
+        if (source[i] == '\n') { line++; col = 1; }
+        else col++;
+    }
+    *line_out = line;
+    *col_out = col;
+}
+
 /* ─── Run source string ─── */
-static int run_source(const char *source, const char *filename) {
+static int run_source(const char *source, const char *filename, int prelude_line_count) {
+    int user_byte_offset = prelude_line_count > 0 ? g_prelude_byte_count : 0;
     Lexer lexer;
     lexer_init(&lexer, source, filename);
+    lexer_set_user_source_offset(&lexer, user_byte_offset);
 
     Arena *arena = arena_create(0);
     Parser parser;
@@ -321,7 +351,7 @@ static int run_source(const char *source, const char *filename) {
         int line = 0, col = 0;
         int adjusted_line = 0;
         if (sscanf(msg, "[%d:%d]", &line, &col) == 2) {
-            adjusted_line = line - g_prelude_line_count;
+            adjusted_line = line - prelude_line_count;
             if (adjusted_line <= 0) adjusted_line = line; // fallback
             fprintf(stderr, "Parse error in %s:%d:%d\n", filename ? filename : "<script>", adjusted_line, col);
         } else {
@@ -342,6 +372,28 @@ static int run_source(const char *source, const char *filename) {
         arena_destroy(arena);
         return 1;
     }
+
+    SemanticResult *sem = semantic_analyze(program);
+    int user_errors = 0;
+    for (int i = 0; i < sem->count; i++) {
+        SemanticDiagnostic *diag = &sem->diagnostics[i];
+        if (!diag->filename || strcmp(diag->filename, "<prelude>") != 0) {
+            int user_line, user_col;
+            user_loc_from_offset(source, user_byte_offset, diag->offset,
+                                 &user_line, &user_col);
+            fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                    filename ? filename : "<script>", user_line, user_col,
+                    diag->code, diag->message);
+            print_source_caret(source + user_byte_offset, user_line, user_col);
+            user_errors++;
+        }
+    }
+    if (user_errors > 0) {
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        return 1;
+    }
+    semantic_result_free(sem);
 
     if (getenv("VN_DEBUG_AST")) {
         printf("=== AST ===\n");
@@ -430,7 +482,7 @@ static int lumen_build(const char *pages, const char *out, const char *port) {
     char *bsrc = read_file_with_modules(boot);
     if (!bsrc) { remove(boot); return 1; }
     g_varian_script_path = boot;
-    int r = run_source(bsrc, boot);
+    int r = run_source(bsrc, boot, g_prelude_line_count);
     free(bsrc);
     remove(boot);
     return r;
@@ -480,7 +532,7 @@ static int lumen_export(const char *pages, const char *out_dir, const char *base
     char *bsrc = read_file_with_modules(boot);
     if (!bsrc) { remove(boot); return 1; }
     g_varian_script_path = boot;
-    int r = run_source(bsrc, boot);
+    int r = run_source(bsrc, boot, g_prelude_line_count);
     free(bsrc);
     remove(boot);
     if (r != 0) { remove(render); return r; }
@@ -488,7 +540,7 @@ static int lumen_export(const char *pages, const char *out_dir, const char *base
     char *rsrc = read_file_with_modules(render);
     if (!rsrc) { remove(render); return 1; }
     g_varian_script_path = render;
-    r = run_source(rsrc, render);
+    r = run_source(rsrc, render, g_prelude_line_count);
     free(rsrc);
     remove(render);
     if (r != 0) return r;
@@ -707,7 +759,7 @@ static int lumen_dev(const char *pages, const char *port) {
         char *asrc = read_file_with_modules(app);
         if (!asrc) return 1;
         g_varian_script_path = app;
-        int r = run_source(asrc, app);
+        int r = run_source(asrc, app, g_prelude_line_count);
         free(asrc);
         return r;
     }
@@ -1679,7 +1731,7 @@ static void repl(void) {
             break;
 
         if (strlen(line) > 0) {
-            run_source(line, "<repl>");
+            run_source(line, "<repl>", 0);
         }
     }
 }
@@ -2060,6 +2112,52 @@ int main(int argc, char *argv[]) {
         return pkg_wrap(argv[2]);
     }
 
+    if (strcmp(argv[1], "check") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s check <file.vn>\n", argv[0]);
+            return 1;
+        }
+        char *source = read_file_with_modules(argv[2]);
+        if (!source) return 1;
+        Lexer lexer;
+        lexer_init(&lexer, source, argv[2]);
+        lexer_set_user_source_offset(&lexer, g_prelude_byte_count);
+        Arena *arena = arena_create(0);
+        Parser parser;
+        parser_init(&parser, &lexer, arena);
+        AstNode *program = parser_parse(&parser);
+        if (parser.had_error) {
+            fprintf(stderr, "Parse error: %s\n", parser_get_error(&parser));
+            arena_destroy(arena);
+            free(source);
+            return 1;
+        }
+        SemanticResult *sem = semantic_analyze(program);
+        int user_errors = 0;
+        for (int i = 0; i < sem->count; i++) {
+            SemanticDiagnostic *diag = &sem->diagnostics[i];
+            if (!diag->filename || strcmp(diag->filename, "<prelude>") != 0) {
+                int user_line, user_col;
+                user_loc_from_offset(source, g_prelude_byte_count, diag->offset,
+                                     &user_line, &user_col);
+                fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                        argv[2], user_line, user_col, diag->code, diag->message);
+                print_source_caret(source + g_prelude_byte_count, user_line, user_col);
+                user_errors++;
+            }
+        }
+        int res = 0;
+        if (user_errors > 0) {
+            res = 1;
+        } else {
+            printf("No semantic errors found in %s.\n", argv[2]);
+        }
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        free(source);
+        return res;
+    }
+
     if (strcmp(argv[1], "compile") == 0) {
         if (argc < 3) {
             fprintf(stderr, "Usage: %s compile <file.vn> [output.c]\n", argv[0]);
@@ -2068,7 +2166,7 @@ int main(int argc, char *argv[]) {
         const char *out_path = (argc >= 4) ? argv[3] : "aot_output.c";
         char *source = read_file_with_modules(argv[2]);
         if (!source) return 1;
-        int result = aot_compile(source, argv[2], out_path);
+        int result = aot_compile(source, argv[2], out_path, g_prelude_byte_count);
         free(source);
         return result;
     }
@@ -2099,7 +2197,7 @@ int main(int argc, char *argv[]) {
         char *source = read_file_with_modules(target);
         if (!source) return 1;
         g_varian_script_path = target;
-        int result = run_source(source, target);
+        int result = run_source(source, target, g_prelude_line_count);
         free(source);
         return result;
     }
@@ -2244,7 +2342,7 @@ int main(int argc, char *argv[]) {
         if (release) {
             char out_c[256];
             snprintf(out_c, sizeof(out_c), "%s.c", out_basename);
-            int res = aot_compile(source, build_entry, out_c);
+            int res = aot_compile(source, build_entry, out_c, g_prelude_byte_count);
             free(source);
             if (temp_lumen_entry) remove(build_entry);
             if (res != 0) {
@@ -2342,6 +2440,7 @@ int main(int argc, char *argv[]) {
         } else {
             Lexer lexer;
             lexer_init(&lexer, source, build_entry);
+            lexer_set_user_source_offset(&lexer, g_prelude_byte_count);
             Arena *arena = arena_create(0);
             Parser parser;
             parser_init(&parser, &lexer, arena);
@@ -2358,6 +2457,25 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             
+            SemanticResult *sem = semantic_analyze(program);
+            if (sem->had_error) {
+                for (int i = 0; i < sem->count; i++) {
+                    fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                            build_entry, sem->diagnostics[i].line, sem->diagnostics[i].column,
+                            sem->diagnostics[i].code, sem->diagnostics[i].message);
+                }
+                semantic_result_free(sem);
+                arena_destroy(arena);
+                free(source);
+                if (temp_lumen_entry) remove(build_entry);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return 1;
+            }
+            semantic_result_free(sem);
+
             Chunk chunk;
             chunk_init(&chunk);
             Compiler compiler;
@@ -2463,7 +2581,7 @@ int main(int argc, char *argv[]) {
         }
         
         g_varian_script_path = argv[1];
-        int result = run_source(source, argv[1]);
+        int result = run_source(source, argv[1], g_prelude_line_count);
         free(source);
         return result;
     }

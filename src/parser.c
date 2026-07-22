@@ -216,7 +216,7 @@ static void parser_register_struct(Parser *parser, const char *name,
 
 /* ─── Function signature registry (named arguments) ─── */
 static FunctionSig *parser_find_function(Parser *parser, const char *name) {
-    for (int i = 0; i < parser->function_count; i++) {
+    for (int i = parser->function_count - 1; i >= 0; i--) {
         if (strcmp(parser->functions[i].name, name) == 0)
             return &parser->functions[i];
     }
@@ -225,7 +225,7 @@ static FunctionSig *parser_find_function(Parser *parser, const char *name) {
 
 static void parser_register_function(Parser *parser, const char *name,
                                       char **param_names, int param_count) {
-    if (parser->function_count >= 256) return;
+    if (parser->function_count >= 1024) return;
     FunctionSig *fs = &parser->functions[parser->function_count++];
     fs->name = (char *)malloc(strlen(name) + 1);
     strcpy(fs->name, name);
@@ -325,10 +325,14 @@ static bool match(Parser *parser, TokenType type) {
 
 static SourceLoc current_loc(Parser *parser) {
     SourceLoc loc;
-    loc.filename = parser->lexer->filename;
+    int offset = (int)(parser->previous.start - parser->lexer->source);
+    loc.filename = (parser->lexer->user_source_offset > 0 &&
+                    offset < parser->lexer->user_source_offset)
+                       ? "<prelude>"
+                       : parser->lexer->filename;
     loc.line = parser->previous.line;
     loc.column = parser->previous.column;
-    loc.offset = 0;
+    loc.offset = offset;
     return loc;
 }
 
@@ -1790,15 +1794,11 @@ static AstNode *parse_stmt(Parser *parser) {
     }
 
     if (match(parser, TOKEN_BREAK)) {
-        if (parser->loop_depth <= 0)
-            parser_error(parser, "break outside loop");
         match(parser, TOKEN_SEMICOLON);
         return ast_break(parser->arena, current_loc(parser));
     }
 
     if (match(parser, TOKEN_CONTINUE)) {
-        if (parser->loop_depth <= 0)
-            parser_error(parser, "continue outside loop");
         match(parser, TOKEN_SEMICOLON);
         return ast_continue(parser->arena, current_loc(parser));
     }

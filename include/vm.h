@@ -709,7 +709,8 @@ void vm_init(VM *vm, Compiler *compiler);
    Returns true if no errors occurred during main execution AND all tests passed. */
 bool vm_run(VM *vm, bool run_tests);
 void close_upvalues(VM *vm, CallFrame *frame);
-int aot_compile(const char *source, const char *filename, const char *out_path);
+int aot_compile(const char *source, const char *filename, const char *out_path,
+                int user_source_offset);
 
 /* Execute a task's bytecode synchronously (used by native functions). */
 bool task_run(VM *vm, Task *task);

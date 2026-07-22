@@ -1,0 +1,12 @@
+fn test_loops() {
+    while true {
+        break
+    }
+    for i in 0..5 {
+        continue
+    }
+    loop {
+        break
+    }
+}
+test_loops()

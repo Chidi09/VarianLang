@@ -52,10 +52,10 @@ Type *type_tuple(Arena *arena, Type **types, int count) {
 /* ─── Node Constructors ─── */
 static AstNode *alloc_node(Arena *arena, NodeKind kind, SourceLoc loc) {
     AstNode *node = (AstNode *)arena_alloc(arena, sizeof(AstNode));
+    memset(node, 0, sizeof(AstNode));
     node->kind = kind;
     node->loc = loc;
     node->type = NULL;
-    memset(&node->literal, 0, sizeof(node->literal));
     return node;
 }
 

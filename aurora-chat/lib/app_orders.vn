@@ -1,0 +1,119 @@
+// app_orders.vn — Order creation, tracking, CSV export, and API routes.
+// Uses queue (async fulfillment), mail (confirmation), event (order.created), observer (logging).
+
+
+fn create_order(conn, c, session_key, user_id, bus) {
+    let ci = cart_items(conn, c, session_key)
+    let items = ci.items
+    if items.len() == 0 { return null }
+
+    let total_cents = ci.total_cents
+    let uid = user_id
+    if uid == null { uid = 0 }
+
+    sqlite.query(conn, "INSERT INTO orders (user_id, session_key, total_cents, status) VALUES (?, ?, ?, 'pending')", [uid, session_key, total_cents])
+    let order_rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+    let order_id = order_rows[0].id
+
+    for i in 0..items.len() {
+        let item = items[i]
+        sqlite.query(conn, "INSERT INTO order_items (order_id, product_id, qty, price_cents) VALUES (?, ?, ?, ?)", [order_id, item.product_id, item.qty, item.price_cents])
+        sqlite.query(conn, "UPDATE products SET stock = stock - ? WHERE id = ?", [item.qty, item.product_id])
+    }
+
+    sqlite.query(conn, "DELETE FROM carts WHERE session_key = ?", [session_key])
+
+    queue_submit_job("order_fulfillment", "" + order_id)
+
+    let order = sqlite.query(conn, "SELECT * FROM orders WHERE id = ?", [order_id])
+    let order_row = null
+    if order.len() > 0 { order_row = order[0] }
+
+    if c.mail_host != "" and c.mail_user != "" {
+        let msg = email("customer@example.com", "Order #" + order_id + " Confirmed")
+        msg.text("Your order #" + order_id + " for $" + format_price(total_cents) + " has been placed and is being processed.")
+        try { msg.send() } catch e {}
+    }
+
+    if bus != null {
+        bus.emit("order.created", http.create_struct(
+            ["order_id", "session_key", "total_cents", "status"],
+            [order_id, session_key, total_cents, "pending"]
+        ))
+    }
+
+    log.info_with("Order created", ["order_id", "total_cents"], [order_id, total_cents])
+
+    return order_row
+}
+
+fn track_order(conn, order_id) {
+    let rows = sqlite.query(conn, "SELECT * FROM orders WHERE id = ?", [order_id])
+    if rows.len() == 0 { return null }
+    let order = rows[0]
+    let items = sqlite.query(conn, "SELECT oi.*, p.name, p.image FROM order_items oi JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?", [order_id])
+    return http.create_struct(["order", "items"], [order, items])
+}
+
+fn export_orders_csv(conn) {
+    let rows = sqlite.query(conn, "SELECT id, user_id, session_key, total_cents, status, created FROM orders ORDER BY id")
+    let header = ["id", "user_id", "session_key", "total_cents", "status", "created"]
+    let csv_rows = [header]
+    for i in 0..rows.len() {
+        let r = rows[i]
+        csv_rows = csv_rows.push(["" + r.id, "" + r.user_id, r.session_key, "" + r.total_cents, r.status, r.created])
+    }
+    return csv_serialize(csv_rows)
+}
+
+fn register_order_api(app, conn, c, bus) {
+    queue_register_job("order_fulfillment", |payload| {
+        let order_id = payload
+        log.info_with("Processing order fulfillment", ["order_id"], [order_id])
+        task.sleep(1000)
+        try {
+            sqlite.query(conn, "UPDATE orders SET status = 'paid' WHERE id = ?", [order_id])
+            task.sleep(500)
+            sqlite.query(conn, "UPDATE orders SET status = 'shipped' WHERE id = ?", [order_id])
+        } catch e {
+            log.error_with("Order fulfillment failed", ["order_id", "error"], [order_id, "" + e])
+        }
+    })
+
+    app.post("/api/checkout", |req| {
+        let json = req.json
+        let sk = _validate.get_field(json, "session_key")
+        if sk == null or sk == "" {
+            sk = cart_session_key(req, c)
+        }
+        let uid = _validate.get_field(json, "user_id")
+        let order = create_order(conn, c, sk, uid, bus)
+        if order == null { return err_res("Cart is empty", 400) }
+        return json_res(order, 201)
+    }, "Create order", http.create_struct(
+        ["request_schema", "response_schema", "response_status"],
+        ["object", "object", 201]
+    ))
+
+    app.get("/api/orders/:id", |req| {
+        let id = _validate.get_field(req.params, "id")
+        if id == null { return err_res("Missing order id", 400) }
+        let result = track_order(conn, id)
+        if result == null { return err_res("Not found", 404) }
+        return json_res(result, 200)
+    }, "Get order", http.create_struct(
+        ["response_schema", "response_status", "error_status"],
+        ["object", 200, 404]
+    ))
+
+    app.get("/admin/orders.csv", |req| {
+        let csv = export_orders_csv(conn)
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [200, csv, "text/csv"]
+        )
+    }, "Export orders CSV", http.create_struct(
+        ["response_schema", "response_status"],
+        ["string", 200]
+    ))
+}

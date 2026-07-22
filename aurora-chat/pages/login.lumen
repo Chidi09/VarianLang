@@ -1,0 +1,48 @@
+<template>
+<Page>
+  <Nav />
+  <Section>
+    <Container size="sm">
+      <Stack gap="6" align="center" style="text-align:center">
+        <Heading size="4xl" as="h1">Sign In</Heading>
+        <Text muted={true}>Sign in to your Aurora account to view orders and manage your profile.</Text>
+        <Card style="width:100%;max-width:400px">
+          <Stack gap="4" style="text-align:left">
+            <input class="field" id="login-email" placeholder="Email" />
+            <input class="field" id="login-pass" type="password" placeholder="Password" />
+            <Button onclick="doLogin(event)">Sign In</Button>
+          </Stack>
+        </Card>
+        <Text size="sm" muted={true}>Don't have an account? <a href="/catalog" style="color:var(--lumen-primary)">Continue as guest</a></Text>
+      </Stack>
+    </Container>
+  </Section>
+  <Footer />
+</Page>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>
+<client>
+window.doLogin = async function(event) {
+  event.preventDefault();
+  let email = document.getElementById('login-email').value;
+  let pass = document.getElementById('login-pass').value;
+  let btn = event.target;
+  let original = btn.textContent;
+  btn.textContent = 'Signing In...';
+  try {
+    let res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: email, password: pass })
+    });
+    if (res.ok) window.location.href = '/account';
+    else { btn.textContent = 'Failed'; setTimeout(() => btn.textContent = original, 2000); }
+  } catch (e) {
+    btn.textContent = 'Error'; setTimeout(() => btn.textContent = original, 2000);
+  }
+};
+</client>

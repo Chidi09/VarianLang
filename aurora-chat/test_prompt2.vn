@@ -1,0 +1,3 @@
+let obj = http.create_struct(["tool","query","product_id","qty"], ["search","Lamp",0,1])
+let s = "IMPORTANT: ... " + json_encode(obj) + ">>"
+print(s)

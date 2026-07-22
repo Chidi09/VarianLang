@@ -1,0 +1,12 @@
+{
+  "name": "aurora-chat",
+  "version": "0.1.0",
+  "description": "Aurora example #2 — AI shopping assistant (text to buy) on a full Zenith + Lumen store",
+  "scripts": {
+    "seed": "../vn run db/seed.vn",
+    "build": "../vn run build_pages.vn",
+    "dev": "../vn run main.vn"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

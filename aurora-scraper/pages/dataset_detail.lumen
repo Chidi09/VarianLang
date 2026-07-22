@@ -1,0 +1,109 @@
+<template>
+<link rel="stylesheet" href="/public/styles/tailwind.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+<Page class="flex min-h-screen bg-[#051424]">
+  <Sidebar active_datasets={true} />
+
+  <div class="flex-1 flex flex-col min-h-screen overflow-x-hidden relative pb-12">
+    <div class="fixed inset-0 z-[-1] pointer-events-none">
+      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#3b82f6]/10 rounded-full blur-[150px]"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#1d4ed8]/10 rounded-full blur-[150px]"></div>
+    </div>
+
+    <Header />
+
+    <main class="flex-grow pt-24 px-10 max-w-[1440px] mx-auto w-full flex flex-col gap-6 animate-fade-in">
+      <div class="flex items-center gap-4 border-b border-[#3b494b]/20 pb-4">
+        <a href="/datasets" class="w-10 h-10 rounded-full bg-[#122131] border border-[#3b494b]/30 flex items-center justify-center text-[#b9cacb] hover:text-[#3b82f6] transition-colors">
+          <span class="material-symbols-outlined">arrow_back</span>
+        </a>
+        <div>
+          <h2 class="font-bold text-2xl text-white">Dataset Record #DAT-{{ dataset.id }}</h2>
+          <p class="text-xs text-[#b9cacb] mt-1">{{ dataset.url }}</p>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+        
+        <!-- Metadata Sidebar -->
+        <aside class="lg:col-span-4 flex flex-col gap-6">
+          <div class="glass-panel rounded-xl p-6 flex flex-col gap-4">
+            <h3 class="font-bold text-white text-sm border-b border-[#3b494b]/20 pb-3 flex items-center gap-2">
+              <span class="material-symbols-outlined text-[#3b82f6] text-[18px]">info</span>
+              Extraction Metadata
+            </h3>
+            
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Page Title</span>
+              <span class="text-sm font-semibold text-white">{{ dataset.title }}</span>
+            </div>
+            
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Status</span>
+              {{#if dataset.status == 'success'}}
+                <span class="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded bg-green-500/10 text-green-400 border border-green-500/20 text-[10px] font-semibold">SUCCESS</span>
+              {{else}}
+                <span class="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] font-semibold">FAILED</span>
+              {{/if}}
+            </div>
+            
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Job ID Reference</span>
+              <a href="/jobs" class="text-sm font-mono text-[#3b82f6] hover:underline">#JOB-{{ dataset.job_id }}</a>
+            </div>
+            
+            <div class="flex flex-col gap-1">
+              <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Scraped At</span>
+              <span class="text-xs text-[#b9cacb] font-mono">{{ dataset.created }}</span>
+            </div>
+          </div>
+        </aside>
+
+        <!-- Main JSON Viewer -->
+        <section class="lg:col-span-8 flex flex-col gap-6">
+          <div class="glass-panel rounded-xl flex-1 flex flex-col overflow-hidden min-h-[500px]">
+            <div class="p-4 border-b border-[#3b494b]/20 flex justify-between items-center bg-[#122131]/30">
+              <h3 class="font-bold text-white flex items-center gap-2 text-sm">
+                <span class="material-symbols-outlined text-[#dcb8ff]">data_object</span>
+                Extracted JSON Payload
+              </h3>
+              <button class="px-3 py-1.5 rounded-lg bg-[#273647]/50 border border-[#3b494b]/30 text-[#b9cacb] hover:text-white transition-colors flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider" onclick="copyJson()">
+                <span class="material-symbols-outlined text-[14px]">content_copy</span> Copy
+              </button>
+            </div>
+            
+            <div class="flex-grow bg-[#020617] p-6 overflow-auto">
+              <pre id="json-content" class="font-mono text-sm text-[#dcb8ff] leading-relaxed whitespace-pre-wrap">{{ dataset.extracted_json }}</pre>
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  </div>
+</Page>
+</template>
+
+<script>
+fn state() { return { dataset: {} } }
+</script>
+
+<client>
+window.copyJson = function() {
+    let content = document.getElementById("json-content").innerText;
+    navigator.clipboard.writeText(content).then(() => {
+        alert("JSON copied to clipboard.");
+    });
+};
+
+// Pretty print on load
+document.addEventListener("DOMContentLoaded", () => {
+    let pre = document.getElementById("json-content");
+    try {
+        let obj = JSON.parse(pre.innerText);
+        pre.innerText = JSON.stringify(obj, null, 2);
+    } catch(e) {}
+});
+</client>

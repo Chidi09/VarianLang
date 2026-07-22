@@ -1,0 +1,174 @@
+<template>
+<nav class="aurora-nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">
+      <span class="brand-mark">A</span>
+      <span class="brand-text">Aurora Chat</span>
+    </a>
+    <div class="nav-links">
+      <a href="/catalog" class="nav-link">Catalog</a>
+      <a href="/chat" class="nav-link">Chat</a>
+      <CartBadge />
+      <a href="/login" class="nav-link">Sign In</a>
+      <button class="theme-toggle" onclick="toggleTheme()">
+        <span class="material-symbols-rounded">dark_mode</span>
+      </button>
+    </div>
+  </div>
+</nav>
+</template>
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@24,400,0,0');
+:root {
+  --lumen-font: 'Outfit', system-ui, sans-serif;
+  --font-display: 'Space Grotesk', sans-serif;
+  --lumen-primary: #6366f1;
+  --lumen-primary-fg: #ffffff;
+  --lumen-bg: #fafafa;
+  --lumen-surface: #ffffff;
+  --lumen-surface-2: #f4f4f5;
+  --lumen-fg: #09090b;
+  --lumen-muted: #e4e4e7;
+  --lumen-muted-fg: #71717a;
+  --lumen-border: #e4e4e7;
+  --lumen-radius: 12px;
+}
+:root.dark {
+  --lumen-bg: #09090b;
+  --lumen-surface: #18181b;
+  --lumen-surface-2: #27272a;
+  --lumen-fg: #fafafa;
+  --lumen-muted: #27272a;
+  --lumen-muted-fg: #a1a1aa;
+  --lumen-border: #27272a;
+  --lumen-primary: #818cf8;
+}
+.lmn-app {
+  animation: page-fade-in 0.3s ease-out forwards;
+}
+@keyframes page-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+/* Global Form field styling for Login / Checkout / Cart */
+.field {
+  width: 100%;
+  padding: 0.8rem 1.2rem;
+  font-family: var(--lumen-font);
+  font-size: 0.9375rem;
+  border: 1px solid var(--lumen-border);
+  border-radius: 10px;
+  background: var(--lumen-surface);
+  color: var(--lumen-fg);
+  box-sizing: border-box;
+  transition: all 0.2s ease;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--lumen-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--lumen-primary) 20%, transparent);
+}
+.aurora-nav {
+  position:sticky;
+  top:0;
+  z-index:100;
+  background:color-mix(in srgb, var(--lumen-bg) 85%, transparent);
+  border-bottom:1px solid var(--lumen-border);
+  backdrop-filter:blur(12px);
+  -webkit-backdrop-filter:blur(12px);
+}
+.nav-inner {
+  max-width:1040px;
+  margin:0 auto;
+  padding:0 1.25rem;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  height:64px;
+}
+.nav-brand {
+  display:flex;
+  align-items:center;
+  gap:0.5rem;
+  text-decoration:none;
+  color:var(--lumen-fg);
+}
+.brand-mark {
+  width:36px;
+  height:36px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  background:var(--lumen-primary);
+  color:var(--lumen-primary-fg);
+  border-radius:10px;
+  font-weight:800;
+  font-size:1.125rem;
+}
+.brand-text {
+  font-family: var(--font-display);
+  font-weight:700;
+  font-size:1.25rem;
+  letter-spacing: -0.02em;
+  color:var(--lumen-fg);
+}
+.nav-links {
+  display:flex;
+  align-items:center;
+  gap:0.5rem;
+}
+.nav-link {
+  padding:0.5rem 0.85rem;
+  border-radius:8px;
+  font-size:0.9375rem;
+  font-weight:500;
+  color:var(--lumen-muted-fg);
+  text-decoration:none;
+  transition:all 0.15s ease;
+}
+.nav-link:hover {
+  background:var(--lumen-muted);
+  color:var(--lumen-fg);
+}
+.theme-toggle {
+  background:transparent;
+  border:none;
+  color:var(--lumen-muted-fg);
+  cursor:pointer;
+  padding:0.5rem;
+  border-radius:8px;
+  display:flex;
+  align-items:center;
+  transition:color 0.15s ease;
+}
+.theme-toggle:hover {
+  color:var(--lumen-fg);
+  background:var(--lumen-muted);
+}
+.material-symbols-rounded {
+  font-size: 20px;
+}
+</style>
+
+<script>
+fn state() { return { isDark: false } }
+
+</script>
+<client>
+function toggleTheme() {
+  document.documentElement.classList.toggle('dark');
+  let isDark = document.documentElement.classList.contains('dark');
+  localStorage.setItem('theme', isDark ? 'dark' : 'light');
+}
+if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+  document.documentElement.classList.add('dark');
+}
+</client>

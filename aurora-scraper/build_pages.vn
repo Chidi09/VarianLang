@@ -1,0 +1,40 @@
+// build_pages.vn — Compile pages/*.lumen + components/*.lumen into .gen/pages.vn.
+// Run before main.vn: `vn run build_pages.vn && vn run main.vn`
+
+let compiled = []
+let code = ""
+
+// 1. Compile all components first
+let comp_dir = "pages/components"
+let comp_files = io.list_dir(comp_dir)
+if comp_files != null {
+    for i in 0..comp_files.len() {
+        let f = comp_files[i]
+        if f.ends_with(".lumen") {
+            let name = _lumen_pascal(f.substring(0, f.len() - 6))
+            let src = io.read_text(comp_dir + "/" + f)
+            if src != null {
+                code = code + lumen_compile_source(name, src) + "\n"
+                compiled = compiled.push(name)
+            }
+        }
+    }
+}
+
+// 2. Compile all pages
+let pages = _lumen_collect_pages("pages", "", "", [], [], "", "")
+for pi in 0..pages.len() {
+    let p = pages[pi]
+    let src = io.read_text(p.path)
+    if src != null {
+        let skip = false
+        for ci in 0..compiled.len() { if compiled[ci] == p.comp { skip = true } }
+        if !skip {
+            code = code + lumen_compile_source(p.comp, src) + "\n"
+            compiled = compiled.push(p.comp)
+        }
+    }
+}
+
+io.write_text(".gen/pages.vn", code)
+print("[build] " + pages.len() + " page(s), " + compiled.len() + " total component(s) -> .gen/pages.vn")

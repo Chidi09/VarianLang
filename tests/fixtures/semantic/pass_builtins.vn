@@ -1,0 +1,3 @@
+let res = math.sqrt(16.0)
+let s = str(res)
+print(s)

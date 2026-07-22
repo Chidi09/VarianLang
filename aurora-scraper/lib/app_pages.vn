@@ -1,0 +1,233 @@
+// lib/app_pages.vn — Mount compiled Lumen page components and bind DB data providers.
+
+use "lib/config.vn"
+use "lib/db.vn"
+
+fn mount_app_pages(app, conn, cfg) {
+    // 1. Public Landing Page at /
+    let index_comp = _lumen_get_component("Index")
+    if index_comp != null {
+        lumen_mount_data(app, "/", index_comp, |req| {
+            return http.create_struct([], [])
+        })
+    }
+
+    // 1b. Dashboard (authenticated) at /dashboard
+    let dashboard_comp = _lumen_get_component("Index")
+    if dashboard_comp != null {
+        lumen_mount_data(app, "/dashboard", dashboard_comp, |req| {
+            // Fetch Scrapers
+            let scraper_rows = sqlite.query(conn, "SELECT * FROM scrapers ORDER BY id DESC")
+            let scrapers = []
+            for i in 0..scraper_rows.len() {
+                let s = scraper_rows[i]
+                scrapers = scrapers.push(http.create_struct(
+                    ["id", "name", "prompt", "created"],
+                    [s.id, s.name, s.prompt, s.created]
+                ))
+            }
+            
+            // Fetch Jobs
+            let job_rows = sqlite.query(conn, "SELECT j.*, s.name as scraper_name FROM jobs j LEFT JOIN scrapers s ON j.scraper_id = s.id ORDER BY j.id DESC LIMIT 10")
+            let jobs = []
+            let active_count = 0
+            for i in 0..job_rows.len() {
+                let j = job_rows[i]
+                if j.status == "running" or j.status == "pending" {
+                    active_count = active_count + 1
+                }
+                let scraper_name = j.scraper_name
+                if scraper_name == null { scraper_name = "Ad-hoc Scraper" }
+                jobs = jobs.push(http.create_struct(
+                    ["id", "scraper_name", "target_url", "depth", "status", "progress", "started_at"],
+                    [j.id, scraper_name, j.target_url, j.depth, j.status, j.progress, j.started_at]
+                ))
+            }
+            
+            // Fetch stats
+            let discovered_rows = sqlite.query(conn, "SELECT COUNT(*) as c FROM datasets")
+            let discovered = 0
+            if discovered_rows.len() > 0 { discovered = discovered_rows[0].c }
+            
+            let analyzed_rows = sqlite.query(conn, "SELECT COUNT(*) as c FROM datasets WHERE extracted_json != '{}' and extracted_json != ''")
+            let analyzed = 0
+            if analyzed_rows.len() > 0 { analyzed = analyzed_rows[0].c }
+            
+            return http.create_struct(
+                ["scrapers", "jobs", "active_jobs_count", "pages_discovered", "pages_analyzed", "active_threads"],
+                [scrapers, jobs, active_count, discovered, analyzed, active_count * 2]
+            )
+        })
+    }
+    
+    // 2. Scrapers Library Page
+    let library_comp = _lumen_get_component("Library")
+    if library_comp != null {
+        lumen_mount_data(app, "/library", library_comp, |req| {
+            let scraper_rows = sqlite.query(conn, "SELECT * FROM scrapers ORDER BY id DESC")
+            let scrapers = []
+            for i in 0..scraper_rows.len() {
+                let s = scraper_rows[i]
+                scrapers = scrapers.push(http.create_struct(
+                    ["id", "name", "prompt", "created"],
+                    [s.id, s.name, s.prompt, s.created]
+                ))
+            }
+            return http.create_struct(["scrapers"], [scrapers])
+        })
+    }
+    
+    // 3. Dataset Explorer Page
+    let datasets_comp = _lumen_get_component("Datasets")
+    if datasets_comp != null {
+        lumen_mount_data(app, "/datasets", datasets_comp, |req| {
+            let data_rows = sqlite.query(conn, "SELECT d.*, j.target_url FROM datasets d LEFT JOIN jobs j ON d.job_id = j.id ORDER BY d.id DESC LIMIT 100")
+            let datasets = []
+            for i in 0..data_rows.len() {
+                let d = data_rows[i]
+                datasets = datasets.push(http.create_struct(
+                    ["id", "url", "title", "status", "extracted_json", "created"],
+                    [d.id, d.url, d.title, d.status, d.extracted_json, d.created]
+                ))
+            }
+            return http.create_struct(["datasets"], [datasets])
+        })
+    }
+    
+    // 4. API & Webhooks Page
+    let api_comp = _lumen_get_component("Api")
+    if api_comp != null {
+        lumen_mount_data(app, "/api", api_comp, |req| {
+            let key_rows = sqlite.query(conn, "SELECT * FROM api_keys ORDER BY id DESC")
+            let keys_list = []
+            for i in 0..key_rows.len() {
+                let k = key_rows[i]
+                keys_list = keys_list.push(http.create_struct(
+                    ["id", "name", "token", "created"],
+                    [k.id, k.name, k.token, k.created]
+                ))
+            }
+            
+            let webhook_rows = sqlite.query(conn, "SELECT * FROM webhooks ORDER BY id DESC")
+            let webhooks_list = []
+            for i in 0..webhook_rows.len() {
+                let w = webhook_rows[i]
+                webhooks_list = webhooks_list.push(http.create_struct(
+                    ["id", "name", "url", "events", "created"],
+                    [w.id, w.name, w.url, w.events, w.created]
+                ))
+            }
+            
+            return http.create_struct(["api_keys", "webhooks"], [keys_list, webhooks_list])
+        })
+    }
+    
+    // 5. Workflow Builder Page
+    let workflow_comp = _lumen_get_component("Workflow")
+    if workflow_comp != null {
+        lumen_mount_data(app, "/workflow", workflow_comp, |req| {
+            let scraper_rows = sqlite.query(conn, "SELECT * FROM scrapers ORDER BY id DESC")
+            let scrapers = []
+            for i in 0..scraper_rows.len() {
+                let s = scraper_rows[i]
+                scrapers = scrapers.push(http.create_struct(
+                    ["id", "name", "prompt", "created"],
+                    [s.id, s.name, s.prompt, s.created]
+                ))
+            }
+            return http.create_struct(["scrapers"], [scrapers])
+        })
+    }
+    
+    // 6. Synthetic Intelligence Interface Page
+    let ai_comp = _lumen_get_component("Ai")
+    if ai_comp != null {
+        lumen_mount_data(app, "/ai", ai_comp, |req| {
+            let data_rows = sqlite.query(conn, "SELECT * FROM datasets WHERE extracted_json != '{}' and extracted_json != '' ORDER BY id DESC LIMIT 50")
+            let datasets = []
+            for i in 0..data_rows.len() {
+                let d = data_rows[i]
+                datasets = datasets.push(http.create_struct(
+                    ["id", "url", "title", "extracted_json"],
+                    [d.id, d.url, d.title, d.extracted_json]
+                ))
+            }
+            return http.create_struct(["datasets"], [datasets])
+        })
+    }
+    
+    // 7. Settings Page
+    let settings_comp = _lumen_get_component("Settings")
+    if settings_comp != null {
+        lumen_mount_data(app, "/settings", settings_comp, |req| {
+            let model = "gemini-2.5-flash"
+            let timeout = "5000"
+            let threads = "8"
+            
+            let s_rows = sqlite.query(conn, "SELECT key, value FROM settings")
+            for i in 0..s_rows.len() {
+                if s_rows[i].key == "gemini_model" { model = s_rows[i].value }
+                if s_rows[i].key == "crawler_timeout" { timeout = s_rows[i].value }
+                if s_rows[i].key == "crawler_threads" { threads = s_rows[i].value }
+            }
+            
+            return http.create_struct(
+                ["gemini_model", "crawler_timeout", "crawler_threads"],
+                [model, timeout, threads]
+            )
+        })
+    }
+    
+    // 8. Login Page
+    let login_comp = _lumen_get_component("Login")
+    if login_comp != null {
+        lumen_mount_data(app, "/login", login_comp, |req| {
+            return http.create_struct([], [])
+        })
+    }
+    
+    // 9. Register Page
+    let register_comp = _lumen_get_component("Register")
+    if register_comp != null {
+        lumen_mount_data(app, "/register", register_comp, |req| {
+            return http.create_struct([], [])
+        })
+    }
+    
+    // 10. Jobs History Page
+    let jobs_comp = _lumen_get_component("Jobs")
+    if jobs_comp != null {
+        lumen_mount_data(app, "/jobs", jobs_comp, |req| {
+            let job_rows = sqlite.query(conn, "SELECT j.*, s.name as scraper_name FROM jobs j LEFT JOIN scrapers s ON j.scraper_id = s.id ORDER BY j.id DESC LIMIT 100")
+            let jobs = []
+            for i in 0..job_rows.len() {
+                let j = job_rows[i]
+                let scraper_name = j.scraper_name
+                if scraper_name == null { scraper_name = "Ad-hoc Scraper" }
+                jobs = jobs.push(http.create_struct(
+                    ["id", "scraper_name", "target_url", "depth", "status", "progress", "started_at"],
+                    [j.id, scraper_name, j.target_url, j.depth, j.status, j.progress, j.started_at]
+                ))
+            }
+            return http.create_struct(["jobs"], [jobs])
+        })
+    }
+    
+    // 11. Dataset Detail Page
+    let dataset_comp = _lumen_get_component("Dataset_detail")
+    if dataset_comp != null {
+        lumen_mount_data(app, "/datasets/:id", dataset_comp, |req| {
+            let id = req.params["id"]
+            let rows = sqlite.query(conn, "SELECT d.*, j.target_url as url, j.status FROM datasets d LEFT JOIN jobs j ON d.job_id = j.id WHERE d.id = ?", [id])
+            if rows.len() == 0 {
+                return http.create_struct(["dataset"], [null])
+            }
+            let d = rows[0]
+            let dataset = http.create_struct(
+                ["id", "job_id", "url", "title", "status", "extracted_json", "created"],
+                [d.id, d.job_id, d.url, d.title, d.status, d.extracted_json, d.created]
+            )
+            return http.create_struct(["dataset"], [dataset])
+        })
+    }
+}

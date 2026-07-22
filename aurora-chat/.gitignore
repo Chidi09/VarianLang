@@ -1,0 +1,4 @@
+.env
+*.db
+.gen/
+public/uploads/

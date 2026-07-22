@@ -1,0 +1,83 @@
+// app_auth.vn — User registration, login, session management.
+// Uses auth module (zenith_auth) for password hashing + crypto for sessions.
+// Uses storage for avatar uploads.
+
+
+fn register_auth(app, conn, c) {
+    app.post("/api/register", |req| {
+        let json = req.json
+        let email = _validate.get_field(json, "email")
+        let pass = _validate.get_field(json, "password")
+        let name = _validate.get_field(json, "name")
+
+        let email_v = validate.str().is_email().parse(email)
+        if !email_v.success { return err_res("Valid email required", 400) }
+
+        let pass_v = validate.str().min(8).parse(pass)
+        if !pass_v.success { return err_res("Password must be at least 8 characters", 400) }
+
+        if name == null or name == "" { return err_res("Name is required", 400) }
+
+        let existing = sqlite.query(conn, "SELECT id FROM users WHERE email = ?", [email_v.data])
+        if existing.len() > 0 { return err_res("Email already registered", 409) }
+
+        let hash = zenith_auth.hash_password(pass)
+        let token = crypto.random_string(32)
+        sqlite.query(conn, "INSERT INTO users (email, pass_hash, name) VALUES (?, ?, ?)", [email_v.data, hash, name])
+        let rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+        let uid = rows[0].id
+
+        let session_data = http.create_struct(["uid", "email", "name", "token"], [uid, email_v.data, name, token])
+        let resp = json_res(http.create_struct(["uid", "email"], [uid, email_v.data]), 201)
+        return session_set(resp, session_data, c.secret_key, null)
+    }, "Register user", http.create_struct(
+        ["request_schema", "response_schema", "response_status"],
+        ["object", "object", 201]
+    ))
+
+    app.post("/api/login", |req| {
+        let json = req.json
+        let email = _validate.get_field(json, "email")
+        let pass = _validate.get_field(json, "password")
+        if email == null or pass == null { return err_res("Email and password required", 400) }
+
+        let rows = sqlite.query(conn, "SELECT id, name, pass_hash FROM users WHERE email = ?", [email])
+        if rows.len() == 0 { return err_res("Invalid credentials", 401) }
+
+        let u = rows[0]
+        let valid = zenith_auth.verify_password(pass, u.pass_hash)
+        if !valid { return err_res("Invalid credentials", 401) }
+
+        let session_data = http.create_struct(["uid", "email", "name"], [u.id, email, u.name])
+        let resp = json_res(http.create_struct(["uid", "email"], [u.id, email]), 200)
+        return session_set(resp, session_data, c.secret_key, null)
+    }, "Login user", http.create_struct(
+        ["request_schema", "response_schema", "error_status"],
+        ["object", "object", 401]
+    ))
+
+    app.post("/api/logout", |req| {
+        let resp = json_res(http.create_struct(["ok"], [true]), 200)
+        let empty = http.create_struct([], [])
+        return session_set(resp, empty, c.secret_key, null)
+    }, "Logout user", null)
+
+    app.post("/api/avatar", |req| {
+        let json = req.json
+        let session = session_get(req, c.secret_key)
+        let uid = _validate.get_field(session, "uid")
+        if uid == null { return err_res("Not logged in", 401) }
+
+        let avatar_data = _validate.get_field(json, "data")
+        if avatar_data == null { return err_res("Missing avatar data", 400) }
+
+        let key = "avatars/" + uid + ".png"
+        storage_put(key, avatar_data)
+
+        sqlite.query(conn, "UPDATE users SET avatar = ? WHERE id = ?", [key, uid])
+        return json_res(http.create_struct(["avatar"], [key]), 200)
+    }, "Upload avatar", http.create_struct(
+        ["request_schema", "response_schema", "response_status"],
+        ["object", "object", 200]
+    ))
+}

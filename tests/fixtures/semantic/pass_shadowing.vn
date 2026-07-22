@@ -1,0 +1,9 @@
+fn test_shadowing() {
+    let x = 10
+    if true {
+        let x = 20
+        print(x)
+    }
+    print(x)
+}
+test_shadowing()

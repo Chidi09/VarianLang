@@ -1,0 +1,44 @@
+<template>
+<div class="chat-bubble {{#if is_user}}user{{else}}assistant{{/if}}">
+  <div class="bubble-content">
+    {{! text }}
+  </div>
+</div>
+</template>
+
+<style scoped>
+.chat-bubble {
+  display: flex;
+  margin-bottom: 1rem;
+  width: 100%;
+}
+.chat-bubble.user {
+  justify-content: flex-end;
+}
+.chat-bubble.assistant {
+  justify-content: flex-start;
+}
+.bubble-content {
+  max-width: 80%;
+  padding: 0.75rem 1rem;
+  border-radius: 16px;
+  font-size: 0.9375rem;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+.user .bubble-content {
+  background: var(--lumen-primary);
+  color: var(--lumen-primary-fg);
+  border-bottom-right-radius: 4px;
+}
+.assistant .bubble-content {
+  background: var(--lumen-surface);
+  color: var(--lumen-fg);
+  border: 1px solid var(--lumen-border);
+  border-bottom-left-radius: 4px;
+}
+</style>
+
+<script>
+fn state() { return { is_user: false, text: "" } }
+</script>

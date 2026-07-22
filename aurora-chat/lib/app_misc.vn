@@ -1,0 +1,65 @@
+// app_misc.vn — Miscellaneous service functions.
+// fetch (shipping quote), seo (page meta), migration (DB versioning), event (bus), validate (checkout).
+
+
+fn shipping_quote(dest) {
+    let url = "https://httpbin.org/post"
+    let resp = fetch(url)
+        .header("Content-Type", "application/json")
+        .timeout(5000)
+        .post(http.create_struct(["destination", "weight_kg"], [dest, 1]))
+    if resp == null { return http.create_struct(["cost_cents", "carrier", "days"], [0, "unknown", 0]) }
+    return http.create_struct(["cost_cents", "carrier", "days"], [999, "Standard", 5])
+}
+
+fn page_seo(title, desc) {
+    let og = seo_og_all(title, desc, "", "", "Aurora Chat Shop", "en", "website")
+    let twitter = seo_twitter_all("summary_large_image", "", title, desc, "", "")
+    let canonical = seo_canonical("")
+    return og + twitter + canonical
+}
+
+fn run_migrations(conn) {
+    let m = new_migrator(conn)
+    m.register_up("001_core_schema", [
+        "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, price_cents INTEGER NOT NULL, stock INTEGER NOT NULL DEFAULT 0, image TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'general', featured INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL DEFAULT (datetime('now')))",
+        "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, pass_hash TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT (datetime('now')))",
+        "CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, session_key TEXT NOT NULL DEFAULT '', total_cents INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL DEFAULT (datetime('now')))",
+        "CREATE TABLE IF NOT EXISTS order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, product_id INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 1, price_cents INTEGER NOT NULL)",
+        "CREATE TABLE IF NOT EXISTS carts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL, product_id INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 1, UNIQUE(session_key, product_id))",
+        "CREATE TABLE IF NOT EXISTS chat_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL UNIQUE, user_id INTEGER, created TEXT NOT NULL DEFAULT (datetime('now')))",
+        "CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT NOT NULL DEFAULT (datetime('now')))"
+    ])
+    m.up()
+}
+
+fn app_bus() {
+    let bus = new_event_bus()
+    bus.on("order.created", |data| {
+        log.info_with("Order event received", ["order_id", "total_cents"], [data.order_id, data.total_cents])
+    })
+    return bus
+}
+
+fn validate_checkout(payload) {
+    let name = _validate.get_field(payload, "name")
+    let email = _validate.get_field(payload, "email")
+    let errors = []
+
+    if name == null or name == "" {
+        errors = errors.push("Name is required")
+    }
+    if email == null or email == "" {
+        errors = errors.push("Email is required")
+    } else {
+        let ev = validate.str().is_email().parse(email)
+        if !ev.success {
+            errors = errors.push("Invalid email address")
+        }
+    }
+
+    if errors.len() > 0 {
+        return http.create_struct(["ok", "errors"], [false, errors])
+    }
+    return http.create_struct(["ok", "errors"], [true, []])
+}

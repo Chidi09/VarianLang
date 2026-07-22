@@ -1,0 +1,41 @@
+<template>
+<link rel="stylesheet" href="/public/styles/tailwind.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+<header class="bg-[#051424]/50 backdrop-blur-xl border-b border-[#3b494b]/20 flex justify-between items-center px-10 w-full h-16 fixed top-0 z-50">
+  <div class="flex items-center gap-6">
+    <div class="flex items-center gap-2">
+      <span class="material-symbols-outlined text-[#3b82f6] text-[28px]" style="font-variation-settings: 'FILL' 1;">rocket_launch</span>
+      <span class="font-bold text-[20px] bg-gradient-to-r from-[#3b82f6] to-[#dcb8ff] bg-clip-text text-transparent">AURORA</span>
+    </div>
+    <nav class="hidden md:flex gap-6">
+      <a class="text-on-surface hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/">Dashboard</a>
+      <a class="text-[#b9cacb] hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/library">Scrapers</a>
+      <a class="text-[#b9cacb] hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/datasets">Datasets</a>
+      <a class="text-[#b9cacb] hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/workflow">Workflow</a>
+      <a class="text-[#b9cacb] hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/api">API & Webhooks</a>
+      <a class="text-[#b9cacb] hover:text-[#3b82f6] transition-colors text-sm font-medium" href="/ai">AI Chat</a>
+    </nav>
+  </div>
+  <div class="flex items-center gap-6">
+    <div class="hidden lg:flex items-center gap-2 bg-[#0d1c2d] px-3 py-1.5 rounded-full border border-[#3b494b]/30">
+      <div class="w-2 h-2 rounded-full bg-[#3b82f6] animate-pulse-dot shadow-[0_0_8px_#3b82f6]"></div>
+      <span class="text-[11px] font-semibold text-[#b9cacb]">Live Server Connection</span>
+    </div>
+    <div class="flex items-center gap-4 text-[#b9cacb]">
+      <a href="/settings" class="hover:text-[#3b82f6] transition-colors flex"><span class="material-symbols-outlined">settings</span></a>
+      <div class="w-8 h-8 rounded-full bg-[#273647] overflow-hidden border border-[#849495]/30">
+        <img class="w-full h-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCKUZ1QstX2y50tQB5xFabm5AGOOEVKubN6C0m_RGl5TjoJID7n4o_7KhMMuAciqMOJvqenFqOR5ZJeZQrbZn8b2g3z3GD8rmEoDUs13NJ9WNnAQfxPJsfKVpAL6WP0S_4_AIQDWNVD0Oeb_S3PrNw1PQ8mtLh2h1B5gCHbIAJ-OWXaEzoSIRulYdGCFDXOq8da4KqK-AscC9_fNU4yTp0eG2fn7g_hO5wkaGTh8mrHhx4Oe-hD47U4oBPfKfISYzDNbTSiUS4OMA" />
+      </div>
+    </div>
+  </div>
+</header>
+</template>
+
+<script>
+fn state() {
+  return {}
+}
+</script>

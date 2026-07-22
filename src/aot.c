@@ -1,3 +1,4 @@
+#include "semantic.h"
 #include "vm.h"
 #include "parser.h"
 #include "lexer.h"
@@ -80,9 +81,11 @@ static void output_val_serialize(FILE *out, Value val, ObjFunction **funcs, int 
     }
 }
 
-int aot_compile(const char *source, const char *filename, const char *out_path) {
+int aot_compile(const char *source, const char *filename, const char *out_path,
+                int user_source_offset) {
     Lexer lexer;
     lexer_init(&lexer, source, filename);
+    lexer_set_user_source_offset(&lexer, user_source_offset);
 
     Arena *arena = arena_create(0);
     Parser parser;
@@ -94,6 +97,20 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
         arena_destroy(arena);
         return 1;
     }
+
+    SemanticResult *sem = semantic_analyze(program);
+    if (sem->had_error) {
+        for (int i = 0; i < sem->count; i++) {
+            fprintf(stderr, "AOT semantic error in %s:%d:%d [%s]: %s\n",
+                    filename ? filename : "<script>", sem->diagnostics[i].line,
+                    sem->diagnostics[i].column, sem->diagnostics[i].code,
+                    sem->diagnostics[i].message);
+        }
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        return 1;
+    }
+    semantic_result_free(sem);
 
     Chunk chunk;
     chunk_init(&chunk);
