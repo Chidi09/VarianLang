@@ -1,0 +1,80 @@
+// Regression tests for the Zenith template engine (render / render_response)
+// after its extraction to vn_modules/zenith/template.vn, loaded from
+// vn_modules/zenith.vn via `use "zenith"` — see
+// docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md. No dedicated tests existed
+// for this engine before the extraction; these pin its documented behavior
+// (docs/planning comment block above the `use "zenith"` line in zenith.vn)
+// so a future refactor of the package can't silently change semantics.
+
+test "render interpolates a dotted path with HTML escaping by default" {
+    let ctx = http.create_struct(["user"], [http.create_struct(["name"], ["<b>Ada</b>"])])
+    let html = render("Hi <%= user.name %>!", ctx)
+    assert_eq(html, "Hi &lt;b&gt;Ada&lt;/b&gt;!")
+}
+
+test "render supports raw (unescaped) interpolation with <%- %>" {
+    let ctx = http.create_struct(["user"], [http.create_struct(["name"], ["<b>Ada</b>"])])
+    let html = render("Hi <%- user.name %>!", ctx)
+    assert_eq(html, "Hi <b>Ada</b>!")
+}
+
+test "render treats a missing path as empty string" {
+    let ctx = http.create_struct(["user"], [http.create_struct(["name"], ["Ada"])])
+    let html = render("Hi <%= user.missing %>!", ctx)
+    assert_eq(html, "Hi !")
+}
+
+test "render if/else picks the truthy branch" {
+    let truthy_ctx = http.create_struct(["flag"], [true])
+    let falsy_ctx = http.create_struct(["flag"], [false])
+    let tpl = "<% if flag %>YES<% else %>NO<% endif %>"
+    assert_eq(render(tpl, truthy_ctx), "YES")
+    assert_eq(render(tpl, falsy_ctx), "NO")
+}
+
+test "render if without else renders nothing when falsy" {
+    let ctx = http.create_struct(["flag"], [false])
+    assert_eq(render("<% if flag %>YES<% endif %>", ctx), "")
+}
+
+test "render treats 0, empty string, and null as falsy" {
+    let ctx = http.create_struct(["a", "b", "c"], [0, "", null])
+    let tpl = "<% if a %>A<% endif %><% if b %>B<% endif %><% if c %>C<% endif %>"
+    assert_eq(render(tpl, ctx), "")
+}
+
+test "render for-loop iterates items and binds the loop variable" {
+    let ctx = http.create_struct(["items"], [["a", "b", "c"]])
+    let html = render("<% for x in items %>[<%= x %>]<% endfor %>", ctx)
+    assert_eq(html, "[a][b][c]")
+}
+
+test "render for-loop over an empty list renders nothing" {
+    let ctx = http.create_struct(["items"], [[]])
+    assert_eq(render("<% for x in items %>[<%= x %>]<% endfor %>", ctx), "")
+}
+
+test "render for-loop variable shadows the outer context" {
+    let ctx = http.create_struct(["x", "items"], ["outer", ["inner"]])
+    let html = render("<%= x %><% for x in items %><%= x %><% endfor %><%= x %>", ctx)
+    assert_eq(html, "outerinnerouter")
+}
+
+test "render nested if inside for-loop" {
+    let ctx = http.create_struct(["items"], [[1, 0, 2]])
+    let tpl = "<% for n in items %><% if n %>+<% else %>-<% endif %><% endfor %>"
+    assert_eq(render(tpl, ctx), "+-+")
+}
+
+test "render skips an unknown control directive without emitting it" {
+    let ctx = http.create_struct([], [])
+    assert_eq(render("a<% bogus %>b", ctx), "ab")
+}
+
+test "render_response wraps render() output in a 200 text/html Response" {
+    let ctx = http.create_struct(["name"], ["World"])
+    let resp = render_response("Hello, <%= name %>!", ctx)
+    assert_eq(resp.status, 200)
+    assert_eq(resp.content_type, "text/html")
+    assert_eq(resp.body, "Hello, World!")
+}

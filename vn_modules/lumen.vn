@@ -4404,57 +4404,13 @@ fn _lumen_shell(inner, ws_path, manifest) {
 // Modules are opt-in: only emitted if the page statically references the attribute.
 // Every brace is escaped as \{/\} for Varian string interpolation.
 
-fn _lumen_module(name) {
-    if name == "event-bridge" {
-        return "(function()\{var q=[];window.__lumen_push=function(h,v)\{var m=JSON.stringify(\{t:'event',h:h,v:v\}),w=window.__lumen_ws;if(w&&w.readyState===1)w.send(m);else q.push(m)\};setInterval(function()\{var w=window.__lumen_ws;if(!w||w.readyState!==1)return;while(q.length)w.send(q.shift())\},100)\})()"
-    }
-    if name == "clipboard" {
-        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-copy]');if(!el)return;var t=el.getAttribute('data-lumen-copy'),c;if(t==='text'||t==='')c=el.textContent;else c=document.querySelector(t)&&document.querySelector(t).value||'';navigator.clipboard&&navigator.clipboard.writeText(c).catch(function()\{\})\})"
-    }
-    if name == "focus" {
-        return "var F=function()\{document.querySelectorAll('[data-lumen-focus]').forEach(function(el)\{el.focus()\})\};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',F);else F()"
-    }
-    if name == "scroll" {
-        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-scroll]');if(!el)return;var t=el.getAttribute('data-lumen-scroll');if(t==='into-view')el.scrollIntoView(\{behavior:'smooth',block:'center'\});if(t==='lock')\{document.body.style.overflow='hidden';el.addEventListener('lumen-close',function()\{document.body.style.overflow=''\})\};if(t==='restore')\{var k='lumen-scroll-'+location.pathname;var y=sessionStorage.getItem(k);if(y)window.scrollTo(0,parseInt(y));window.addEventListener('scroll',function()\{sessionStorage.setItem(k,window.scrollY)\})\}\})"
-    }
-    if name == "toast" {
-        return "window.__lumen_toast=function(m,t)\{var o=document.createElement('div');o.style.cssText='position:fixed;bottom:24px;right:24px;z-index:9999;padding:12px 20px;border-radius:10px;background:#1b2233;color:#e8eaf0;box-shadow:0 8px 30px rgba(0,0,0,.3);font-size:14px;max-width:400px;border-left:4px solid '+(t==='error'?'#ff6b6b':t==='success'?'#4dd4ac':'#f5b829');o.textContent=m;document.body.appendChild(o);setTimeout(function()\{o.style.opacity='0';o.style.transition='opacity .3s';setTimeout(function()\{o.remove()\},300)\},(t==='error'?6:3)*1e3)\}"
-    }
-    if name == "key" {
-        return "document.addEventListener('keydown',function(e)\{var els=document.querySelectorAll('[data-lumen-key]');for(var j=0;j<els.length;j++)\{var pairs=els[j].getAttribute('data-lumen-key').split(',');for(var i=0;i<pairs.length;i++)\{var kv=pairs[i].trim().split(':');if(kv.length!==2)continue;if((e.key||e.code)===kv[0].trim())window.__lumen_push(kv[1].trim(),null)\}\}\})"
-    }
-    if name == "persist" {
-        return "(function()\{function S(el)\{var raw=el.getAttribute('data-lumen-persist')||'',ss=raw.indexOf('session:')===0,k=ss?raw.slice(8):raw,st=ss?sessionStorage:localStorage;if(!k)return;var old=st.getItem(k);if(old!==null)\{if(el.type==='checkbox')el.checked=old==='true';else if('value'in el)el.value=old\}function save()\{st.setItem(k,el.type==='checkbox'?String(el.checked):el.value)\}el.addEventListener('input',save);el.addEventListener('change',save)\}document.querySelectorAll('[data-lumen-persist]').forEach(S)\})()"
-    }
-    if name == "time" {
-        return "(function()\{function tick()\{document.querySelectorAll('[data-lumen-time]').forEach(function(el)\{var mode=el.getAttribute('data-lumen-time'),raw=el.getAttribute('datetime')||el.getAttribute('data-time'),at=Date.parse(raw);if(!isFinite(at))return;var d=Math.round((at-Date.now())/1000),n=Math.abs(d),u=n<60?'second':n<3600?'minute':n<86400?'hour':'day',q=u==='second'?n:u==='minute'?Math.round(n/60):u==='hour'?Math.round(n/3600):Math.round(n/86400);if(mode==='countdown')el.textContent=d<=0?'0s':q+(u==='second'?'s':u==='minute'?'m':u==='hour'?'h':'d');else if(typeof Intl!=='undefined'&&Intl.RelativeTimeFormat)el.textContent=new Intl.RelativeTimeFormat(undefined,\{numeric:'auto'\}).format(d<0?-q:q,u)\})\}tick();setInterval(tick,1000)\})()"
-    }
-    if name == "media" {
-        return "(function()\{document.querySelectorAll('[data-lumen-media]').forEach(function(el)\{var m=el.getAttribute('data-lumen-media');if(m==='lazy')el.loading='lazy';if(m==='autoplay'&&'play'in el&&typeof IntersectionObserver!=='undefined')new IntersectionObserver(function(es)\{es.forEach(function(e)\{if(e.isIntersecting)el.play().catch(function()\{\});else el.pause()\})\}).observe(el);if(m==='lightbox')el.addEventListener('click',function()\{var o=document.createElement('div'),c=el.cloneNode(true);o.setAttribute('role','dialog');o.setAttribute('aria-modal','true');o.style.cssText='position:fixed;inset:0;z-index:9999;display:grid;place-items:center;background:rgba(0,0,0,.85)';c.style.maxWidth='95vw';c.style.maxHeight='95vh';o.appendChild(c);o.onclick=function()\{o.remove()\};document.body.appendChild(o)\})\})\})()"
-    }
-    if name == "window" {
-        return "(function()\{function U()\{document.querySelectorAll('[data-lumen-window]').forEach(function(el)\{var m=el.getAttribute('data-lumen-window');if(m==='online')\{el.classList.toggle('lumen-online',navigator.onLine);el.classList.toggle('lumen-offline',!navigator.onLine)\}if(m==='theme')el.classList.toggle('lumen-dark',matchMedia('(prefers-color-scheme: dark)').matches);if(m==='resize')\{el.style.setProperty('--lumen-window-width',innerWidth+'px');el.style.setProperty('--lumen-window-height',innerHeight+'px')\}\})\}addEventListener('online',U);addEventListener('offline',U);addEventListener('resize',U);if(typeof matchMedia!=='undefined')matchMedia('(prefers-color-scheme: dark)').addEventListener('change',U);U()\})()"
-    }
-    if name == "nav" {
-        return "document.addEventListener('click',function(e)\{var a=e.target.closest&&e.target.closest('a[data-lumen-nav]');if(!a||e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey||a.target||a.origin!==location.origin)return;e.preventDefault();history.pushState(\{\},'',a.href);window.__lumen_push('lumen_nav',location.pathname+location.search)\})"
-    }
-    if name == "toggle" {
-        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-toggle]');if(!el)return;var s=el.getAttribute('data-lumen-toggle'),t=document.querySelector(s);if(!t)return;var hidden=!t.hidden;t.hidden=hidden;el.setAttribute('aria-expanded',String(!hidden))\})"
-    }
-    if name == "transition" {
-        return "(function()\{function E(el)\{var n=el.getAttribute('data-lumen-transition');el.classList.add(n+'-enter');requestAnimationFrame(function()\{requestAnimationFrame(function()\{el.classList.add(n+'-enter-active');el.classList.remove(n+'-enter')\})\});el.addEventListener('transitionend',function()\{el.classList.remove(n+'-enter-active')\},\{once:true\})\}document.querySelectorAll('[data-lumen-transition]').forEach(E)\})()"
-    }
-    if name == "anchor" {
-        return "(function()\{function P(el)\{var s=el.getAttribute('data-lumen-anchor'),a=document.querySelector(s);if(!a)return;function u()\{var r=a.getBoundingClientRect();el.style.position='fixed';el.style.left=r.left+'px';el.style.top=r.bottom+'px'\}u();addEventListener('resize',u);addEventListener('scroll',u,true)\}document.querySelectorAll('[data-lumen-anchor]').forEach(P)\})()"
-    }
-    if name == "inview" {
-        return "(function()\{if(typeof IntersectionObserver==='undefined')return;var io=new IntersectionObserver(function(es)\{es.forEach(function(e)\{if(!e.isIntersecting)return;var el=e.target,h=el.getAttribute('data-lumen-inview');window.__lumen_push(h,\{ratio:e.intersectionRatio\});if(el.hasAttribute('data-lumen-once'))io.unobserve(el)\})\});document.querySelectorAll('[data-lumen-inview]').forEach(function(el)\{io.observe(el)\})\})()"
-    }
-    if name == "sortable" {
-        return "(function()\{var drag=null;document.addEventListener('dragstart',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-sort-item]');if(el)drag=el\});document.addEventListener('dragover',function(e)\{var list=e.target.closest&&e.target.closest('[data-lumen-sortable]');if(!list||!drag||drag.parentNode!==list)return;e.preventDefault();var at=e.target.closest('[data-lumen-sort-item]');if(at&&at!==drag)list.insertBefore(drag,at)\});document.addEventListener('drop',function(e)\{var list=e.target.closest&&e.target.closest('[data-lumen-sortable]');if(!list||!drag)return;e.preventDefault();var order=[],xs=list.querySelectorAll('[data-lumen-sort-item]');for(var i=0;i<xs.length;i++)order.push(xs[i].getAttribute('data-lumen-sort-item'));window.__lumen_push(list.getAttribute('data-lumen-sortable'),order);drag=null\})\})()"
-    }
-    return ""
-}
+// _lumen_module (the JS string catalog itself) lives in
+// vn_modules/lumen/browser_directives.vn — a Constellation-style package
+// subdirectory, explicitly loaded here so it stays out of the ambient
+// top-level prelude (see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
+// It is a pure function of `name`, so load order relative to the rest of
+// this file doesn't matter as long as it's loaded before first call, below.
+use "lumen"
 
 // Scan a template string for directive attributes and return a list of required LumenJS module names.
 // Looks for data-lumen-* attributes that map to known modules, data-lumen-hook=X, and event modifiers.

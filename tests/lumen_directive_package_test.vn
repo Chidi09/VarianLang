@@ -1,0 +1,40 @@
+// Regression tests for the Lumen browser-directive package boundary
+// (vn_modules/lumen/browser_directives.vn, loaded from vn_modules/lumen.vn
+// via `use "lumen"` — see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
+//
+// These are NOT a re-test of every module's JS body (tests/lumen_modules_test.vn
+// already covers that). They pin the boundary behavior specifically: the
+// catalog and the scanner live in two different files/packages and must stay
+// in sync, the catalog's edge behavior (unknown name) must survive extraction,
+// and repeated cross-package calls must be pure (no load-order or state bugs).
+
+test "_lumen_module is reachable from the ambient prelude without a local use" {
+    // lumen.vn's own `use "lumen"` already pulled in the package at parse
+    // time; this file needs no `use` of its own to call it.
+    let js = _lumen_module("toast")
+    assert_ne(js, "")
+}
+
+test "_lumen_module returns empty string for an unknown module name" {
+    assert_eq(_lumen_module("does-not-exist"), "")
+    assert_eq(_lumen_module(""), "")
+}
+
+test "_lumen_module is pure and stable across repeated calls" {
+    let first = _lumen_module("clipboard")
+    let second = _lumen_module("clipboard")
+    assert_eq(first, second)
+}
+
+test "every module name the scanner can emit exists in the catalog" {
+    // Cross-package consistency: _lumen_scan_directives (vn_modules/lumen.vn)
+    // and _lumen_module (vn_modules/lumen/browser_directives.vn) must agree
+    // on the full module vocabulary, even though they now live in separate
+    // files split by the package boundary.
+    let names = ["clipboard", "focus", "scroll", "toast", "key", "persist",
+                 "time", "media", "window", "nav", "toggle", "transition",
+                 "anchor", "inview", "sortable"]
+    for i in 0..names.len() {
+        assert_ne(_lumen_module(names[i]), "")
+    }
+}
