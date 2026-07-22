@@ -223,6 +223,7 @@
     </Feature>
     <Feature icon="track_changes" title="Explicit multi-core scaling">
       Zenith's <code>listen_cluster</code> uses isolated OS worker processes around a shared listener; each worker retains Varian's cooperative single-threaded scheduler. Plain HTTP responses use <code>writev</code>, and request structs use per-task arena allocation.
+      Applications may opt into Zenith's native negotiated gzip with <code>app.compress(threshold_bytes)</code>; static or dynamic responses are compressed only when the client accepts gzip and the response contract permits it.
     </Feature>
   </Grid>
 </Card>

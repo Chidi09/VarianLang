@@ -2525,7 +2525,7 @@ int main(int argc, char *argv[]) {
                 snprintf(target_flag, sizeof(target_flag), "-target %s", target_triple);
             }
             const char *static_flag = static_link ? "-static" : "";
-            snprintf(cmd, sizeof(cmd), "%s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring", cc_compiler, static_flag, target_flag, exe_dir, out_c, out_basename, exe_dir);
+            snprintf(cmd, sizeof(cmd), "%s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring -lz", cc_compiler, static_flag, target_flag, exe_dir, out_c, out_basename, exe_dir);
             printf("Compiling native binary: %s\n", cmd);
             res = system(cmd);
             if (res == 0) {

@@ -5,6 +5,43 @@ fn _zenith_request(method, path, query) {
     )
 }
 
+fn _zenith_request_with_headers(method, path, headers) {
+    return http.create_struct(
+        ["method", "path", "query", "body", "json", "headers", "scheme", "host"],
+        [method, path, "", "", null, headers, "https", "example.test"]
+    )
+}
+
+test "compression negotiates real gzip without corrupting response semantics" {
+    let app = new_app()
+    assert_throws(| | { app.compress(0) })
+    assert_throws(| | { app.compress("large") })
+    app.compress(16)
+    app.get("/text", |req| {
+        let raw = http.create_struct(["status", "body", "content_type"], [200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "text/plain"])
+        let response = with_header(raw, "Vary", "Origin")
+        return with_header(response, "Content-Length", "48")
+    }, "text", null)
+    app.get("/image", |req| {
+        return http.create_struct(["status", "body", "content_type"], [200, "not really an image", "image/png"])
+    }, "image", null)
+
+    let gzip_headers = http.create_struct(["accept_encoding"], ["br, gzip;q=1"])
+    let compressed = app.handle(_zenith_request_with_headers("GET", "/text", gzip_headers))
+    assert_eq(_get_req_field(compressed.headers, "Content_Encoding", null), "gzip")
+    assert_eq(_get_req_field(compressed.headers, "Vary", null), "Origin, Accept-Encoding")
+    assert_eq(_get_req_field(compressed.headers, "Content_Length", null), null)
+    assert_eq(compressed.body.code_at(0), 31)
+    assert_eq(compressed.body.code_at(1), 139)
+
+    let disabled = http.create_struct(["accept_encoding"], ["gzip; q=0"])
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/text", disabled)).body.code_at(0), 97)
+    let explicit_disabled = http.create_struct(["accept_encoding"], ["*;q=1, gzip;q=0"])
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/text", explicit_disabled)).body.code_at(0), 97)
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/image", gzip_headers)).body, "not really an image")
+    assert_eq(app.handle(_zenith_request_with_headers("HEAD", "/text", gzip_headers)).body, "")
+}
+
 test "job dashboard is absent by default and explicitly opt in" {
     let app = new_app()
     assert_eq(app.handle(_zenith_request("GET", "/admin/jobs", "")).status, 404)

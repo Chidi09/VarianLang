@@ -1,4 +1,5 @@
 #include "lib_http.h"
+#include <zlib.h>
 #include "json.h"
 #include "picohttpparser.h"
 #include "lexer.h"
@@ -2702,6 +2703,46 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
     return val_string(result);
 }
 
+/* Produce an RFC 1952 gzip member. Strings in Varian carry an explicit length,
+ * so the returned value safely contains arbitrary compressed bytes including
+ * NUL. Returning nil lets the framework preserve the original response if the
+ * compressor cannot allocate or initialize. */
+static Value lib_http_gzip(VM *vm, int arg_count, Value *args) {
+    if (arg_count != 1 || args[0].type != VAL_STRING) return val_nil();
+
+    ObjString *input = args[0].as.string;
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                     MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        return val_nil();
+    }
+
+    uLong capacity = deflateBound(&stream, (uLong)input->length);
+    unsigned char *output = (unsigned char *)malloc((size_t)capacity);
+    if (!output) {
+        deflateEnd(&stream);
+        return val_nil();
+    }
+
+    stream.next_in = (Bytef *)input->chars;
+    stream.avail_in = (uInt)input->length;
+    stream.next_out = output;
+    stream.avail_out = (uInt)capacity;
+    int status = deflate(&stream, Z_FINISH);
+    if (status != Z_STREAM_END) {
+        free(output);
+        deflateEnd(&stream);
+        return val_nil();
+    }
+
+    int output_length = (int)stream.total_out;
+    ObjString *result = allocate_string(vm, (const char *)output, output_length);
+    free(output);
+    deflateEnd(&stream);
+    return val_string(result);
+}
+
 /* ─── Registration ─── */
 void lib_http_init(VM *vm) {
 #ifdef _WIN32
@@ -2718,6 +2759,7 @@ void lib_http_init(VM *vm) {
     vm_register_dispatch(vm, "http", "serve_tls", val_native_fn((void *)lib_http_serve_tls));
     vm_register_dispatch(vm, "http", "serve_with_routes", val_native_fn((void *)lib_http_serve_with_routes));
     vm_register_dispatch(vm, "http", "create_struct", val_native_fn((void *)lib_http_create_struct));
+    vm_register_dispatch(vm, "http", "gzip", val_native_fn((void *)lib_http_gzip));
     vm_register_dispatch(vm, "http", "test_request", val_native_fn((void *)lib_http_test_request));
     vm_register_dispatch(vm, "http", "write_socket", val_native_fn((void *)lib_http_write_socket));
     vm_register_dispatch(vm, "http", "connection_write", val_native_fn((void *)lib_http_connection_write));

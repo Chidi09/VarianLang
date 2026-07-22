@@ -355,6 +355,8 @@ app.<span class="token-function">add_middleware</span>(<span class="token-functi
 app.<span class="token-function">add_middleware</span>(<span class="token-function">rate_limit</span>(<span class="token-number">100</span>, <span class="token-number">60000</span>))  <span class="token-comment">// 100 req/min</span></pre></div>
 </div>
 
+<p>Opt into native response compression with <code>app.compress(threshold_bytes)</code>. Zenith negotiates gzip from <code>Accept-Encoding</code>, emits <code>Content-Encoding: gzip</code> and <code>Vary: Accept-Encoding</code>, and skips HEAD, 204/304, already encoded, binary, and undersized responses. It remains explicit so a deployment proxy can own compression without duplicate work.</p>
+
 <p>Ready-made middleware from <code>vn_modules/shield.vn</code>:</p>
 <ul>
   <li><code>cors(origins, methods, headers)</code> — CORS headers</li>

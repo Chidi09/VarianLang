@@ -30,6 +30,82 @@ fn _get_req_field(req, field, default_val) {
     return result
 }
 
+fn _zenith_accepts_gzip(value) {
+    if value == null { return false }
+    let encodings = value.lower().split(",")
+    let gzip_seen = false
+    let gzip_enabled = false
+    let wildcard_enabled = false
+    for i in 0..encodings.len() {
+        let parts = encodings[i].trim().split(";")
+        let name = parts[0].trim()
+        if name == "gzip" or name == "*" {
+            let enabled = true
+            for j in 1..parts.len() {
+                let parameter = parts[j].trim().replace(" ", "")
+                if parameter.starts_with("q=") {
+                    let quality = parameter.substring(2)
+                    enabled = quality == "1" or quality.starts_with("1.")
+                    if quality.starts_with("0.") {
+                        enabled = false
+                        for k in 2..quality.len() {
+                            if quality.code_at(k) != 48 { enabled = true }
+                        }
+                    }
+                }
+            }
+            if name == "gzip" {
+                gzip_seen = true
+                gzip_enabled = enabled
+            } else {
+                wildcard_enabled = enabled
+            }
+        }
+    }
+    if gzip_seen { return gzip_enabled }
+    return wildcard_enabled
+}
+
+fn _zenith_compressible_type(content_type) {
+    if content_type == null { return false }
+    let kind = content_type.lower()
+    return kind.starts_with("text/") or
+        kind.index_of("json") >= 0 or
+        kind.index_of("javascript") >= 0 or
+        kind.index_of("xml") >= 0 or
+        kind.index_of("svg") >= 0
+}
+
+fn _zenith_gzip_response(resp) {
+    let compressed = http.gzip(_get_req_field(resp, "body", ""))
+    if compressed == null { return resp }
+    let source_headers = _get_req_field(resp, "headers", null)
+    let header_keys = []
+    let header_values = []
+    let vary = ""
+    if source_headers != null {
+        let keys = _validate.get_keys(source_headers)
+        for i in 0..keys.len() {
+            if keys[i] != "Content_Length" {
+                header_keys = header_keys.push(keys[i])
+                header_values = header_values.push(_validate.get_field(source_headers, keys[i]))
+            }
+            if keys[i] == "Vary" { vary = _validate.get_field(source_headers, keys[i]) }
+        }
+    }
+    let result = Response {
+        status: _get_req_field(resp, "status", 200),
+        body: compressed,
+        content_type: _get_req_field(resp, "content_type", "text/plain"),
+        _keep_open: _get_req_field(resp, "_keep_open", false),
+        headers: http.create_struct(header_keys, header_values)
+    }
+    result = with_header(result, "Content-Encoding", "gzip")
+    if vary == null or vary == "" { vary = "Accept-Encoding" }
+    else if vary.index_of("Accept-Encoding") < 0 { vary = vary + ", Accept-Encoding" }
+    return with_header(result, "Vary", vary)
+}
+
 struct WebSocket {
     socket_fd: int,
     _buffer: string
@@ -812,22 +888,26 @@ impl ZenithApp {
             result = with_header(result, "Access-Control-Allow-Origin", self._cors_origins)
         }
 
-        // Compression middleware placeholder — will be a native middleware
-        // once a native gzip/compress function is available. The middleware
-        // checks Accept-Encoding: gzip and would compress the body.
         if self._compress_enabled and result != null {
             let resp_body = _get_req_field(result, "body", "")
-            if resp_body != null and resp_body.len() > self._compress_threshold {
-                // Check Accept-Encoding header for gzip support
+            let resp_status = _get_req_field(result, "status", 200)
+            let resp_type = _get_req_field(result, "content_type", "text/plain")
+            let resp_headers = _get_req_field(result, "headers", null)
+            let already_encoded = null
+            if resp_headers != null {
+                already_encoded = _validate.get_field(resp_headers, "Content_Encoding")
+            }
+            if method != "HEAD" and resp_status != 204 and resp_status != 304 and
+                already_encoded == null and resp_body != null and
+                resp_body.len() >= self._compress_threshold and
+                _zenith_compressible_type(resp_type) {
                 let req_headers = _get_req_field(req, "headers", null)
                 let accept_enc = ""
                 if req_headers != null {
                     accept_enc = _validate.get_field(req_headers, "accept_encoding")
                 }
-                if accept_enc != null and accept_enc.index_of("gzip") >= 0 {
-                    // Future: result = with_header(result, "Content-Encoding", "gzip")
-                    // For now, compression requires a native C binding (zlib).
-                    // The response is passed through uncompressed.
+                if _zenith_accepts_gzip(accept_enc) {
+                    result = _zenith_gzip_response(result)
                 }
             }
         }
@@ -881,15 +961,14 @@ impl ZenithApp {
     }
 
     fn compress(self, threshold) {
-        self._compress_enabled = true
-        if threshold != null and threshold > 0 {
-            self._compress_threshold = threshold
+        if threshold != null and type_of(threshold) != "int" {
+            throw("Compression threshold must be an integer number of bytes")
         }
-        // NOTE: gzip compression requires a native C zlib binding which is a
-        // future feature. For now, this enables the compression middleware that
-        // checks Accept-Encoding and will delegate to the native compressor.
-        // Responses > threshold bytes will be compressed when the native
-        // function is available.
+        if threshold != null and threshold <= 0 {
+            throw("Compression threshold must be greater than zero")
+        }
+        self._compress_enabled = true
+        if threshold != null { self._compress_threshold = threshold }
         return self
     }
 

@@ -137,6 +137,12 @@ changing a field, or `request_with_context(req, key, value)` / `request_context(
 trace IDs, authenticated principals, and loader dependencies. Middleware unwinds in onion
 order and can short-circuit by returning a response without calling `next`.
 
+Enable negotiated response compression with `app.compress(threshold_bytes)`. Zenith uses
+native gzip, honors `Accept-Encoding` quality zero, adds `Content-Encoding: gzip` and
+`Vary: Accept-Encoding`, and leaves HEAD, 204/304, already encoded, binary, and small
+responses untouched. Compression is opt-in so applications behind a compressing proxy do
+not accidentally do the work twice.
+
 `vn_modules/shield.vn` ships ready-made security middleware: `cors(origins, methods,
 headers)`, `csrf()`, and `rate_limit(max_reqs, window_ms)` /
 `rate_limit_redis(conn, max_reqs, window_seconds)`. Add them with `app.add_middleware(...)`.

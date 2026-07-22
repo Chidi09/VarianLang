@@ -40,7 +40,7 @@ else
 endif
 
 CFLAGS = -Wall -Wextra -std=gnu11 -g -Iinclude -D_POSIX_C_SOURCE=200809L
-LDFLAGS = -lm -lcurl -lcrypto -lssl -lpthread
+LDFLAGS = -lm -lcurl -lcrypto -lssl -lpthread -lz
 
 ifeq ($(PLATFORM),Linux)
     CFLAGS  += -I/usr/include/x86_64-linux-gnu
