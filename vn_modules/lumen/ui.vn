@@ -1,0 +1,664 @@
+// ═══════════════════════════════════════════════════════════════════════════
+//  Lumen UI — the built-in component vocabulary (the framework's "identity")
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// These ship with Lumen and are registered at load time, so any template can
+// compose with <Page>, <Stack>, <Grid>, <Card>, <Heading>, <Button>, ... the
+// same way it nests user components. They are *presentational* (stateless):
+// props arrive as tag attributes, children as the slot. Everything is driven by
+// the design tokens in _lumen_design_css() so light/dark + brand are automatic.
+// A page wrapped in <Page> reads like Lumen, not like raw HTML with inline CSS.
+
+// Safe prop read: missing attrs return the default instead of erroring.
+fn _ui_prop(s, key, dflt) {
+    let v = _validate.get_field(s, key)
+    if v == null { return dflt }
+    return v
+}
+
+// Slot content for a paired tag; "" when self-closing / empty.
+fn _ui_slot(s) {
+    let c = _validate.get_field(s, "children")
+    if c == null { return "" }
+    return c
+}
+
+// True when a bare boolean-style attr is present and not "false"/"0".
+fn _ui_flag(s, key) {
+    let v = _validate.get_field(s, key)
+    if v == null { return false }
+    if v == "false" or v == "0" or v == "no" { return false }
+    return true
+}
+
+fn _ui_safe_css(value, fallback) {
+    let raw = "" + value
+    if raw == "" { return fallback }
+    for i in 0..raw.len() {
+        let c = raw.code_at(i)
+        let ok = (c >= 48 and c <= 57) or (c >= 65 and c <= 90) or (c >= 97 and c <= 122) or c == 32 or c == 37 or c == 45 or c == 46
+        if ok == false { return fallback }
+    }
+    return raw
+}
+
+fn _ui_heading_tag(value) {
+    let tag = "" + value
+    if tag == "h1" or tag == "h2" or tag == "h3" or tag == "h4" or tag == "h5" or tag == "h6" { return tag }
+    return "h2"
+}
+
+// 0.25rem spacing scale (Tailwind-ish), resolved to an explicit rem so it works
+// even on a page that never pulled in the token stylesheet.
+fn _ui_space(v) {
+    if v == "0" { return "0" }
+    if v == "1" { return "0.25rem" }
+    if v == "2" { return "0.5rem" }
+    if v == "3" { return "0.75rem" }
+    if v == "4" { return "1rem" }
+    if v == "5" { return "1.25rem" }
+    if v == "6" { return "1.5rem" }
+    if v == "8" { return "2rem" }
+    if v == "10" { return "2.5rem" }
+    if v == "12" { return "3rem" }
+    if v == "16" { return "4rem" }
+    if v == "20" { return "5rem" }
+    if v == "24" { return "6rem" }
+    if v == "32" { return "8rem" }
+    return "1rem"
+}
+
+// Heading scale → font-size.
+fn _ui_font(v) {
+    if v == "xs"   { return "0.75rem" }
+    if v == "sm"   { return "0.875rem" }
+    if v == "base" { return "1rem" }
+    if v == "lg"   { return "1.125rem" }
+    if v == "xl"   { return "1.25rem" }
+    if v == "2xl"  { return "1.5rem" }
+    if v == "3xl"  { return "1.875rem" }
+    if v == "4xl"  { return "2.25rem" }
+    if v == "5xl"  { return "3rem" }
+    if v == "6xl"  { return "3.75rem" }
+    return "1rem"
+}
+
+// Border-radius scale
+fn _ui_radius(v) {
+    if v == "none" { return "0" }
+    if v == "sm"   { return "8px" }
+    if v == "md"   { return "var(--lumen-radius)" }
+    if v == "lg"   { return "16px" }
+    if v == "full" { return "999px" }
+    return "var(--lumen-radius)"
+}
+
+// Flex align-items: short word -> CSS value
+fn _ui_align(v) {
+    if v == "start"   { return "flex-start" }
+    if v == "center"  { return "center" }
+    if v == "end"     { return "flex-end" }
+    if v == "stretch" { return "stretch" }
+    return "stretch"
+}
+
+// Flex justify-content: short word -> CSS value
+fn _ui_justify(v) {
+    if v == "start"   { return "flex-start" }
+    if v == "center"  { return "center" }
+    if v == "end"     { return "flex-end" }
+    if v == "between" { return "space-between" }
+    if v == "around"  { return "space-around" }
+    return "flex-start"
+}
+
+// Background surface token -> CSS background value
+fn _ui_bg(v) {
+    if v == "surface"   { return "var(--lumen-surface)" }
+    if v == "surface-2" { return "var(--lumen-surface-2)" }
+    if v == "muted"     { return "var(--lumen-muted)" }
+    if v == "primary"   { return "var(--lumen-primary)" }
+    return ""
+}
+
+// Tone -> "color:…;background:…;" declaration string
+fn _ui_tone(v) {
+    if v == "default" { return "color:var(--lumen-fg);background:transparent" }
+    if v == "muted"   { return "color:var(--lumen-muted-fg);background:var(--lumen-surface-2)" }
+    if v == "primary" { return "color:var(--lumen-primary-fg);background:var(--lumen-primary)" }
+    if v == "success" { return "color:#0b7a52;background:var(--lumen-success-bg)" }
+    if v == "danger"  { return "color:#b42318;background:var(--lumen-danger-bg)" }
+    if v == "info"    { return "color:#1d4ed8;background:var(--lumen-info-bg)" }
+    return ""
+}
+
+// Container width scale (reuses .lmn-container max-widths)
+fn _ui_width(v) {
+    if v == "sm"   { return "640px" }
+    if v == "md"   { return "820px" }
+    if v == "lg"   { return "1040px" }
+    if v == "xl"   { return "1280px" }
+    if v == "full" { return "100%" }
+    return ""
+}
+
+// ─── Shared style-prop vocabulary (Part B of Lumen vocab spec) ───
+// Every built-in component accepts these via _ui_style_props(s):
+//   pad/padx/pady → padding variants          (space scale, _ui_space)
+//   m/mx/my/mt/mb → margin variants            (space scale)
+//   gap           → gap                        (space scale)
+//   align         → align-items                (start/center/end/stretch)
+//   justify       → justify-content            (start/center/end/between/around)
+//   w/maxw        → width/max-width            (sm/md/lg/xl/full)
+//   bg            → background                 (surface/surface-2/muted/primary)
+//   tone          → color + background pair    (default/muted/primary/success/danger/info)
+//   radius        → border-radius              (none/sm/md/lg/full)
+//   shadow        → box-shadow                 (flag)
+//   border        → 1px solid var(--lumen-border) (flag)
+fn _ui_style_props(s) {
+    let d = ""
+    let pad  = _validate.get_field(s, "pad");  if pad  != null { d = d + "padding:" + _ui_space(pad) + ";" }
+    let px   = _validate.get_field(s, "padx"); if px   != null { d = d + "padding-inline:" + _ui_space(px) + ";" }
+    let py   = _validate.get_field(s, "pady"); if py   != null { d = d + "padding-block:" + _ui_space(py) + ";" }
+    let m    = _validate.get_field(s, "m");    if m    != null { d = d + "margin:" + _ui_space(m) + ";" }
+    let mx   = _validate.get_field(s, "mx");   if mx   != null { d = d + "margin-inline:" + _ui_space(mx) + ";" }
+    let my   = _validate.get_field(s, "my");   if my   != null { d = d + "margin-block:" + _ui_space(my) + ";" }
+    let mt   = _validate.get_field(s, "mt");   if mt   != null { d = d + "margin-top:" + _ui_space(mt) + ";" }
+    let mb   = _validate.get_field(s, "mb");   if mb   != null { d = d + "margin-bottom:" + _ui_space(mb) + ";" }
+    let gap_v = _validate.get_field(s, "gap");   if gap_v   != null { d = d + "gap:" + _ui_space(gap_v) + ";" }
+    let align_v = _validate.get_field(s, "align");   if align_v   != null { d = d + "align-items:" + _ui_align(align_v) + ";" }
+    let justify_v = _validate.get_field(s, "justify");   if justify_v   != null { d = d + "justify-content:" + _ui_justify(justify_v) + ";" }
+    let w_v  = _validate.get_field(s, "w");      if w_v     != null { d = d + "width:" + _ui_width(w_v) + ";" }
+    let mw_v = _validate.get_field(s, "maxw");    if mw_v    != null { d = d + "max-width:" + _ui_width(mw_v) + ";" }
+    let bg_v = _validate.get_field(s, "bg");      if bg_v    != null { d = d + "background:" + _ui_bg(bg_v) + ";" }
+    let tone_v = _validate.get_field(s, "tone");   if tone_v  != null { d = d + _ui_tone(tone_v) + ";" }
+    let rad_v = _validate.get_field(s, "radius");  if rad_v   != null { d = d + "border-radius:" + _ui_radius(rad_v) + ";" }
+    if _ui_flag(s, "shadow") { d = d + "box-shadow:var(--lumen-shadow);" }
+    if _ui_flag(s, "border") { d = d + "border:1px solid var(--lumen-border);" }
+    return d
+}
+
+// Make a stateless built-in component from a render fn.
+fn _ui_component(render_fn) {
+    return lumen_component(| | { return {} }, render_fn, [], [])
+}
+
+// The Lumen design system: self-contained tokens (so it stands alone on a
+// static page) + a small, opinionated set of component classes. Emitted once by
+// <Page> and also folded into the live shell <head>. Brand = amber #f5b829,
+// dark-native, Degular via the page's own font link.
+fn _lumen_design_css() {
+    return "<style id=\"lumen-ui\">" +
+        ":root\{--lumen-bg:#09090b;--lumen-fg:#fafafa;--lumen-muted:#a1a1aa;--lumen-primary:#4FACFE;--lumen-primary-fg:#09090b;--lumen-primary-hover:#7fc4fe;--lumen-surface:#131316;--lumen-surface-2:#1c1c20;--lumen-border:#232327;--lumen-radius:12px;--lumen-shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px -12px rgba(0,0,0,.5);--lumen-font:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;--lumen-mono:ui-monospace,SFMono-Regular,\"JetBrains Mono\",Menlo,monospace;--hue-aurora-1:#4FACFE;--hue-aurora-2:#00F2FE;--hue-zenith:#5b9cff;--hue-lumen:#f5b829;--hue-kiln:#f97316;--hue-constellation:#a78bfa\}" +
+        ":root.dark\{--lumen-bg:#FBFCFF;--lumen-fg:#0B1020;--lumen-muted:#71717a;--lumen-surface:#ffffff;--lumen-surface-2:#f1f5f9;--lumen-border:#e2e8f0\}" +
+        ".lmn-app\{font-family:var(--lumen-font);color:var(--lumen-fg);background:var(--lumen-bg);-webkit-font-smoothing:antialiased;line-height:1.55\}" +
+        ".lmn-container\{width:100%;margin-inline:auto;padding-inline:1.25rem;box-sizing:border-box\}" +
+        ".lmn-container[data-size=sm]\{max-width:640px\}.lmn-container[data-size=md]\{max-width:820px\}.lmn-container[data-size=lg]\{max-width:1040px\}.lmn-container[data-size=xl]\{max-width:1280px\}.lmn-container[data-size=full]\{max-width:none\}" +
+        ".lmn-section\{padding-block:5rem\}.lmn-section[data-border=true]\{border-top:1px solid var(--lumen-border)\}" +
+        ".lmn-stack\{display:flex;flex-direction:column\}.lmn-row\{display:flex;flex-direction:row;align-items:center}.lmn-row[data-wrap=true]\{flex-wrap:wrap\}" +
+        ".lmn-grid\{display:grid;grid-template-columns:repeat(var(--lumen-cols,3),minmax(0,1fr))\}@media(max-width:760px)\{.lmn-grid\{grid-template-columns:1fr\}\}" +
+        ".lmn-card\{background:var(--lumen-surface);border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);box-shadow:var(--lumen-shadow);padding:1.5rem\}" +
+        ".lmn-h\{font-family:var(--lumen-font);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0\}" +
+        ".lmn-text\{margin:0;color:var(--lumen-fg)\}.lmn-text[data-muted=true]\{color:var(--lumen-muted)\}" +
+        ".lmn-eyebrow\{font-size:.75rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--lumen-primary);margin:0\}" +
+        ".lmn-btn\{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;font:inherit;font-weight:600;border-radius:10px;padding:.6rem 1.1rem;border:1px solid transparent;cursor:pointer;text-decoration:none;transition:transform .04s ease,background .15s ease,border-color .15s ease}.lmn-btn:active\{transform:translateY(1px)\}" +
+        ".lmn-btn[data-variant=primary]\{background:var(--lumen-primary);color:var(--lumen-primary-fg)}.lmn-btn[data-variant=primary]:hover\{background:var(--lumen-primary-hover)\}" +
+        ".lmn-btn[data-variant=outline]\{background:transparent;color:var(--lumen-fg);border-color:var(--lumen-border)}.lmn-btn[data-variant=outline]:hover\{border-color:var(--lumen-primary)\}" +
+        ".lmn-btn[data-variant=ghost]\{background:transparent;color:var(--lumen-fg)}.lmn-btn[data-variant=ghost]:hover\{background:var(--lumen-surface-2)\}" +
+        ".lmn-badge\{display:inline-flex;align-items:center;gap:.35rem;font-size:.78rem;font-weight:600;padding:.18rem .6rem;border-radius:999px;background:var(--lumen-surface-2);color:var(--lumen-muted);border:1px solid var(--lumen-border)\}" +
+        ".lmn-badge[data-tone=success]\{color:#0b7a52;background:rgba(77,212,172,.16);border-color:transparent}.lmn-badge[data-tone=danger]\{color:#b42318;background:rgba(255,107,107,.16);border-color:transparent}.lmn-badge[data-tone=info]\{color:#1d4ed8;background:rgba(91,156,255,.16);border-color:transparent\}" +
+        ".lmn-feature\{display:flex;flex-direction:column;gap:.75rem;padding:1.5rem;border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);background:var(--lumen-surface)}.lmn-feature .lmn-ico\{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:rgba(245,184,41,.14);color:var(--lumen-primary)\}" +
+        ".lmn-divider\{border:0;border-top:1px solid var(--lumen-border);margin:0\}" +
+        ".lmn-hero\{padding:8rem 1.25rem 4rem;overflow:hidden\}" +
+        ".lmn-hero-inner\{max-width:1040px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:center\}" +
+        ".lmn-hero-content\{display:flex;flex-direction:column\}" +
+        ".lmn-hero-title\{font-size:4rem;font-weight:800;letter-spacing:-.03em;line-height:1.05;margin:0 0 1.25rem\}" +
+        ".lmn-hero-subtitle\{font-size:1.125rem;line-height:1.6;color:var(--lumen-muted);margin:0 0 2.5rem;max-width:520px\}" +
+        ".lmn-hero-img-wrap\{border-radius:24px;overflow:hidden;box-shadow:0 24px 64px -16px rgba(0,0,0,.2);transform:perspective(1000px) rotateY(-5deg);transition:transform .5s ease\}" +
+        ".lmn-hero-img-wrap:hover\{transform:perspective(1000px) rotateY(0deg)\}" +
+        ".lmn-hero-img\{width:100%;height:auto;display:block;object-fit:cover\}" +
+        ".lmn-hero-center .lmn-hero-inner\{grid-template-columns:1fr;text-align:center\}" +
+        ".lmn-hero-center .lmn-hero-content\{align-items:center\}" +
+        ".lmn-hero-center .lmn-hero-img-wrap\{display:none\}" +
+        "@media(max-width:760px)\{.lmn-hero-inner\{grid-template-columns:1fr\}\}" +
+        ".lmn-nav\{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 1.25rem;height:64px;background:var(--lumen-bg);border-bottom:1px solid var(--lumen-border)\}" +
+        ".lmn-footer\{padding:3rem 1.25rem;border-top:1px solid var(--lumen-border);color:var(--lumen-muted);text-align:center\}" +
+        ".lmn-split\{display:grid;grid-template-columns:var(--lumen-split-ratio,1fr 1fr);gap:var(--lumen-split-gap,2rem);align-items:start\}@media(max-width:760px)\{.lmn-split\{grid-template-columns:1fr\}\}" +
+        ".lmn-field\{display:flex;flex-direction:column;gap:.35rem\}" +
+        ".lmn-field-label\{font-size:.875rem;font-weight:600\}" +
+        ".lmn-field-hint\{font-size:.78rem;color:var(--lumen-muted)\}" +
+        ".lmn-field-error\{font-size:.78rem;color:var(--lumen-danger)\}" +
+        ".lmn-stat\{display:flex;flex-direction:column;gap:.25rem\}" +
+        ".lmn-stat-value\{font-size:2.25rem;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0\}" +
+        ".lmn-stat-label\{font-size:.875rem;color:var(--lumen-muted);margin:0\}" +
+        ".lmn-tag\{display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:600;padding:.15rem .5rem;border-radius:6px;background:var(--lumen-surface-2);color:var(--lumen-muted);border:1px solid var(--lumen-border)\}" +
+        ".lmn-tag[data-tone=success]\{color:#0b7a52;background:rgba(77,212,172,.16);border-color:transparent\}" +
+        ".lmn-tag[data-tone=danger]\{color:#b42318;background:rgba(255,107,107,.16);border-color:transparent\}" +
+        ".lmn-tag[data-tone=info]\{color:#1d4ed8;background:rgba(91,156,255,.16);border-color:transparent\}" +
+        ".lmn-tag[data-tone=primary]\{color:var(--lumen-primary-fg);background:var(--lumen-primary);border-color:transparent\}" +
+        ".lmn-avatar\{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;overflow:hidden;flex-shrink:0;background:var(--lumen-surface-2);color:var(--lumen-muted);font-weight:600\}.lmn-avatar img\{width:100%;height:100%;object-fit:cover\}" +
+        ".lmn-alert\{display:flex;gap:.75rem;padding:1rem;border-radius:var(--lumen-radius);align-items:flex-start\}" +
+        ".lmn-alert[data-tone=default]\{background:var(--lumen-surface-2);color:var(--lumen-fg);border:1px solid var(--lumen-border)\}" +
+        ".lmn-alert[data-tone=success]\{background:var(--lumen-success-bg);color:#0b7a52\}" +
+        ".lmn-alert[data-tone=danger]\{background:var(--lumen-danger-bg);color:#b42318\}" +
+        ".lmn-alert[data-tone=info]\{background:var(--lumen-info-bg);color:#1d4ed8\}" +
+        ".lmn-alert[data-tone=primary]\{background:rgba(245,184,41,.14);color:var(--lumen-primary-fg)\}" +
+        ".lmn-alert-icon\{flex-shrink:0;margin-top:2px\}.lmn-alert-body\{flex:1\}.lmn-alert-title\{font-weight:700;margin:0 0 .25rem\}" +
+        ".lmn-empty\{display:flex;flex-direction:column;align-items:center;gap:.75rem;padding:3rem 1.25rem;text-align:center\}" +
+        ".lmn-empty-icon\{opacity:.4\}.lmn-empty-title\{font-size:1.25rem;font-weight:700;margin:0\}" +
+        ".lmn-skel\{background:var(--lumen-surface-2);border-radius:var(--lumen-radius);animation:lumen-shimmer 1.5s ease-in-out infinite\}" +
+        "@keyframes lumen-shimmer\{0%\{opacity:.6\}50%\{opacity:1\}100%\{opacity:.6\}\}" +
+        ".lmn-chat\{display:flex;flex-direction:column;height:var(--lumen-chat-h,400px);overflow-y:auto;padding:1rem;gap:.5rem;scroll-behavior:smooth\}" +
+        ".lmn-chat-msg\{max-width:80%;padding:.75rem 1rem;border-radius:var(--lumen-radius);line-height:1.5;font-size:.9rem;word-wrap:break-word\}" +
+        ".lmn-chat-msg[data-role=user]\{align-self:flex-end;background:var(--lumen-primary);color:var(--lumen-primary-fg);border-bottom-right-radius:4px\}" +
+        ".lmn-chat-msg[data-role=assistant]\{align-self:flex-start;background:var(--lumen-surface-2);color:var(--lumen-fg);border-bottom-left-radius:4px\}" +
+        ".lmn-chat-msg-name\{font-size:.72rem;font-weight:600;margin-bottom:2px;opacity:.7\}" +
+        ".lmn-chat-input\{display:flex;gap:.5rem;padding:.75rem;border-top:1px solid var(--lumen-border);background:var(--lumen-surface)\}" +
+        ".lmn-chat-input input\{flex:1;padding:.6rem .9rem;border:1px solid var(--lumen-border);border-radius:10px;font:inherit;font-size:.9rem;background:var(--lumen-bg);color:var(--lumen-fg);outline:none\}" +
+        ".lmn-chat-input input:focus\{border-color:var(--lumen-primary)\}" +
+        ".lmn-chat-input button\{padding:.6rem 1rem;border-radius:10px;border:none;background:var(--lumen-primary);color:var(--lumen-primary-fg);font-weight:600;cursor:pointer;font-size:.9rem\}" +
+        ".lmn-chat-input button:hover\{background:var(--lumen-primary-hover)\}" +
+        ".lmn-typing\{display:flex;gap:4px;align-items:center;padding:.75rem 1rem;align-self:flex-start;background:var(--lumen-surface-2);border-radius:var(--lumen-radius);border-bottom-left-radius:4px\}" +
+        ".lmn-typing-dot\{width:8px;height:8px;border-radius:50%;background:var(--lumen-muted);animation:lumen-typing-bounce 1.2s ease-in-out infinite\}" +
+        ".lmn-typing-dot:nth-child(2)\{animation-delay:.2s\}.lmn-typing-dot:nth-child(3)\{animation-delay:.4s\}" +
+        "@keyframes lumen-typing-bounce\{0%,60%,100%\{transform:translateY(0)\}30%\{transform:translateY(-6px)\}\}\}" +
+        ".lmn-table-wrap\{width:100%;overflow-x:auto;border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);background:var(--lumen-surface)\}" +
+        ".lmn-table\{width:100%;border-collapse:collapse;font-size:.9rem\}" +
+        ".lmn-table thead\{background:var(--lumen-surface-2)\}" +
+        ".lmn-th\{text-align:left;padding:0;border-bottom:1px solid var(--lumen-border);font-weight:700;color:var(--lumen-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;padding:.6rem .9rem\}" +
+        ".lmn-th-btn\{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit\}.lmn-th-btn:hover\{color:var(--lumen-primary)\}" +
+        ".lmn-td\{padding:.6rem .9rem;border-bottom:1px solid var(--lumen-border);color:var(--lumen-fg)\}.lmn-table tbody tr:last-child .lmn-td\{border-bottom:0\}.lmn-table tbody tr:hover\{background:var(--lumen-surface-2)\}" +
+        ".lmn-td-msg\{text-align:center;color:var(--lumen-muted);padding:1.5rem\}" +
+        ".lmn-pager\{display:flex;align-items:center;gap:.75rem;justify-content:flex-end;padding:.75rem .9rem;border-top:1px solid var(--lumen-border)\}" +
+        ".lmn-pager-info\{color:var(--lumen-muted);font-size:.82rem\}" +
+        ".lmn-pager-btn\{font:inherit;font-size:.82rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--lumen-border);background:transparent;color:var(--lumen-fg);cursor:pointer\}.lmn-pager-btn:hover\{border-color:var(--lumen-primary);color:var(--lumen-primary)\}" +
+        ".lmn-vtable\{position:relative\}.lmn-vtable thead th\{position:sticky;top:0;z-index:2;background:var(--lumen-surface-2)\}" +
+        ".lmn-vspace td\{padding:0;border:0\}" +
+        ".lmn-form\{display:flex;flex-direction:column;gap:1.1rem\}" +
+        ".lmn-input\{width:100%;box-sizing:border-box;font:inherit;font-size:.9rem;padding:.6rem .8rem;border:1px solid var(--lumen-border);border-radius:10px;background:var(--lumen-bg);color:var(--lumen-fg);outline:none;transition:border-color .15s ease\}.lmn-input:focus\{border-color:var(--lumen-primary)\}" +
+        "textarea.lmn-input\{min-height:96px;resize:vertical\}" +
+        ".lmn-form-actions\{display:flex;align-items:center;gap:.9rem\}" +
+        ".lmn-form-msg\{margin:0;font-size:.85rem;font-weight:600\}.lmn-form-msg[data-tone=success]\{color:#0b7a52\}.lmn-form-msg[data-tone=danger]\{color:#b42318\}" +
+        "</style>"
+}
+
+// ── Built-in render functions ──
+
+fn _ui_render_page(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return _lumen_design_css() + "<div class=\"lmn-app\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_container(s) {
+    let size = _sanitize.escape_html(_ui_prop(s, "size", "lg"))
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-container\" data-size=\"" + size + "\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_section(s) {
+    let border = "false"
+    if _ui_flag(s, "border") { border = "true" }
+    let id = _validate.get_field(s, "anchor")
+    let id_attr = ""
+    if id != null { id_attr = " id=\"" + _sanitize.escape_html("" + id) + "\"" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<section class=\"lmn-section\" data-border=\"" + border + "\"" + id_attr + st + ">" + _ui_slot(s) + "</section>"
+}
+
+fn _ui_render_stack(s) {
+    let gap = _ui_space(_ui_prop(s, "gap", "4"))
+    let align = _ui_align(_ui_prop(s, "align", "stretch"))
+    return "<div class=\"lmn-stack\" style=\"gap:" + gap + ";align-items:" + align + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_row(s) {
+    let gap = _ui_space(_ui_prop(s, "gap", "4"))
+    let justify = _ui_justify(_ui_prop(s, "justify", "start"))
+    let align = _ui_align(_ui_prop(s, "align", "center"))
+    let wrap = "false"
+    if _ui_flag(s, "wrap") { wrap = "true" }
+    return "<div class=\"lmn-row\" data-wrap=\"" + wrap + "\" style=\"gap:" + gap + ";justify-content:" + justify + ";align-items:" + align + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_grid(s) {
+    let gap = _ui_space(_ui_prop(s, "gap", "6"))
+    let cols = _ui_safe_css(_ui_prop(s, "cols", "3"), "3")
+    return "<div class=\"lmn-grid\" style=\"--lumen-cols:" + cols + ";gap:" + gap + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_card(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-card\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_heading(s) {
+    let size = _ui_prop(s, "size", "3xl")
+    let tag = _ui_heading_tag(_ui_prop(s, "as", "h2"))
+    return "<" + tag + " class=\"lmn-h\" style=\"font-size:" + _ui_font(size) + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</" + tag + ">"
+}
+
+fn _ui_render_text(s) {
+    let size = _ui_prop(s, "size", "base")
+    let muted = "false"
+    if _ui_flag(s, "muted") { muted = "true" }
+    return "<p class=\"lmn-text\" data-muted=\"" + muted + "\" style=\"font-size:" + _ui_font(size) + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</p>"
+}
+
+fn _ui_render_eyebrow(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<p class=\"lmn-eyebrow\"" + st + ">" + _ui_slot(s) + "</p>"
+}
+
+fn _ui_render_button(s) {
+    let variant = _sanitize.escape_html(_ui_prop(s, "variant", "primary"))
+    let href = _validate.get_field(s, "href")
+    let on = _validate.get_field(s, "on")
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    if href != null {
+        return "<a class=\"lmn-btn\" data-variant=\"" + variant + "\" href=\"" + _sanitize.escape_html(href) + "\"" + st + ">" + _ui_slot(s) + "</a>"
+    }
+    let click = ""
+    if on != null { click = " @click=\"" + _sanitize.escape_html(on) + "\"" }
+    return "<button class=\"lmn-btn\" data-variant=\"" + variant + "\"" + click + st + ">" + _ui_slot(s) + "</button>"
+}
+
+fn _ui_render_badge(s) {
+    let tone = _sanitize.escape_html(_ui_prop(s, "tone", "default"))
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<span class=\"lmn-badge\" data-tone=\"" + tone + "\"" + st + ">" + _ui_slot(s) + "</span>"
+}
+
+fn _ui_render_feature(s) {
+    let icon = _ui_prop(s, "icon", "")
+    let title = _sanitize.escape_html(_ui_prop(s, "title", ""))
+    let ico = ""
+    if icon != "" { ico = "<div class=\"lmn-ico\">" + lumen_icon(icon) + "</div>" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-feature\"" + st + ">" + ico +
+           "<h3 class=\"lmn-h\" style=\"font-size:1.25rem\">" + title + "</h3>" +
+           "<p class=\"lmn-text\" data-muted=\"true\">" + _ui_slot(s) + "</p></div>"
+}
+
+fn _ui_render_divider(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<hr class=\"lmn-divider\"" + st + ">"
+}
+
+fn _ui_render_spacer(s) {
+    let size = _ui_space(_ui_prop(s, "size", "8"))
+    return "<div style=\"height:" + size + ";" + _ui_style_props(s) + "\"></div>"
+}
+
+// ── Section components (Part A of Lumen vocab spec) ──
+
+fn _ui_render_hero(s) {
+    let eyebrow = _validate.get_field(s, "eyebrow")
+    let title = _validate.get_field(s, "title")
+    let subtitle = _validate.get_field(s, "subtitle")
+    let image = _validate.get_field(s, "image")
+    let align = _ui_prop(s, "align", "left")
+    let e_html = ""
+    if eyebrow != null { e_html = "<p class=\"lmn-eyebrow\">" + _sanitize.escape_html("" + eyebrow) + "</p>" }
+    let t_html = ""
+    if title != null { t_html = "<h1 class=\"lmn-hero-title\">" + _sanitize.escape_html("" + title) + "</h1>" }
+    let s_html = ""
+    if subtitle != null { s_html = "<p class=\"lmn-hero-subtitle\">" + _sanitize.escape_html("" + subtitle) + "</p>" }
+    let img_html = ""
+    if image != null {
+        img_html = "<div class=\"lmn-hero-img-wrap\"><img class=\"lmn-hero-img\" src=\"" + _sanitize.escape_html("" + image) + "\" alt=\"\"></div>"
+    }
+    let align_class = ""
+    if align == "center" { align_class = " lmn-hero-center" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<section class=\"lmn-hero" + align_class + "\"" + st + "><div class=\"lmn-hero-inner\"><div class=\"lmn-hero-content\">" + e_html + t_html + s_html + _ui_slot(s) + "</div>" + img_html + "</div></section>"
+}
+
+fn _ui_render_nav(s) {
+    let brand = _sanitize.escape_html(_ui_prop(s, "brand", ""))
+    let brand_html = ""
+    if brand != "" { brand_html = "<div class=\"lmn-nav-brand\">" + brand + "</div>" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<nav class=\"lmn-nav\"" + st + ">" + brand_html + _ui_slot(s) + "</nav>"
+}
+
+fn _ui_render_footer(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<footer class=\"lmn-footer\"" + st + ">" + _ui_slot(s) + "</footer>"
+}
+
+fn _ui_render_split(s) {
+    let ratio = _ui_safe_css(_ui_prop(s, "ratio", "1fr 1fr"), "1fr 1fr")
+    let gap = _ui_space(_ui_prop(s, "gap", "8"))
+    let reverse = _ui_flag(s, "reverse")
+    let rev_class = ""
+    if reverse { rev_class = " lmn-split-reverse" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-split" + rev_class + "\" style=\"--lumen-split-ratio:" + ratio + ";--lumen-split-gap:" + gap + "\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_field(s) {
+    let label = _validate.get_field(s, "label")
+    let hint = _validate.get_field(s, "hint")
+    let error = _validate.get_field(s, "error")
+    let label_html = ""
+    if label != null { label_html = "<label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>" }
+    let hint_html = ""
+    if hint != null { hint_html = "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>" }
+    let error_html = ""
+    if error != null { error_html = "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + error) + "</p>" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-field\"" + st + ">" + label_html + _ui_slot(s) + hint_html + error_html + "</div>"
+}
+
+fn _ui_render_stat(s) {
+    let value = _sanitize.escape_html(_ui_prop(s, "value", ""))
+    let label = _sanitize.escape_html(_ui_prop(s, "label", ""))
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-stat\"" + st + "><p class=\"lmn-stat-value\">" + value + "</p><p class=\"lmn-stat-label\">" + label + "</p></div>"
+}
+
+fn _ui_render_tag(s) {
+    let tone = _sanitize.escape_html(_ui_prop(s, "tone", "default"))
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<span class=\"lmn-tag\" data-tone=\"" + tone + "\"" + st + ">" + _ui_slot(s) + "</span>"
+}
+
+fn _ui_render_avatar(s) {
+    let src = _validate.get_field(s, "src")
+    let alt = _sanitize.escape_html(_ui_prop(s, "alt", ""))
+    let sz = _ui_safe_css(_ui_prop(s, "size", "40"), "40")
+    let sz_px = sz
+    // If it's a known space key, resolve it; otherwise use the literal value + "px"
+    let space_val = _ui_space(sz)
+    if space_val != "1rem" or sz == "4" {
+        sz_px = space_val
+    } else {
+        // check if it's a plain number -> px
+        let n = 0
+        let is_num = true
+        let sc = sz.code_at(0)
+        if sc >= 48 and sc <= 57 {
+            sz_px = sz + "px"
+        }
+    }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    if src != null {
+        return "<div class=\"lmn-avatar\" style=\"width:" + sz_px + ";height:" + sz_px + "\"" + st + "><img src=\"" + _sanitize.escape_html("" + src) + "\" alt=\"" + alt + "\"></div>"
+    }
+    return "<div class=\"lmn-avatar\" style=\"width:" + sz_px + ";height:" + sz_px + "\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_alert(s) {
+    let tone = _sanitize.escape_html(_ui_prop(s, "tone", "default"))
+    let title = _validate.get_field(s, "title")
+    let icon = _ui_prop(s, "icon", "zap")
+    let icon_html = "<div class=\"lmn-alert-icon\">" + lumen_icon(icon) + "</div>"
+    let title_html = ""
+    if title != null { title_html = "<p class=\"lmn-alert-title\">" + _sanitize.escape_html("" + title) + "</p>" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-alert\" data-tone=\"" + tone + "\"" + st + ">" + icon_html + "<div class=\"lmn-alert-body\">" + title_html + _ui_slot(s) + "</div></div>"
+}
+
+fn _ui_render_empty(s) {
+    let icon = _ui_prop(s, "icon", "box")
+    let title = _validate.get_field(s, "title")
+    let icon_html = "<div class=\"lmn-empty-icon\">" + lumen_icon(icon) + "</div>"
+    let title_html = ""
+    if title != null { title_html = "<p class=\"lmn-empty-title\">" + _sanitize.escape_html("" + title) + "</p>" }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-empty\"" + st + ">" + icon_html + title_html + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_skeleton(s) {
+    let w = _ui_safe_css(_ui_prop(s, "w", "100%"), "100%")
+    let h = _ui_safe_css(_ui_prop(s, "h", "1rem"), "1rem")
+    let radius = _ui_prop(s, "radius", "md")
+    let rv = _ui_radius(radius)
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = ";" + sp }
+    return "<div class=\"lmn-skel\" style=\"width:" + w + ";height:" + h + ";border-radius:" + rv + st + "\"></div>"
+}
+
+// ── Chat UI components ──
+
+fn _ui_render_chat(s) {
+    let height = _ui_safe_css(_ui_prop(s, "height", "400px"), "400px")
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-chat\" style=\"--lumen-chat-h:" + height + "\"" + st + ">" + _ui_slot(s) + "</div>"
+}
+
+fn _ui_render_chat_message(s) {
+    let role = _sanitize.escape_html(_ui_prop(s, "role", "assistant"))
+    let content = _validate.get_field(s, "content")
+    let name = _validate.get_field(s, "name")
+    let content_html = ""
+    if content != null { content_html = _sanitize.escape_html("" + content) }
+    let name_html = ""
+    if name != null and name != "" {
+        name_html = "<div class=\"lmn-chat-msg-name\">" + _sanitize.escape_html("" + name) + "</div>"
+    }
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-chat-msg\" data-role=\"" + role + "\"" + st + ">" + name_html + content_html + "</div>"
+}
+
+fn _ui_render_chat_input(s) {
+    let placeholder = _ui_prop(s, "placeholder", "Type a message...")
+    let on = _validate.get_field(s, "on")
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    let click = ""
+    if on != null { click = " @click=\"" + on + "\"" }
+    return "<div class=\"lmn-chat-input\"" + st + ">" +
+        "<input type=\"text\" placeholder=\"" + _sanitize.escape_html(placeholder) + "\" @keydown-enter=\"" + _sanitize.escape_html(_ui_prop(s, "on", "")) + "\" />" +
+        "<button" + click + ">Send</button></div>"
+}
+
+fn _ui_render_typing_indicator(s) {
+    let sp = _ui_style_props(s)
+    let st = ""
+    if sp != "" { st = " style=\"" + sp + "\"" }
+    return "<div class=\"lmn-typing\"" + st + ">" +
+        "<div class=\"lmn-typing-dot\"></div>" +
+        "<div class=\"lmn-typing-dot\"></div>" +
+        "<div class=\"lmn-typing-dot\"></div></div>"
+}
+
+// A tiny inline-SVG icon set (Lucide-style strokes) so <Feature icon="zap"> and
+// friends need no asset pipeline. Unknown names render nothing.
+fn lumen_icon(name) {
+    let open = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"
+    let close = "</svg>"
+    if name == "zap"      { return open + "<polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"></polygon>" + close }
+    if name == "bolt"     { return lumen_icon("zap") }
+    if name == "bars"     { return open + "<path d=\"M12 20v-6M6 20V10M18 20V4\"></path>" + close }
+    if name == "code"     { return open + "<polyline points=\"16 18 22 12 16 6\"></polyline><polyline points=\"8 6 2 12 8 18\"></polyline>" + close }
+    if name == "lock"     { return open + "<rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\" ry=\"2\"></rect><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"></path>" + close }
+    if name == "clock"    { return open + "<circle cx=\"12\" cy=\"12\" r=\"10\"></circle><polyline points=\"12 6 12 12 16 14\"></polyline>" + close }
+    if name == "box"      { return open + "<path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"></path>" + close }
+    if name == "layers"   { return open + "<polygon points=\"12 2 2 7 12 12 22 7 12 2\"></polygon><polyline points=\"2 17 12 22 22 17\"></polyline><polyline points=\"2 12 12 17 22 12\"></polyline>" + close }
+    if name == "rocket"   { return open + "<path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\"></path><path d=\"M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\"></path>" + close }
+    if name == "check"    { return open + "<polyline points=\"20 6 9 17 4 12\"></polyline>" + close }
+    if name == "shield"   { return open + "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path>" + close }
+    // Fallback: treat any unknown name as a Material Symbols glyph. Pages that
+    // use <Feature icon="language"> etc. (Material Symbols names, not the small
+    // Feather vocabulary above) get a real icon instead of an empty string —
+    // requires the Material Symbols font link, which the site pages include.
+    return "<span class=\"material-symbols-outlined\">" + _sanitize.escape_html(name) + "</span>"
+}
+
+// Register the built-in vocabulary. Runs at prelude load, so every template
+// (live components and `vn dev` pages alike) can use these tags immediately.
+lumen_register_component("Page", _ui_component(_ui_render_page))
+lumen_register_component("Container", _ui_component(_ui_render_container))
+lumen_register_component("Section", _ui_component(_ui_render_section))
+lumen_register_component("Stack", _ui_component(_ui_render_stack))
+lumen_register_component("Row", _ui_component(_ui_render_row))
+lumen_register_component("Grid", _ui_component(_ui_render_grid))
+lumen_register_component("Card", _ui_component(_ui_render_card))
+lumen_register_component("Heading", _ui_component(_ui_render_heading))
+lumen_register_component("Text", _ui_component(_ui_render_text))
+lumen_register_component("Eyebrow", _ui_component(_ui_render_eyebrow))
+lumen_register_component("Button", _ui_component(_ui_render_button))
+lumen_register_component("Badge", _ui_component(_ui_render_badge))
+lumen_register_component("Feature", _ui_component(_ui_render_feature))
+lumen_register_component("Divider", _ui_component(_ui_render_divider))
+lumen_register_component("Spacer", _ui_component(_ui_render_spacer))
+lumen_register_component("Hero", _ui_component(_ui_render_hero))
+lumen_register_component("Nav", _ui_component(_ui_render_nav))
+lumen_register_component("Footer", _ui_component(_ui_render_footer))
+lumen_register_component("Split", _ui_component(_ui_render_split))
+lumen_register_component("Field", _ui_component(_ui_render_field))
+lumen_register_component("Stat", _ui_component(_ui_render_stat))
+lumen_register_component("Tag", _ui_component(_ui_render_tag))
+lumen_register_component("Avatar", _ui_component(_ui_render_avatar))
+lumen_register_component("Alert", _ui_component(_ui_render_alert))
+lumen_register_component("Empty", _ui_component(_ui_render_empty))
+lumen_register_component("Skeleton", _ui_component(_ui_render_skeleton))
+lumen_register_component("Chat", _ui_component(_ui_render_chat))
+lumen_register_component("ChatMessage", _ui_component(_ui_render_chat_message))
+lumen_register_component("ChatInput", _ui_component(_ui_render_chat_input))
+lumen_register_component("TypingIndicator", _ui_component(_ui_render_typing_indicator))

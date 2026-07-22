@@ -1,0 +1,31 @@
+// Pins the built-in UI vocabulary across the lumen.vn -> lumen/ui.vn boundary.
+
+test "built-in UI components remain ambient after package extraction" {
+    let button = _lumen_get_component("Button")
+    assert_ne(button, null)
+    let html = (button.render_fn)(http.create_struct(
+        ["children", "href", "variant"],
+        ["Continue", "/next", "outline"]
+    ))
+    assert_ne(html.index_of("Continue"), -1)
+    assert_ne(html.index_of("href=\"/next\""), -1)
+    assert_ne(html.index_of("data-variant=\"outline\""), -1)
+}
+
+test "UI package keeps escaping and unknown icon behavior deterministic" {
+    let button = _lumen_get_component("Button")
+    let html = (button.render_fn)(http.create_struct(
+        ["children", "variant", "on"],
+        ["safe slot", "x\" onclick=\"bad", "go\" autofocus=\"bad"]
+    ))
+    assert_eq(html.index_of("onclick=\"bad"), -1)
+    assert_eq(html.index_of("autofocus=\"bad"), -1)
+    assert_ne(lumen_icon("<unsafe>").index_of("&lt;unsafe&gt;"), -1)
+    assert_eq(lumen_icon("zap"), lumen_icon("zap"))
+    let heading = _lumen_get_component("Heading")
+    let heading_html = (heading.render_fn)(http.create_struct(["as", "children"], ["script", "safe"]))
+    assert_eq(heading_html.index_of("<script"), -1)
+    let skeleton = _lumen_get_component("Skeleton")
+    let skeleton_html = (skeleton.render_fn)(http.create_struct(["w"], ["1px;display:none"]))
+    assert_eq(skeleton_html.index_of("display:none"), -1)
+}

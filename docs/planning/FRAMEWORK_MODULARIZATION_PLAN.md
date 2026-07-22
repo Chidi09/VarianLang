@@ -37,6 +37,9 @@ To ensure zero risk to existing application code and compiler semantics, Phase 1
 8. **Lumen Forms Boundary** (`vn_modules/lumen/forms.vn`):
    - Extracted schema validation, headless form state, accessible native rendering, and opt-in event enhancement.
    - Treats submitted FormData as authoritative for unchecked checkboxes and validates form option contracts.
+9. **Lumen UI Boundary** (`vn_modules/lumen/ui.vn`):
+   - Extracted the design-token helpers, presentational renderers, icon vocabulary, and built-in component registration.
+   - Keeps the ambient component registry intact while removing 647 lines from the facade and adds direct boundary coverage.
 
 ---
 
@@ -146,5 +149,6 @@ The modularization is validated via the test suite:
 - `tests/zenith_request_package_test.vn`: Validates the extracted request parser/accessor boundary through the unchanged ambient API.
 - `tests/zenith_response_package_test.vn`: Validates response construction, stream preservation, and injection defenses through the unchanged ambient API.
 - `tests/lumen_modules_test.vn`: Validates directive scanning and tree-shaking.
+- `tests/lumen_ui_package_test.vn`: Validates ambient UI registration, rendering, escaping, and icon stability across the extracted boundary.
 - `tests/lumen_cached_resource_test.vn`, `tests/lumen_infinite_resource_test.vn`, and `tests/lumen_mutation_test.vn`: Validate the extracted server-resource boundary and filtered-test independence.
 - `./vn test tests/`: Full regression suite execution across all system tests.
