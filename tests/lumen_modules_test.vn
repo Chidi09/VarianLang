@@ -59,6 +59,16 @@ test "presentation-only toggle module is implemented" {
     _assert_module("toggle", "aria-expanded")
 }
 
+test "scroll restoration is route aware and initialized without a click" {
+    let js = _lumen_module("scroll")
+    assert_ne(js.index_of("location.pathname+location.search"), -1)
+    assert_ne(js.index_of("requestAnimationFrame(G)"), -1)
+    assert_ne(js.index_of("beforeunload"), -1)
+    assert_ne(js.index_of("popstate"), -1)
+    assert_ne(js.index_of("a[data-lumen-nav]"), -1)
+    assert_eq(_lumen_scan_directives("<main>plain</main>").len(), 0)
+}
+
 test "directive scanner tree-shakes and deduplicates modules" {
     let tpl = "<time data-lumen-time=\"relative\"></time>" +
               "<input data-lumen-persist=\"draft\">" +
@@ -145,6 +155,7 @@ test "browser action payloads stay within explicit regression ceilings" {
         let name = _validate.get_field(registry[i], "name")
         let ceiling = 850
         if name == "events" { ceiling = 1800 }
+        if name == "scroll" { ceiling = 950 }
         assert_eq(_lumen_module(name).len() <= ceiling, 1)
     }
 }

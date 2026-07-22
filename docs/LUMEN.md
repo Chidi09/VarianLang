@@ -302,7 +302,7 @@ business rules still belong in Varian handlers.
 | --- | --- |
 | `data-lumen-copy="text"` or a selector | Copy text through the Clipboard API |
 | `data-lumen-focus` | Focus an element when the page mounts |
-| `data-lumen-scroll="into-view\|lock\|restore"` | Browser scroll management |
+| `data-lumen-scroll="into-view\|lock\|restore"` | Browser scroll management; `restore` persists positions per path and query across history navigation |
 | `data-lumen-persist="key"` | Persist a control in local storage; prefix with `session:` for session storage |
 | `data-lumen-time="relative\|countdown"` | Update relative times or countdowns locally |
 | `data-lumen-media="lazy\|lightbox\|autoplay"` | Browser-native media behavior |
