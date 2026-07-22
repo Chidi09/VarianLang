@@ -19,6 +19,9 @@ To ensure zero risk to existing application code and compiler semantics, Phase 1
 2. **Zenith Template Engine** (`vn_modules/zenith/template.vn`):
    - Extracted template parser and evaluator (`_tpl_lookup`, `_tpl_truthy`, `_tpl_bind`, `_zenith_substr_index`, `_tpl_next_tag`, `_tpl_render_region`, `_tpl_keyword`, `_tpl_is_stop`, `_tpl_do_if`, `_tpl_do_for`, `render`, `render_response`).
    - Loaded in `vn_modules/zenith.vn` via `use "zenith"`.
+3. **Lumen Content & Security Leaves** (`vn_modules/lumen/content.vn`, `security.vn`):
+   - Typed content collection discovery and live-channel origin policy are independently owned.
+   - The facade retains ambient compatibility while mounts consume the extracted security policy.
 
 ---
 
