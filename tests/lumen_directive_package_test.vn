@@ -33,7 +33,7 @@ test "every module name the scanner can emit exists in the catalog" {
     // files split by the package boundary.
     let names = ["events", "vtable", "clipboard", "focus", "scroll", "toast", "key", "persist",
                  "time", "media", "window", "nav", "toggle", "transition",
-                 "prefetch", "anchor", "inview", "sortable"]
+                 "prefetch", "offline", "anchor", "inview", "sortable"]
     for i in 0..names.len() {
         assert_ne(_lumen_module(names[i]), "")
     }

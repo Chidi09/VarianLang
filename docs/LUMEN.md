@@ -309,6 +309,7 @@ business rules still belong in Varian handlers.
 | `data-lumen-window="online\|theme\|resize"` | Reflect browser/window state as classes or CSS variables |
 | `data-lumen-nav` | Same-origin History API navigation, reported to the server |
 | `data-lumen-prefetch` | Prefetch a same-origin document on pointer or keyboard intent without intercepting navigation |
+| `data-lumen-offline` | Register an explicitly mounted Lumen service worker |
 | `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
 | `data-lumen-anchor="#target"` | Position a popover below an anchor element |
 | `data-lumen-inview="load_more"` | Report viewport entry to a Varian handler |
@@ -346,6 +347,16 @@ default. It returns the locale, prefix-free application path, canonical localize
 path, and selection source. `lumen_locale_alternates(path, supported, default)`
 emits deterministic `hreflang` and `x-default` links. Both are entirely server-side
 and add zero browser JavaScript.
+
+### Explicit offline resilience
+
+`lumen_mount_offline(app, worker_path, cache_name, assets, fallback)` serves a
+versioned service worker directly from Varian configuration, so no generated worker
+asset needs to be committed. It precaches only declared same-origin paths, removes
+older Lumen cache versions, uses network-first document navigation with the declared
+offline fallback, and leaves non-GET requests untouched. Rendering
+`lumen_offline(worker_path, scope)` opts a page into the small registration action;
+pages without that marker ship no service-worker code and install nothing.
 
 ### Lumen UI (Component Registry)
 

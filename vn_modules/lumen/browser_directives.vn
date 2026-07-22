@@ -42,6 +42,7 @@ fn _lumen_action_registry() {
         _lumen_action("window", ["data-lumen-window"], []),
         _lumen_action("nav", ["data-lumen-nav"], ["event-bridge"]),
         _lumen_action("prefetch", ["data-lumen-prefetch"], []),
+        _lumen_action("offline", ["data-lumen-offline"], []),
         _lumen_action("toggle", ["data-lumen-toggle"], []),
         _lumen_action("transition", ["data-lumen-transition"], []),
         _lumen_action("defer", ["data-lumen-defer"], []),
@@ -149,6 +150,9 @@ fn _lumen_module(name) {
     }
     if name == "prefetch" {
         return "(function()\{var S=new Set;function P(a)\{if(!a||S.has(a.href)||a.origin!==location.origin)return;S.add(a.href);var l=document.createElement('link');l.rel='prefetch';l.href=a.href;l.as='document';document.head.appendChild(l)\}document.addEventListener('pointerover',function(e)\{P(e.target.closest&&e.target.closest('a[data-lumen-prefetch]'))\},\{passive:true\});document.addEventListener('focusin',function(e)\{P(e.target.closest&&e.target.closest('a[data-lumen-prefetch]'))\})\})()"
+    }
+    if name == "offline" {
+        return "document.querySelectorAll('[data-lumen-offline]').forEach(function(e)\{if('serviceWorker'in navigator)navigator.serviceWorker.register(e.getAttribute('data-lumen-offline'),\{scope:e.getAttribute('data-lumen-scope')||'/'\}).catch(function()\{\})\})"
     }
     if name == "toggle" {
         return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-toggle]');if(!el)return;var s=el.getAttribute('data-lumen-toggle'),t=document.querySelector(s);if(!t)return;var hidden=!t.hidden;t.hidden=hidden;el.setAttribute('aria-expanded',String(!hidden))\})"

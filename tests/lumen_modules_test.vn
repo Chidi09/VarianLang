@@ -26,6 +26,7 @@ test "pure browser modules are implemented" {
     _assert_module("window", "prefers-color-scheme")
     _assert_module("nav", "history.pushState")
     _assert_module("prefetch", "rel='prefetch'")
+    _assert_module("offline", "serviceWorker.register")
     _assert_module("transition", "requestAnimationFrame")
     _assert_module("defer", "data-lumen-defer-result")
     _assert_module("anchor", "getBoundingClientRect")

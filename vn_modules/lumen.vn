@@ -3770,6 +3770,56 @@ fn lumen_locale_alternates(path, supported, default_locale) {
     return out + "<link rel=\"alternate\" hreflang=\"x-default\" href=\"" + _sanitize.escape_html(fallback) + "\">"
 }
 
+fn _lumen_same_origin_path(value, label) {
+    let path = "" + value
+    if path == "" or path.starts_with("/") == false or path.starts_with("//") or
+       path.index_of("\r") >= 0 or path.index_of("\n") >= 0 {
+        throw("Lumen " + label + " must be an absolute same-origin path")
+    }
+    return path
+}
+
+// Opt into an already mounted Lumen service worker. Without this marker no
+// registration code ships and no worker is installed.
+fn lumen_offline(worker_path, scope) {
+    let worker = _lumen_same_origin_path(worker_path, "offline worker")
+    let worker_scope = _lumen_same_origin_path(scope, "offline scope")
+    return "<span hidden data-lumen-offline=\"" + _sanitize.escape_html(worker) +
+           "\" data-lumen-scope=\"" + _sanitize.escape_html(worker_scope) + "\"></span>"
+}
+
+fn _lumen_offline_worker_source(cache_name, assets, fallback) {
+    if type_of(assets) != "array" { throw "Lumen offline assets must be an array" }
+    let safe_assets = []
+    for i in 0..assets.len() {
+        let asset = _lumen_same_origin_path(assets[i], "offline asset")
+        if _lumen_list_has(safe_assets, asset) == false { safe_assets = safe_assets.push(asset) }
+    }
+    let safe_fallback = _lumen_same_origin_path(fallback, "offline fallback")
+    if _lumen_list_has(safe_assets, safe_fallback) == false { safe_assets = safe_assets.push(safe_fallback) }
+    let cache = "lumen:" + cache_name
+    return "const C=" + json_encode(cache) + ",A=" + json_encode(safe_assets) + ",F=" + json_encode(safe_fallback) + ";" +
+           "self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(A)).then(()=>self.skipWaiting())));" +
+           "self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(a=>Promise.all(a.filter(k=>k.startsWith('lumen:')&&k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));" +
+           "self.addEventListener('fetch',e=>\{let r=e.request;if(r.method!=='GET')return;if(r.mode==='navigate')e.respondWith(fetch(r).catch(()=>caches.match(F)));else e.respondWith(caches.match(r).then(x=>x||fetch(r)))\});"
+}
+
+// Mount a generated worker directly from Varian configuration—no generated
+// asset needs to be checked into the application repository.
+fn lumen_mount_offline(app, worker_path, cache_name, assets, fallback) {
+    let path = _lumen_same_origin_path(worker_path, "offline worker")
+    if cache_name == null or ("" + cache_name) == "" { throw "Lumen offline cache name must not be empty" }
+    let source = _lumen_offline_worker_source("" + cache_name, assets, fallback)
+    radix_insert(app.root, "GET" + path, |req| {
+        return http.create_struct(
+            ["status", "body", "content_type", "headers"],
+            [200, source, "application/javascript; charset=utf-8",
+             http.create_struct(["Cache-Control", "Service-Worker-Allowed"], ["no-cache", "/"])]
+        )
+    }, "Lumen offline service worker")
+    return path
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }
