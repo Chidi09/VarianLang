@@ -109,8 +109,9 @@ adding a new concept users have to learn?
     local URL, file→route table, ready-in-N-ms) and hot-reload status lines; colour gated on TTY
     + `NO_COLOR`; the framework's own `http.serve` line is suppressed via `LUMEN_QUIET` so the
     console is the single banner. In `src/main.c` (`lumen_print_banner`, `lumen_dev`).
-  - *Deferred sub-item:* `vn fmt`/`vn lint` `.lumen`-awareness. Automatic form CSRF wiring and
-    strict live-socket Origin enforcement are now built and covered.
+  - `.lumen` tooling, automatic form CSRF wiring, and strict live-socket Origin enforcement
+    are built and covered. The formatter preserves attributed/multiple client islands and is
+    idempotence-tested; the linter checks template/style/server-script/client regions.
 - **M8 — client islands (DONE, honestly).** An optional `<client>` block in a `.lumen` file
   ships verbatim browser JS for a client-only widget (charts/canvas/maps). It's embedded as a
   `<script>` that runs once on first paint and is left untouched by the DOM morph

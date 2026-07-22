@@ -1241,8 +1241,11 @@ static void check_client_js_advisory(LintContext *ctx, const char *source, int s
     (void)base_line;
     const char *p = source;
     while (*p) {
-        if (strncmp(p, "<client>", 8) == 0) {
-            const char *block_start = p + 8;
+        if (strncmp(p, "<client", 7) == 0 &&
+            (p[7] == '>' || p[7] == ' ' || p[7] == '\t' || p[7] == '\r' || p[7] == '\n')) {
+            const char *tag_end = strchr(p, '>');
+            if (!tag_end) break;
+            const char *block_start = tag_end + 1;
             const char *block_end = strstr(block_start, "</client>");
             if (!block_end) break;
             bool only_fetch_or_dom = true;

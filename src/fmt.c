@@ -1279,6 +1279,33 @@ char *fmt_format_lumen_source(const char *source, size_t size, int *out_len) {
         FMT_EMIT("</style>\n\n", 10);
     }
 
+    /* Client islands before the server script are browser JavaScript, not
+     * Varian. Preserve every complete block byte-for-byte (including policy
+     * attributes) instead of dropping it or feeding it to the Varian
+     * formatter. Islands after </script> remain in after-content below. */
+    const char *client_scan = t_close + 11;
+    while (client_scan < c_open) {
+        const char *client_open = strstr(client_scan, "<client");
+        if (!client_open || client_open >= c_open) break;
+        if (st_open && client_open >= st_open && client_open < st_close + 8) {
+            client_scan = st_close + 8;
+            continue;
+        }
+        char boundary = client_open[7];
+        if (boundary != '>' && boundary != ' ' && boundary != '\t' && boundary != '\r' && boundary != '\n') {
+            client_scan = client_open + 7;
+            continue;
+        }
+        const char *client_tag_end = strchr(client_open, '>');
+        if (!client_tag_end || client_tag_end >= c_open) break;
+        const char *client_close = strstr(client_tag_end + 1, "</client>");
+        if (!client_close || client_close >= c_open) break;
+        const char *client_end = client_close + 9;
+        FMT_EMIT(client_open, (int)(client_end - client_open));
+        FMT_EMIT("\n\n", 2);
+        client_scan = client_end;
+    }
+
     /* Script block */
     FMT_EMIT("<script>\n", 9);
     if (c_len > 0) { FMT_EMIT(c_out, c_len); FMT_EMIT_CH('\n'); }
