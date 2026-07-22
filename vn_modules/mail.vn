@@ -53,8 +53,11 @@ struct EmailMessage {
 // ═══════════════════════════════════════════════════════════════════════════
 
 fn email(to, subject) {
+    _mail_validate_header(to, "recipient")
+    _mail_validate_header(subject, "subject")
     let from = env.get("EMAIL_FROM")
     if from == null { from = "" }
+    if from != "" { _mail_validate_header(from, "from address") }
     return EmailMessage {
         from_addr: from,
         to: to,
@@ -74,36 +77,49 @@ fn email(to, subject) {
 
 impl EmailMessage {
     fn from(self, addr) {
+        _mail_validate_header(addr, "from address")
         self.from_addr = addr
+        return self
     }
 
     fn cc(self, addr) {
+        _mail_validate_header(addr, "cc address")
         self.cc = addr
+        return self
     }
 
     fn bcc(self, addr) {
+        _mail_validate_header(addr, "bcc address")
         self.bcc = addr
+        return self
     }
 
     fn reply_to(self, addr) {
+        _mail_validate_header(addr, "reply-to address")
         self.reply_to = addr
+        return self
     }
 
     fn text(self, body) {
         self.text_body = body
+        return self
     }
 
     fn html(self, body) {
         self.html_body = body
+        return self
     }
 
     fn attach(self, filename, content_type, data) {
+        _mail_validate_header(filename, "attachment filename")
+        _mail_validate_header(content_type, "attachment content type")
         let a = Attachment {
             filename: filename,
             content_type: content_type,
             data: data,
         }
         self.attachments = self.attachments.push(a)
+        return self
     }
 
     // Load an email template file and render it with context.
@@ -111,19 +127,13 @@ impl EmailMessage {
     // {{key}} placeholders. Falls back to _render_simple_html if the
     // file is missing.
     fn template(self, name, context) {
+        if not _mail_template_name_valid(name) {
+            throw("Email template names may contain only letters, digits, '-' and '_'")
+        }
         let path = "email_templates/" + name + ".html"
-        let content = ""
+        let content = null
         try {
-            // Try reading from deploy/include or a templates dir
-            // If I/O isn't available, fall through to simple render
-            let keys = _validate.get_keys(context)
-            let vals = []
-            for i in 0..keys.len() {
-                vals = vals.push(_validate.get_field(context, keys[i]))
-            }
-            // Build a find/replace pair list for {{key}} substitution
-            let tpl = path  // placeholder — template loading depends on env
-            content = null
+            content = io.read_text(path)
         } catch e {
             content = null
         }
@@ -133,21 +143,14 @@ impl EmailMessage {
             if title == null { title = self.subject }
             let body_text = _validate.get_field(context, "body")
             if body_text == null { body_text = self.text_body }
-            self.html_body = _render_simple_html(title, body_text)
+            self.html_body = _render_simple_html(title, _escape_html(body_text))
         } else {
-            // Render {{key}} placeholders
-            let rendered = content
-            let ctx_keys = _validate.get_keys(context)
-            for i in 0..ctx_keys.len() {
-                let k = ctx_keys[i]
-                let v = "" + _validate.get_field(context, k)
-                rendered = _replace_all(rendered, "\{\{" + k + "\}\}", v)
-            }
-            self.html_body = rendered
+            self.html_body = _render_email_template(content, context)
         }
         if self.text_body == "" {
             self.text_body = _strip_html(self.html_body)
         }
+        return self
     }
 
     // Auto-detect sending strategy and send.
@@ -201,6 +204,36 @@ impl EmailMessage {
         }
         return send_smtp_no_tls(self, host, port)
     }
+}
+
+fn _mail_validate_header(value, label) {
+    if value == null or value.index_of("\r") >= 0 or value.index_of("\n") >= 0 {
+        throw("Invalid email " + label)
+    }
+}
+
+fn _mail_template_name_valid(name) {
+    if name == null or name == "" { return false }
+    for i in 0..name.len() {
+        let c = name.code_at(i)
+        let alpha = (c >= 65 and c <= 90) or (c >= 97 and c <= 122)
+        let digit = c >= 48 and c <= 57
+        if not alpha and not digit and c != 45 and c != 95 { return false }
+    }
+    return true
+}
+
+fn _render_email_template(content, context) {
+    let rendered = content
+    if context == null { return rendered }
+    let keys = _validate.get_keys(context)
+    for i in 0..keys.len() {
+        let key = keys[i]
+        let value = _escape_html("" + _validate.get_field(context, key))
+        let marker = "".from_codes([123, 123]) + key + "".from_codes([125, 125])
+        rendered = _replace_all(rendered, marker, value)
+    }
+    return rendered
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

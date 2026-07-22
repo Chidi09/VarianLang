@@ -205,7 +205,7 @@ queue, mail, storage, logging, and security modules without a package-manager de
 | **Auth** | Authentication package + session store | **Built-in** — `zenith_auth.jwt()`, `zenith_auth.session_store()`, `zenith_auth.session()` and password helpers |
 | **ORM** | Prisma / Drizzle / Knex | **Built-in** — comptime `select().where().build()`, zero runtime cost |
 | **Background jobs** | External queue service or process | **Built-in** — durable SQLite named jobs, bounded retries, worker pools, and `cron()` |
-| **Email** | Nodemailer / Resend SDK | **Built-in** — `send_smtp()`, `send_resend()` |
+| **Email** | Nodemailer / Resend SDK | **Built-in** — chainable messages, escaped file templates, Resend, SendGrid, and SMTP |
 | **File storage** | multer / boto3 SDK | **Built-in** — `Storage.put()/.get()/.delete()` |
 | **Structured logging** | Winston / Pino | **Built-in** — JSON `Logger.info_with()` |
 | **Prometheus metrics** | prom-client | **Built-in** — `metrics_handler()` |
@@ -222,6 +222,11 @@ Administrative queue controls are not exposed automatically. After installing th
 application's authentication and authorization middleware, opt in with
 `app.enable_job_dashboard("/operations/jobs")`. The dashboard uses the database selected
 by `queue_configure(...)` and is entirely server-rendered, so it adds no browser runtime.
+
+Email templates live at `email_templates/<name>.html`, use `{{key}}` markers, and load
+through Varian's asset-aware I/O path. Context values are HTML-escaped by default, template
+names reject path traversal, and address/header fields reject CR/LF injection. Missing files
+fall back to the built-in accessible HTML shell.
 
 Release compilation performs conservative whole-program reachability before native code
 generation. Unreferenced ambient prelude functions are omitted, while application entry

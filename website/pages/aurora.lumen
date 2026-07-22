@@ -213,7 +213,7 @@
       SQLite and Postgres drivers built in. Meridian can build static query shapes during <code>comptime</code> and generates bound queries. <code>bind()</code> rejects a parameter-count mismatch before the query is sent to the database.
     </Feature>
     <Feature icon="inventory_2" title="Batteries included">
-      JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.
+      JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis, request validation, and chainable email with escaped file templates and Resend/SendGrid/SMTP delivery — all built in through <code>vn_modules/</code>. Zero package-manager dependencies.
     </Feature>
     <Feature icon="package_2" title="Deploys as one binary">
       <code>vn build main.vn --release</code> produces a native executable containing the composed Zenith and Lumen program plus embedded public assets. Conservative whole-program reachability removes unused ambient prelude functions while retaining transitive dependencies and dynamic methods. No <code>node_modules</code> or separate application runtime is required.

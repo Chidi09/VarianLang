@@ -90,6 +90,25 @@ test "email function exists" {
     assert_ne(email, null)
 }
 
+test "email headers reject response splitting" {
+    assert_throws(| | { email("victim@example.com\r\nBcc: attacker@example.com", "hello") })
+    assert_throws(| | { _mail_validate_header("safe@example.com\nBcc: attacker@example.com", "reply-to address") })
+}
+
+test "email template renderer escapes context by default" {
+    let context = http.create_struct(["name", "code"], ["<Admin>", "A&B"])
+    let open = "".from_codes([123, 123])
+    let close = "".from_codes([125, 125])
+    let template = "Hello " + open + "name" + close + ": " + open + "code" + close
+    let rendered = _render_email_template(template, context)
+    assert_eq(rendered, "Hello &lt;Admin&gt;: A&amp;B")
+}
+
+test "email template names reject path traversal" {
+    assert_eq(_mail_template_name_valid("welcome-v2"), true)
+    assert_eq(_mail_template_name_valid("../secrets"), false)
+}
+
 test "email_html_template exists" {
     assert_ne(email_html_template, null)
 }

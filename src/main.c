@@ -2388,7 +2388,9 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        // Scan public/ directory and collect assets
+        // Scan deploy-time asset directories. Email templates use the same
+        // VM asset lookup as public files so a built bundle/native binary does
+        // not depend on the source tree remaining beside it.
         VMAsset *assets = NULL;
         int asset_count = 0;
         int asset_capacity = 0;
@@ -2396,6 +2398,12 @@ int main(int argc, char *argv[]) {
         if (stat("public", &st_public) == 0 && S_ISDIR(st_public.st_mode)) {
             printf("[Kiln] Embedding public/ assets...\n");
             collect_assets_recursive("public", &assets, &asset_count, &asset_capacity);
+        }
+        struct stat st_email_templates;
+        if (stat("email_templates", &st_email_templates) == 0 &&
+            S_ISDIR(st_email_templates.st_mode)) {
+            printf("[Kiln] Embedding email_templates/ assets...\n");
+            collect_assets_recursive("email_templates", &assets, &asset_count, &asset_capacity);
         }
         
         // Cache lookup (incorporates source + release flag + asset contents)
