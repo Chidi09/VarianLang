@@ -200,7 +200,7 @@ let _lumen_qcache = [http.create_struct([], [])]
 let _lumen_cache_stats = [http.create_struct(["hits", "misses"], [0, 0])]
 let _lumen_resource_cache = [http.create_struct([], [])]
 let _lumen_resource_versions = [http.create_struct([], [])]
-let _lumen_resource_stats = [http.create_struct(["hits", "misses", "deduped"], [0, 0, 0])]
+let _lumen_resource_stats = [http.create_struct(["hits", "misses", "deduped", "evicted"], [0, 0, 0, 0])]
 let _lumen_watched_tables = [http.create_struct([], [])]
 
 let _lumen_presence_data = http.create_struct([], [])
@@ -1611,10 +1611,16 @@ fn _lumen_resource_state(cache_key, entry, stale) {
 fn lumen_cached_resource(key, fetcher, opts) {
     let cache_key = _lumen_resource_key(key)
     let stale_ms = 30000
+    let gc_ms = 300000
     if opts != null {
         let configured = _validate.get_field(opts, "stale_ms")
         if configured != null { stale_ms = configured }
+        let configured_gc = _validate.get_field(opts, "gc_ms")
+        if configured_gc != null { gc_ms = configured_gc }
     }
+    if type_of(stale_ms) != "int" or stale_ms < 0 { throw("Lumen resource stale_ms must be a non-negative integer") }
+    if type_of(gc_ms) != "int" or gc_ms < 0 { throw("Lumen resource gc_ms must be a non-negative integer") }
+    let _ = lumen_resource_cache_gc(gc_ms)
     let holder = [_lumen_resource_state(cache_key, null, true)]
     let load = |force| {
         let now = time.now_ms()
@@ -1622,6 +1628,8 @@ fn lumen_cached_resource(key, fetcher, opts) {
         let entry = _validate.get_field(_lumen_resource_cache[0], cache_key)
         if entry != null {
             if _validate.get_field(entry, "fetching") {
+                entry = _tpl_bind(entry, "accessed_at", now)
+                _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, entry)
                 let deduped = _validate.get_field(_lumen_resource_stats[0], "deduped")
                 _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "deduped", deduped + 1)
                 holder[0] = _lumen_resource_state(cache_key, entry, true)
@@ -1631,6 +1639,8 @@ fn lumen_cached_resource(key, fetcher, opts) {
             let age = now - _validate.get_field(entry, "updated_at")
             let fresh = same_version and age <= stale_ms
             if force == false and fresh {
+                entry = _tpl_bind(entry, "accessed_at", now)
+                _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, entry)
                 let hits = _validate.get_field(_lumen_resource_stats[0], "hits")
                 _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "hits", hits + 1)
                 holder[0] = _lumen_resource_state(cache_key, entry, false)
@@ -1640,8 +1650,8 @@ fn lumen_cached_resource(key, fetcher, opts) {
         let previous = null
         if entry != null { previous = _validate.get_field(entry, "data") }
         let pending = http.create_struct(
-            ["data", "error", "updated_at", "version", "fetching"],
-            [previous, null, now, version, true]
+            ["data", "error", "updated_at", "accessed_at", "version", "fetching"],
+            [previous, null, now, now, version, true]
         )
         _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, pending)
         holder[0] = _lumen_resource_state(cache_key, pending, true)
@@ -1649,13 +1659,13 @@ fn lumen_cached_resource(key, fetcher, opts) {
         try {
             let data = fetcher()
             final = http.create_struct(
-                ["data", "error", "updated_at", "version", "fetching"],
-                [data, null, time.now_ms(), version, false]
+                ["data", "error", "updated_at", "accessed_at", "version", "fetching"],
+                [data, null, time.now_ms(), time.now_ms(), version, false]
             )
         } catch e {
             final = http.create_struct(
-                ["data", "error", "updated_at", "version", "fetching"],
-                [previous, "" + e, time.now_ms(), version, false]
+                ["data", "error", "updated_at", "accessed_at", "version", "fetching"],
+                [previous, "" + e, time.now_ms(), time.now_ms(), version, false]
             )
         }
         _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, final)
@@ -1665,7 +1675,14 @@ fn lumen_cached_resource(key, fetcher, opts) {
         return holder[0]
     }
     let initial = (load)(false)
-    let state = | | { return holder[0] }
+    let state = | | {
+        let entry = _validate.get_field(_lumen_resource_cache[0], cache_key)
+        if entry != null {
+            entry = _tpl_bind(entry, "accessed_at", time.now_ms())
+            _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], cache_key, entry)
+        }
+        return holder[0]
+    }
     let refetch = | | { return (load)(true) }
     let invalidate = | | { lumen_resource_invalidate(key); holder[0] = _lumen_resource_state(cache_key, _validate.get_field(_lumen_resource_cache[0], cache_key), true); return holder[0] }
     return http.create_struct(["state", "refetch", "invalidate"], [state, refetch, invalidate])
@@ -1680,12 +1697,51 @@ fn lumen_resource_invalidate(key) {
 
 fn lumen_resource_cache_stats() {
     return http.create_struct(
-        ["hits", "misses", "deduped", "entries"],
+        ["hits", "misses", "deduped", "evicted", "entries"],
         [_validate.get_field(_lumen_resource_stats[0], "hits"),
          _validate.get_field(_lumen_resource_stats[0], "misses"),
          _validate.get_field(_lumen_resource_stats[0], "deduped"),
+         _validate.get_field(_lumen_resource_stats[0], "evicted"),
          _validate.get_keys(_lumen_resource_cache[0]).len()]
     )
+}
+
+fn lumen_resource_cache_gc(max_age_ms) {
+    if type_of(max_age_ms) != "int" or max_age_ms < 0 { throw("Lumen resource GC age must be a non-negative integer") }
+    let now = time.now_ms()
+    let keys = _validate.get_keys(_lumen_resource_cache[0])
+    let kept_keys = []
+    let kept_values = []
+    let evicted = 0
+    for i in 0..keys.len() {
+        let key = keys[i]
+        let entry = _validate.get_field(_lumen_resource_cache[0], key)
+        let accessed = _validate.get_field(entry, "accessed_at")
+        if accessed == null { accessed = _validate.get_field(entry, "updated_at") }
+        let fetching = _validate.get_field(entry, "fetching") == true
+        if fetching or accessed == null or now - accessed <= max_age_ms {
+            kept_keys = kept_keys.push(key)
+            kept_values = kept_values.push(entry)
+        } else {
+            evicted = evicted + 1
+        }
+    }
+    _lumen_resource_cache[0] = http.create_struct(kept_keys, kept_values)
+    let version_keys = []
+    let version_values = []
+    for i in 0..kept_keys.len() {
+        let version = _validate.get_field(_lumen_resource_versions[0], kept_keys[i])
+        if version != null {
+            version_keys = version_keys.push(kept_keys[i])
+            version_values = version_values.push(version)
+        }
+    }
+    _lumen_resource_versions[0] = http.create_struct(version_keys, version_values)
+    if evicted > 0 {
+        let total = _validate.get_field(_lumen_resource_stats[0], "evicted")
+        _lumen_resource_stats[0] = _tpl_bind(_lumen_resource_stats[0], "evicted", total + evicted)
+    }
+    return evicted
 }
 
 // ─── Server mutation lifecycle ───
@@ -1703,12 +1759,18 @@ fn _lumen_mutation_state(status, data, error, variables, context, submitted_at) 
 
 fn lumen_mutation(mutate_fn, opts) {
     let holder = [_lumen_mutation_state("idle", null, null, null, null, null)]
-    let execute = |value| {
+    let generation = [0]
+    let prepare = |value| {
+        generation[0] = generation[0] + 1
         let context = null
         let on_mutate = null
         if opts != null { on_mutate = _validate.get_field(opts, "on_mutate") }
         if on_mutate != null { context = (on_mutate)(value) }
         holder[0] = _lumen_mutation_state("pending", null, null, value, context, time.now_ms())
+        return http.create_struct(["context", "generation"], [context, generation[0]])
+    }
+    let settle = |value, prepared| {
+        let context = prepared.context
         try {
             let data = mutate_fn(value)
             let keys = null
@@ -1719,19 +1781,33 @@ fn lumen_mutation(mutate_fn, opts) {
             let on_success = null
             if opts != null { on_success = _validate.get_field(opts, "on_success") }
             if on_success != null { let _ = (on_success)(data, value, context) }
-            holder[0] = _lumen_mutation_state("success", data, null, value, context, holder[0].submitted_at)
+            if prepared.generation == generation[0] {
+                holder[0] = _lumen_mutation_state("success", data, null, value, context, holder[0].submitted_at)
+            }
         } catch e {
             let message = "" + e
             let on_error = null
             if opts != null { on_error = _validate.get_field(opts, "on_error") }
             if on_error != null { let _ = (on_error)(message, value, context) }
-            holder[0] = _lumen_mutation_state("error", null, message, value, context, holder[0].submitted_at)
+            if prepared.generation == generation[0] {
+                holder[0] = _lumen_mutation_state("error", null, message, value, context, holder[0].submitted_at)
+            }
         }
         return holder[0]
     }
+    let execute = |value| { return (settle)(value, (prepare)(value)) }
+    let execute_async = |value| {
+        let prepared = (prepare)(value)
+        let run = | | {
+            let result = (settle)(value, prepared)
+            let _ = _lumen_async_updates <- true
+            return result
+        }
+        return task.spawn(run, [])
+    }
     let state = | | { return holder[0] }
-    let reset = | | { holder[0] = _lumen_mutation_state("idle", null, null, null, null, null); return holder[0] }
-    return http.create_struct(["state", "mutate", "reset"], [state, execute, reset])
+    let reset = | | { generation[0] = generation[0] + 1; holder[0] = _lumen_mutation_state("idle", null, null, null, null, null); return holder[0] }
+    return http.create_struct(["state", "mutate", "mutate_async", "reset"], [state, execute, execute_async, reset])
 }
 
 // ─── Pillar 1: reactive tick — drain DB changes, refetch dependent live

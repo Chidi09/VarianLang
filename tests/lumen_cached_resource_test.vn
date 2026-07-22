@@ -65,3 +65,20 @@ test "resource cache exposes hit miss dedupe and entry metrics" {
     assert_eq(stats.deduped >= 1, 1)
     assert_eq(stats.entries >= 1, 1)
 }
+
+test "resource cache garbage collection evicts inactive entries and versions" {
+    let key = ["gc", 505]
+    let resource = lumen_cached_resource(key, | | { return "old" }, { stale_ms: 60000, gc_ms: 60000 })
+    assert_eq((resource.state)().data, "old")
+    let encoded = _lumen_resource_key(key)
+    let entry = _validate.get_field(_lumen_resource_cache[0], encoded)
+    entry = _tpl_bind(entry, "accessed_at", 1)
+    _lumen_resource_cache[0] = _tpl_bind(_lumen_resource_cache[0], encoded, entry)
+    lumen_resource_invalidate(key)
+    let evicted_before = (lumen_resource_cache_stats()).evicted
+    assert_eq(lumen_resource_cache_gc(1) >= 1, 1)
+    assert_eq(_validate.get_field(_lumen_resource_cache[0], encoded), null)
+    assert_eq(_validate.get_field(_lumen_resource_versions[0], encoded), null)
+    assert_eq((lumen_resource_cache_stats()).evicted > evicted_before, 1)
+    assert_throws(| | { lumen_resource_cache_gc(-1) })
+}

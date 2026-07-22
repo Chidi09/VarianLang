@@ -150,6 +150,12 @@ This aggregation is server-native and adds no browser JavaScript.
 Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
 successful status or a raw stack trace.
 
+Keyed resources accept both `stale_ms` and `gc_ms`. Access refreshes an entry's inactivity
+clock; `lumen_resource_cache_gc(age_ms)` evicts inactive, non-fetching entries and their
+version metadata, while cache statistics report cumulative `evicted` entries. Mutations
+offer both blocking `mutate(value)` and cooperative `mutate_async(value)`; the latter sets
+optimistic pending state immediately and notifies live renders when its task settles.
+
 For ordered deferred server work, `lumen_stream_html(chunks, headers)` accepts HTML
 strings and zero-argument functions. Strings flush immediately; each function runs only
 when its position is reached and its returned HTML becomes the next TLS-aware HTTP chunk.

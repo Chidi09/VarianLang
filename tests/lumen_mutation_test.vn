@@ -60,3 +60,36 @@ test "mutation reset returns to idle and clears payload" {
     assert_eq(idle.error, null)
     assert_eq(idle.variables, null)
 }
+
+test "background mutation exposes pending state then settles" {
+    let events = [[]]
+    let m = lumen_mutation(
+        |value| { events[0] = events[0].push("run"); return value * 3 },
+        { on_mutate: |value| { events[0] = events[0].push("optimistic"); return { previous: 2 } } }
+    )
+    let job = (m.mutate_async)(5)
+    assert_eq(task.id(job) >= 0, 1)
+    assert_eq((m.state)().status, "pending")
+    assert_eq((m.state)().context.previous, 2)
+    task.yield()
+    assert_eq((m.state)().status, "success")
+    assert_eq((m.state)().data, 15)
+    assert_eq(events[0][0], "optimistic")
+    assert_eq(events[0][1], "run")
+}
+
+test "older background completion cannot overwrite a newer mutation" {
+    let m = lumen_mutation(|value| {
+        if value == 1 { task.sleep(5) }
+        return value
+    }, null)
+    let first = (m.mutate_async)(1)
+    let second = (m.mutate_async)(2)
+    task.yield()
+    assert_eq((m.state)().status, "success")
+    assert_eq((m.state)().data, 2)
+    task.sleep(10)
+    assert_eq((m.state)().data, 2)
+    assert_eq(task.id(first) >= 0, 1)
+    assert_eq(task.id(second) >= 0, 1)
+}
