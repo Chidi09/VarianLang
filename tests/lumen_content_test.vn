@@ -1,0 +1,57 @@
+fn _content_fixture() {
+    let dir = "_lumen_content_fixture"
+    io.mkdir(dir)
+    io.mkdir(dir + "/guides")
+    io.write_text(dir + "/z-last.md", "---\ntitle: \"Last\"\ndraft: false\n---\n# Last\n\nSafe <script>alert(1)</script>")
+    io.write_text(dir + "/index.md", "---\ntitle: \"Home\"\ndraft: false\n---\n# Home\n\n- fast\n- small")
+    io.write_text(dir + "/guides/start.md", "---\ntitle: \"Start\"\ndraft: true\n---\n## Start")
+    io.write_text(dir + "/data.json", "\{\"title\":\"Data\",\"draft\":false\}")
+    return dir
+}
+
+test "content collections discover recursively in deterministic order" {
+    let collection = lumen_content_collection(_content_fixture(), null)
+    assert_eq(collection.entries.len(), 4)
+    assert_eq(collection.entries[0].id, "data.json")
+    assert_eq(collection.entries[1].id, "guides/start.md")
+    assert_eq(collection.entries[2].id, "index.md")
+    assert_eq(collection.entries[3].id, "z-last.md")
+    assert_eq(collection.entries[2].slug, "")
+    assert_eq(collection.entries[1].slug, "guides/start")
+}
+
+test "frontmatter values are parsed and validated by Varian schemas" {
+    let schema = validate.object({ title: validate.str().min(1), draft: validate.bool() })
+    let dir = "_lumen_content_schema_fixture"
+    io.mkdir(dir)
+    io.write_text(dir + "/post.md", "---\ntitle: \"Typed\"\ndraft: false\n---\nBody")
+    let collection = lumen_content_collection(dir, schema)
+    assert_eq(collection.entries[0].data.title, "Typed")
+    assert_eq(collection.entries[0].data.draft, false)
+}
+
+test "markdown rendering is safe by default" {
+    let collection = lumen_content_collection(_content_fixture(), null)
+    let post = (collection.get)("z-last")
+    assert_ne(post.html.index_of("<h1>Last</h1>"), -1)
+    assert_ne(post.html.index_of("&lt;script&gt;"), -1)
+    assert_eq(post.html.index_of("<script>"), -1)
+    let home = (collection.get)("")
+    assert_ne(home.html.index_of("<ul><li>fast</li><li>small</li></ul>"), -1)
+}
+
+test "JSON entries expose typed data without client rendering" {
+    let collection = lumen_content_collection(_content_fixture(), null)
+    let entry = (collection.get)("data")
+    assert_eq(entry.data.title, "Data")
+    assert_eq(entry.body, "")
+    assert_eq(entry.html, "")
+}
+
+test "invalid collection metadata fails with its source path" {
+    let dir = "_lumen_content_invalid_fixture"
+    io.mkdir(dir)
+    io.write_text(dir + "/bad.md", "---\ntitle: 7\n---\nBad")
+    let schema = validate.object({ title: validate.str() })
+    assert_throws(| | { lumen_content_collection(dir, schema) })
+}

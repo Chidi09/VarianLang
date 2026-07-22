@@ -64,7 +64,7 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | :--- | :--- | :--- | :--- |
 | Zero optional JS | Astro static-first output | Server HTML plus directive-scanned micro-modules | **done** — `_lumen_scan_directives`, module tests |
 | Visibility/idle/media activation | Astro island directives | Declarative activation policy for client blocks | **partial** — `inview` and media helpers exist; general island lifecycle is a gap |
-| Content collections | Astro content schemas | Typed build-time content sources with deterministic manifests | **gap** |
+| Content collections | Astro content schemas | Typed build-time content sources with deterministic manifests | **done** — `lumen/content.vn`, recursive ordering, safe Markdown, JSON/frontmatter schema tests |
 | Server endpoints and middleware | Astro/SvelteKit routes and hooks | Zenith file routes, guards, middleware, typed request context | **partial** — routing exists; lifecycle/error contracts need conformance coverage |
 | Progressive form actions | SvelteKit actions/enhance | Native form fallback plus optional Lumen event transport | **partial** — transport exists; validation/result protocol and optimistic rollback remain gaps |
 | Nested layouts and error boundaries | SvelteKit layouts/errors | Inherited `layout.lumen`, nearest `loading.lumen`, and nearest `error.lumen` with parent-layout retention | **done** — route collector/build/runtime tests |

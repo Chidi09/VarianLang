@@ -125,6 +125,10 @@ impl Validator {
             } catch e {
                 return http.create_struct(["success", "error"], [false, "Expected number"])
             }
+        } else if (self._type_check == "boolean") {
+            if (v != true and v != false) {
+                return http.create_struct(["success", "error"], [false, "Expected boolean"])
+            }
         }
 
         // Apply transforms (sanitization)
@@ -207,10 +211,11 @@ impl ObjectValidator {
 }
 
 let validate = http.create_struct(
-    ["str", "num", "object"],
+    ["str", "num", "bool", "object"],
     [
         | | { return Validator { _type_check: "string", _checks: [], _transforms: [], _optional: false } },
         | | { return Validator { _type_check: "number", _checks: [], _transforms: [], _optional: false } },
+        | | { return Validator { _type_check: "boolean", _checks: [], _transforms: [], _optional: false } },
         |fields| { return ObjectValidator { _fields: fields, _optional: false } }
     ]
 )

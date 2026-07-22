@@ -218,6 +218,27 @@ island — real client code where you ask for it, the rest still server-driven. 
 deliberately does **not** compile Varian to a browser bundle; that's exactly what
 reintroduces hydration-mismatch bugs.
 
+### Typed content collections
+
+`lumen_content_collection(directory, schema)` discovers Markdown and JSON recursively,
+sorts entries deterministically by relative path, and returns `{ entries, get, all }`.
+Each entry exposes `{ id, slug, path, data, body, html }`; `index.md` maps to the empty
+slug and nested `index.md` files map to their parent path. Markdown frontmatter and JSON
+data can be parsed through existing Varian validation schemas, so invalid content fails
+with its source path before a response is rendered.
+
+```vn
+let posts = lumen_content_collection("content/posts", validate.object({
+    title: validate.str().min(1),
+    draft: validate.bool().optional()
+}))
+let guide = (posts.get)("guides/getting-started")
+```
+
+The built-in Markdown subset escapes HTML before rendering headings, paragraphs, lists,
+and fenced code. Content collection work is entirely server/build-side and adds zero
+browser JavaScript.
+
 ### Opt-in browser directives
 
 LumenJS includes a curated set of browser-only behaviors. The compiler scans each
@@ -388,6 +409,7 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
 | Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
+| Typed content | Astro collections | **Built-in** — deterministic Markdown/JSON collections validated by Varian schemas |
 | SEO metadata | next/head, react-helmet | **Built-in** — `lumen_meta()` |
 | Client islands | None / manual | **Built-in** — `<client>` blocks |
 | Inline SVG icons | CDN or bundler | **Built-in** — Lucide icons, zero CDN |

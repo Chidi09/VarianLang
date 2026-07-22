@@ -8,6 +8,14 @@ test "validate.num exists" {
     assert_ne(v, null)
 }
 
+test "validate.bool accepts only booleans" {
+    let v = validate.bool()
+    assert_eq(v.parse(true).success, true)
+    assert_eq(v.parse(false).success, true)
+    assert_eq(v.parse("false").success, false)
+    assert_eq(v.parse(0).success, false)
+}
+
 test "validate.object exists" {
     let v = validate.object({})
     assert_ne(v, null)
