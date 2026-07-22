@@ -27,13 +27,34 @@ struct WorkerPool {
     stopped: bool
 }
 
+fn new_worker_pool() {
+    return WorkerPool { ch: task.channel(1), count: 0, workers: 0, stopped: false }
+}
+
 let _registered_jobs = http.create_struct([], [])
 let _closure_callbacks = http.create_struct([], [])
 let _queue_db = null
+let _queue_path = "varian-jobs.db"
+let _queue_max_attempts = 3
+
+// Configure storage before starting workers. Reconfiguration closes the old
+// handle so tests and independent applications do not share hidden state.
+fn queue_configure(path, max_attempts) {
+    if type_of(path) != "string" or path == "" { throw("queue_configure path must be a non-empty string") }
+    if type_of(max_attempts) != "int" or max_attempts < 1 or max_attempts > 100 {
+        throw("queue_configure max_attempts must be an int from 1 to 100")
+    }
+    if _queue_db != null { sqlite.close(_queue_db) }
+    _queue_db = null
+    _queue_path = path
+    _queue_max_attempts = max_attempts
+    _queue_init_db()
+    return true
+}
 
 fn _queue_init_db() {
     if _queue_db == null {
-        _queue_db = sqlite.connect("aurora.db")
+        _queue_db = sqlite.connect(_queue_path)
         sqlite.query(_queue_db, "CREATE TABLE IF NOT EXISTS vn_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, attempts INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
     }
 }
@@ -42,8 +63,21 @@ fn queue_process_one() {
     _queue_init_db()
     let rows = null
     try {
+        // Serialize the select-and-claim transition across processes sharing
+        // this SQLite database. The handler runs after COMMIT, outside the lock.
+        sqlite.query(_queue_db, "BEGIN IMMEDIATE")
         rows = sqlite.query(_queue_db, "SELECT id, name, payload, attempts FROM vn_jobs WHERE status = 'pending' ORDER BY id LIMIT 1")
-    } catch e {}
+        if rows == null or rows.len() == 0 {
+            sqlite.query(_queue_db, "COMMIT")
+            return false
+        }
+        let claimed = rows[0]
+        sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'running', attempts = ?, error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending'", [claimed.attempts + 1, claimed.id])
+        sqlite.query(_queue_db, "COMMIT")
+    } catch e {
+        try { sqlite.query(_queue_db, "ROLLBACK") } catch rollback_error {}
+        throw(e)
+    }
     
     if rows != null and rows.len() > 0 {
         let job = rows[0]
@@ -51,8 +85,6 @@ fn queue_process_one() {
         let jname = job.name
         let jpayload = job.payload
         let jattempts = job.attempts
-        
-        sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'running', attempts = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [jattempts + 1, jid])
         
         let success = true
         let err_msg = ""
@@ -78,9 +110,11 @@ fn queue_process_one() {
         }
         
         if success {
-            sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'completed', updated_at = CURRENT_TIMESTAMP WHERE id = ?", [jid])
+            sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'completed', error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [jid])
         } else {
-            sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'failed', error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [err_msg, jid])
+            let next_status = "failed"
+            if jattempts + 1 < _queue_max_attempts { next_status = "pending" }
+            sqlite.query(_queue_db, "UPDATE vn_jobs SET status = ?, error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [next_status, err_msg, jid])
         }
         return true
     }
@@ -89,7 +123,8 @@ fn queue_process_one() {
 
 fn pool_worker(pool) {
     while !pool.stopped {
-        let processed = queue_process_one()
+        let processed = false
+        try { processed = queue_process_one() } catch queue_error {}
         if !processed {
             task.sleep(100)
         }
@@ -98,6 +133,9 @@ fn pool_worker(pool) {
 }
 
 fn queue_register_job(name, handler_fn) {
+    if type_of(name) != "string" or name == "" { throw("queue_register_job name must be a non-empty string") }
+    let handler_type = type_of(handler_fn)
+    if handler_type != "function" and handler_type != "closure" { throw("queue_register_job handler must be callable") }
     let keys = _validate.get_keys(_registered_jobs)
     let vals = []
     let found = false
@@ -117,12 +155,35 @@ fn queue_register_job(name, handler_fn) {
 }
 
 fn queue_submit_job(name, payload) {
+    if type_of(name) != "string" or name == "" { throw("queue_submit_job name must be a non-empty string") }
+    if type_of(payload) != "string" { throw("queue_submit_job payload must be a string") }
     _queue_init_db()
     sqlite.query(_queue_db, "INSERT INTO vn_jobs (name, payload, status) VALUES (?, ?, 'pending')", [name, payload])
+    let rows = sqlite.query(_queue_db, "SELECT last_insert_rowid() as id")
+    return rows[0].id
+}
+
+fn queue_job(id) {
+    if type_of(id) != "int" or id < 1 { throw("queue_job id must be a positive int") }
+    _queue_init_db()
+    let rows = sqlite.query(_queue_db, "SELECT id, name, payload, status, error, attempts, created_at, updated_at FROM vn_jobs WHERE id = ?", [id])
+    if rows.len() == 0 { return null }
+    return rows[0]
+}
+
+fn queue_retry(id) {
+    let job = queue_job(id)
+    if job == null { return false }
+    if job.status != "failed" { return false }
+    sqlite.query(_queue_db, "UPDATE vn_jobs SET status = 'pending', error = NULL, attempts = 0, updated_at = CURRENT_TIMESTAMP WHERE id = ?", [id])
+    return true
 }
 
 impl WorkerPool {
     fn spawn(self, worker_count) {
+        if type_of(worker_count) != "int" or worker_count < 1 or worker_count > 1024 {
+            throw("WorkerPool.spawn worker_count must be an int from 1 to 1024")
+        }
         _queue_init_db()
         self.count = worker_count
         self.stopped = false
@@ -134,6 +195,8 @@ impl WorkerPool {
     }
     
     fn submit(self, job_fn) {
+        let job_type = type_of(job_fn)
+        if job_type != "function" and job_type != "closure" { throw("WorkerPool.submit job must be callable") }
         _queue_init_db()
         sqlite.query(_queue_db, "INSERT INTO vn_jobs (name, payload, status) VALUES ('closure', '', 'pending')")
         let rows = sqlite.query(_queue_db, "SELECT last_insert_rowid() as id")

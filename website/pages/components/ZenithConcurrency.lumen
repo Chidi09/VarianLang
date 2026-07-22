@@ -28,6 +28,7 @@
 
   <CodeEditor title="queue.vn" lines="27">
     <span class="token-keyword">let</span> app <span class="token-keyword">=</span> <span class="token-function">new_app</span>()
+    <span class="token-function">queue_configure</span>(<span class="token-string">"varian-jobs.db"</span>, 3)
 
     <span class="token-comment">// Register the named handler before starting workers.</span>
     <span class="token-function">queue_register_job</span>(<span class="token-string">"transcode_video"</span>, |payload| \{
@@ -35,7 +36,7 @@
       python.<span class="token-function">run</span>(<span class="token-string">"video_tools"</span>, <span class="token-string">"transcode"</span>, [job.video_id, job.target_resolution])
     \})
 
-    <span class="token-keyword">let</span> pool = WorkerPool \{ ch: task.<span class="token-function">channel</span>(1), count: 0, workers: 0, stopped: <span class="token-keyword">false</span> \}
+    <span class="token-keyword">let</span> pool = <span class="token-function">new_worker_pool</span>()
     pool.<span class="token-function">spawn</span>(3)
 
     <span class="token-comment">// Persist a named job from a request handler.</span>
