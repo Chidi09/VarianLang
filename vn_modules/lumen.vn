@@ -3820,6 +3820,95 @@ fn lumen_mount_offline(app, worker_path, cache_name, assets, fallback) {
     return path
 }
 
+fn _lumen_image_url(value, label) {
+    let url = "" + value
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw("Lumen image " + label + " must be a non-empty URL without control characters")
+    }
+    return url
+}
+
+fn _lumen_image_srcset(candidates) {
+    if candidates == null { return "" }
+    if type_of(candidates) != "array" { throw "Lumen image srcset must be an array" }
+    let out = ""
+    let previous_width = 0
+    for i in 0..candidates.len() {
+        let candidate = candidates[i]
+        let width = _validate.get_field(candidate, "width")
+        if type_of(width) != "int" or width <= 0 or width <= previous_width {
+            throw "Lumen image srcset widths must be positive and strictly increasing"
+        }
+        let url = _lumen_image_url(_validate.get_field(candidate, "src"), "candidate")
+        if i > 0 { out = out + ", " }
+        out = out + _sanitize.escape_html(url) + " " + width + "w"
+        previous_width = width
+    }
+    return out
+}
+
+fn _lumen_image_tag(src, alt, opts) {
+    let url = _lumen_image_url(src, "source")
+    if type_of(alt) != "string" { throw "Lumen image alt text must be an explicit string" }
+    if opts == null { throw "Lumen image options are required" }
+    let width = _validate.get_field(opts, "width")
+    let height = _validate.get_field(opts, "height")
+    if type_of(width) != "int" or width <= 0 or type_of(height) != "int" or height <= 0 {
+        throw "Lumen images require positive integer width and height"
+    }
+    let loading = _validate.get_field(opts, "loading")
+    if loading == null { loading = "lazy" }
+    if loading != "lazy" and loading != "eager" { throw "Lumen image loading must be lazy or eager" }
+    let priority = _validate.get_field(opts, "fetchpriority")
+    if priority == null { priority = "auto" }
+    if priority != "auto" and priority != "high" and priority != "low" {
+        throw "Lumen image fetchpriority must be auto, high, or low"
+    }
+    if loading == "lazy" and priority == "high" {
+        throw "Lumen image cannot combine lazy loading with high fetch priority"
+    }
+    let sizes = _validate.get_field(opts, "sizes")
+    let srcset = _lumen_image_srcset(_validate.get_field(opts, "srcset"))
+    let responsive = ""
+    if srcset != "" { responsive = " srcset=\"" + srcset + "\"" }
+    if sizes != null and ("" + sizes) != "" {
+        if srcset == "" { throw "Lumen image sizes requires srcset" }
+        responsive = responsive + " sizes=\"" + _sanitize.escape_html("" + sizes) + "\""
+    }
+    return "<img src=\"" + _sanitize.escape_html(url) + "\" alt=\"" +
+           _sanitize.escape_html("" + alt) + "\" width=\"" + width + "\" height=\"" + height +
+           "\" loading=\"" + loading + "\" decoding=\"async\" fetchpriority=\"" + priority + "\"" + responsive + ">"
+}
+
+// Render a layout-stable responsive image using browser-native selection only.
+fn lumen_image(src, alt, opts) {
+    return _lumen_image_tag(src, alt, opts)
+}
+
+// Render ordered modern-format sources followed by the required fallback image.
+// opts.sources = [{ type: "image/avif", srcset: [{src,width}, ...] }, ...]
+fn lumen_picture(src, alt, opts) {
+    let sources = _validate.get_field(opts, "sources")
+    if sources == null or type_of(sources) != "array" or sources.len() == 0 {
+        throw "Lumen picture sources must be a non-empty array"
+    }
+    let html = "<picture>"
+    for i in 0..sources.len() {
+        let source = sources[i]
+        let media_type = _validate.get_field(source, "type")
+        if media_type != "image/avif" and media_type != "image/webp" and media_type != "image/jpeg" and media_type != "image/png" {
+            throw "Lumen picture source type is not supported"
+        }
+        let srcset = _lumen_image_srcset(_validate.get_field(source, "srcset"))
+        if srcset == "" { throw "Lumen picture source srcset must not be empty" }
+        html = html + "<source type=\"" + media_type + "\" srcset=\"" + srcset + "\""
+        let sizes = _validate.get_field(opts, "sizes")
+        if sizes != null and ("" + sizes) != "" { html = html + " sizes=\"" + _sanitize.escape_html("" + sizes) + "\"" }
+        html = html + ">"
+    }
+    return html + _lumen_image_tag(src, alt, opts) + "</picture>"
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }

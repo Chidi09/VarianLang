@@ -358,6 +358,17 @@ offline fallback, and leaves non-GET requests untouched. Rendering
 `lumen_offline(worker_path, scope)` opts a page into the small registration action;
 pages without that marker ship no service-worker code and install nothing.
 
+### Responsive image delivery
+
+`lumen_image(src, alt, options)` requires intrinsic `width` and `height`, defaults
+to native lazy loading and asynchronous decoding, validates loading/fetch-priority
+combinations, and supports ordered width-descriptor `srcset` plus `sizes`.
+`lumen_picture(src, alt, options)` adds ordered AVIF/WebP (or conventional image)
+sources before the fallback image. Both helpers escape URLs and alternative text,
+prevent ambiguous candidate widths, rely on browser-native selection, and add zero
+JavaScript. They describe already-produced variants; they do not claim to transform
+source files during rendering.
+
 ### Lumen UI (Component Registry)
 
 Lumen ships with an official, Shadcn-inspired component registry called **Lumen UI**. Instead of an external black-box package, Lumen UI provides beautifully designed, accessible components that are copied directly into your codebase (in `pages/components/`) so you fully own and customize the code.
