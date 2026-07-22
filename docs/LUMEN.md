@@ -231,12 +231,16 @@ business rules still belong in Varian handlers.
 | `data-lumen-nav` | Same-origin History API navigation, reported to the server |
 | `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
 | `data-lumen-anchor="#target"` | Position a popover below an anchor element |
+| `data-lumen-inview="load_more"` | Report viewport entry to a Varian handler |
+| `data-lumen-sortable="reorder"` | Locally drag items marked with `data-lumen-sort-item`, then send their final IDs to Varian |
 | `data-lumen-toast` | Include the ephemeral toast presenter |
 | `data-lumen-key="Escape:close"` | Map browser key presses to Varian handlers |
 | `data-lumen-toggle="#target"` | Presentation-only local show/hide with `aria-expanded` |
 
 `data-lumen-toggle` must never hide protected data or enforce permissions; it is a
 latency escape hatch for tabs, accordions, and menus. Server state remains authoritative.
+Event-producing directives share the core's reconnect-safe delivery behavior, so an event
+raised during a short socket interruption is queued and flushed after reconnection.
 
 ### Lumen UI (Component Registry)
 

@@ -4,6 +4,16 @@ fn _assert_module(name, marker) {
     assert_ne(js.index_of(marker), -1)
 }
 
+fn _count_text(haystack, needle) {
+    let count = 0
+    let at = haystack.index_of(needle)
+    while at >= 0 {
+        count = count + 1
+        at = haystack.index_of(needle, at + needle.len())
+    }
+    return count
+}
+
 test "pure browser modules are implemented" {
     _assert_module("clipboard", "navigator.clipboard")
     _assert_module("focus", "data-lumen-focus")
@@ -15,6 +25,8 @@ test "pure browser modules are implemented" {
     _assert_module("nav", "history.pushState")
     _assert_module("transition", "requestAnimationFrame")
     _assert_module("anchor", "getBoundingClientRect")
+    _assert_module("inview", "intersectionRatio")
+    _assert_module("sortable", "data-lumen-sort-item")
     _assert_module("toast", "__lumen_toast")
     _assert_module("key", "data-lumen-key")
 }
@@ -49,4 +61,12 @@ test "selected manifest ships only selected modules" {
     assert_ne(js.index_of("RelativeTimeFormat"), -1)
     assert_eq(js.index_of("navigator.clipboard"), -1)
     assert_eq(js.index_of("history.pushState"), -1)
+}
+
+test "event modules share reconnect-safe queued transport" {
+    let js = _lumen_client_js_with_manifest(["key", "nav", "inview", "sortable"])
+    assert_ne(js.index_of("window.__lumen_push"), -1)
+    assert_ne(js.index_of("else q.push(m)"), -1)
+    assert_ne(js.index_of("while(q.length)"), -1)
+    assert_eq(_count_text(js, "else q.push(m)"), 1)
 }
