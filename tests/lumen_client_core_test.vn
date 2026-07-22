@@ -1,0 +1,24 @@
+// LumenJS core regressions. These assertions keep form handling in the
+// always-present transport instead of requiring user-authored client code.
+
+test "submit events serialize successful form controls" {
+    let js = _lumen_client_core()
+    assert_ne(js.index_of("new FormData(el)"), -1)
+    assert_ne(js.index_of("fd.forEach"), -1)
+    assert_ne(js.index_of("hasOwnProperty.call(o,k)"), -1)
+    assert_ne(js.index_of("o[k]=[o[k]]"), -1)
+    assert_ne(js.index_of("var v=fv(el,ev)"), -1)
+}
+
+test "field events preserve browser control semantics" {
+    let js = _lumen_client_core()
+    assert_ne(js.index_of("el.type==='checkbox'"), -1)
+    assert_ne(js.index_of("el.type==='radio'"), -1)
+    assert_ne(js.index_of("el.multiple&&el.options"), -1)
+}
+
+test "file fields send metadata instead of empty JSON objects" {
+    let js = _lumen_client_core()
+    assert_ne(js.index_of("v instanceof File"), -1)
+    assert_ne(js.index_of("name:v.name,size:v.size,type:v.type"), -1)
+}

@@ -100,6 +100,28 @@ fn pulse(s, v) {
 }
 ```
 
+For `@submit`, `value` is a struct containing the form's successful named controls, so
+validation and business logic remain in Varian:
+
+```html
+<form @submit="signup">
+  <input name="email" type="email">
+  <label><input name="topics" type="checkbox" value="news"> News</label>
+  <button type="submit">Create account</button>
+</form>
+```
+
+```varian
+fn signup(s, values) {
+  let result = signup_form.validate(values)
+  return s.set("errors", result.errors)
+}
+```
+
+Repeated names become arrays. Checkbox changes send booleans, radio changes send the
+selected value, and multi-select changes send arrays. File fields send metadata
+(`name`, `size`, and MIME `type`); file bytes use Lumen's upload path rather than JSON.
+
 The scaffolded starter wires `{{ color }}` into an SVG `fill`, so each click recomputes a
 colour server-side and Lumen morphs **only the changed attribute** into the DOM — a live
 demonstration of the model with zero client code.
