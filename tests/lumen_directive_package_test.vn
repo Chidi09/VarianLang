@@ -31,7 +31,7 @@ test "every module name the scanner can emit exists in the catalog" {
     // and _lumen_module (vn_modules/lumen/browser_directives.vn) must agree
     // on the full module vocabulary, even though they now live in separate
     // files split by the package boundary.
-    let names = ["clipboard", "focus", "scroll", "toast", "key", "persist",
+    let names = ["events", "vtable", "clipboard", "focus", "scroll", "toast", "key", "persist",
                  "time", "media", "window", "nav", "toggle", "transition",
                  "anchor", "inview", "sortable"]
     for i in 0..names.len() {

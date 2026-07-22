@@ -15,6 +15,8 @@ fn _count_text(haystack, needle) {
 }
 
 test "pure browser modules are implemented" {
+    _assert_module("events", "new FormData")
+    _assert_module("vtable", "data-lumen-vtable")
     _assert_module("clipboard", "navigator.clipboard")
     _assert_module("focus", "data-lumen-focus")
     _assert_module("scroll", "scrollIntoView")
@@ -29,6 +31,18 @@ test "pure browser modules are implemented" {
     _assert_module("sortable", "data-lumen-sort-item")
     _assert_module("toast", "__lumen_toast")
     _assert_module("key", "data-lumen-key")
+}
+
+test "core capability scanner selects interaction and virtual table actions" {
+    let mods = _lumen_scan_directives("<form data-lumen-submit=\"save\"><div data-lumen-vtable></div></form>")
+    assert_eq(mods.len(), 2)
+    assert_eq(mods[0], "events")
+    assert_eq(mods[1], "vtable")
+    let resolved = _lumen_resolve_actions(mods)
+    assert_eq(resolved.len(), 3)
+    assert_eq(resolved[0], "events")
+    assert_eq(resolved[1], "event-bridge")
+    assert_eq(resolved[2], "vtable")
 }
 
 test "presentation-only toggle module is implemented" {
@@ -49,8 +63,10 @@ test "directive scanner tree-shakes and deduplicates modules" {
 
 test "core-only pages do not ship optional modules" {
     let mods = _lumen_scan_directives("<button data-lumen-click=\"save\">Save</button>")
-    assert_eq(mods.len(), 0)
+    assert_eq(mods.len(), 1)
+    assert_eq(mods[0], "events")
     let js = _lumen_client_js_with_manifest(mods)
+    assert_ne(js.index_of("new FormData"), -1)
     assert_eq(js.index_of("navigator.clipboard"), -1)
     assert_eq(js.index_of("RelativeTimeFormat"), -1)
 }
@@ -67,7 +83,7 @@ test "event modules share reconnect-safe queued transport" {
     let js = _lumen_client_js_with_manifest(["key", "nav", "inview", "sortable"])
     assert_ne(js.index_of("window.__lumen_push"), -1)
     assert_ne(js.index_of("else q.push(m)"), -1)
-    assert_ne(js.index_of("while(q.length)"), -1)
+    assert_ne(js.index_of("while(q.length"), -1)
     assert_eq(_count_text(js, "else q.push(m)"), 1)
 }
 
@@ -85,7 +101,7 @@ test "action registry resolves dependencies in stable order" {
 }
 
 test "unknown actions and unused dependencies emit zero bytes" {
-    let core = _lumen_client_core()
+    let core = _lumen_client_core() + ";" + _lumen_error_brand()
     assert_eq(_lumen_resolve_actions(["unknown"]).len(), 0)
     assert_eq(_lumen_client_js_with_manifest([]).len(), core.len())
     assert_eq(_lumen_client_js_with_manifest(["unknown"]).len(), core.len())
@@ -96,10 +112,12 @@ test "unknown actions and unused dependencies emit zero bytes" {
 test "browser action payloads stay within explicit regression ceilings" {
     // These are uncompressed emitted bytes. The core ceiling records today's
     // baseline until transport/morph/form concerns are split into actions.
-    assert_eq(_lumen_client_core().len() <= 7000, 1)
+    assert_eq((_lumen_client_core().len() + 1 + _lumen_error_brand().len()) <= 4100, 1)
     let registry = _lumen_action_registry()
     for i in 0..registry.len() {
         let name = _validate.get_field(registry[i], "name")
-        assert_eq(_lumen_module(name).len() <= 850, 1)
+        let ceiling = 850
+        if name == "events" { ceiling = 1800 }
+        assert_eq(_lumen_module(name).len() <= ceiling, 1)
     }
 }
