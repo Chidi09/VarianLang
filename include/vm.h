@@ -114,6 +114,14 @@ typedef enum {
     /* Special */
     BC_HALT,
     BC_REGISTER_VALIDATIONS,
+
+    /* Bitwise integer operations. Appended to preserve existing VNB opcode
+     * numbers for every previously serialized instruction. */
+    BC_BIT_AND,
+    BC_BIT_OR,
+    BC_BIT_XOR,
+    BC_SHL,
+    BC_SHR,
 } OpCode;
 
 /* ─── Value ─── */

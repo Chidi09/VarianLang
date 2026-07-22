@@ -2124,6 +2124,7 @@ Precedence from lowest to highest (`src/parser.c`):
 | Bit OR | `\|` | Left |
 | Bit XOR | `^` | Left |
 | Bit AND | `&` | Left |
+| Shift | `<<`, `>>` | Left |
 | Term | `+`, `-` | Left |
 | Factor | `*`, `/`, `%` | Left |
 | Unary | `-`, `!`, `not`, `~`, `await`, `<-` (receive) | Right |

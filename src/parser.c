@@ -2076,8 +2076,17 @@ static AstNode *parse_bit_and(Parser *parser) {
 static AstNode *parse_shift(Parser *parser) {
     AstNode *expr = parse_term(parser);
 
-    /* Simulate shift operators, which we don't have as tokens yet */
-    /* We could add them later. For now, skip. */
+    while (true) {
+        if (match(parser, TOKEN_SHIFT_LEFT)) {
+            AstNode *right = parse_term(parser);
+            expr = ast_binary(parser->arena, current_loc(parser), OP_SHL, expr, right);
+        } else if (match(parser, TOKEN_SHIFT_RIGHT)) {
+            AstNode *right = parse_term(parser);
+            expr = ast_binary(parser->arena, current_loc(parser), OP_SHR, expr, right);
+        } else {
+            break;
+        }
+    }
 
     return expr;
 }

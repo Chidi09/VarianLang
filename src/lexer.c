@@ -52,6 +52,8 @@ const char *token_type_name(TokenType type) {
         case TOKEN_QUESTION_DOT: return "TOKEN_QUESTION_DOT";
         case TOKEN_DOUBLE_COLON: return "TOKEN_DOUBLE_COLON";
         case TOKEN_LEFT_ARROW: return "TOKEN_LEFT_ARROW";
+        case TOKEN_SHIFT_LEFT: return "TOKEN_SHIFT_LEFT";
+        case TOKEN_SHIFT_RIGHT: return "TOKEN_SHIFT_RIGHT";
         case TOKEN_IDENTIFIER: return "TOKEN_IDENTIFIER";
         case TOKEN_STRING: return "TOKEN_STRING";
         case TOKEN_INTERPOLATED_STRING: return "TOKEN_INTERPOLATED_STRING";
@@ -258,6 +260,7 @@ static bool token_starts_expr(TokenType type) {
         case TOKEN_STAR_EQUAL: case TOKEN_SLASH_EQUAL:
         case TOKEN_EQUAL: case TOKEN_FAT_ARROW: case TOKEN_ARROW:
         case TOKEN_LESS: case TOKEN_GREATER:
+        case TOKEN_SHIFT_LEFT: case TOKEN_SHIFT_RIGHT:
         case TOKEN_LESS_EQUAL: case TOKEN_GREATER_EQUAL:
         case TOKEN_EQUAL_EQUAL: case TOKEN_BANG_EQUAL:
         case TOKEN_AMPERSAND: case TOKEN_PIPE: case TOKEN_CARET:
@@ -656,10 +659,12 @@ Token lexer_next(Lexer *lexer) {
 
         case '<':
             if (match(lexer, '-')) return make_token(lexer, TOKEN_LEFT_ARROW);
+            if (match(lexer, '<')) return make_token(lexer, TOKEN_SHIFT_LEFT);
             if (match(lexer, '=')) return make_token(lexer, TOKEN_LESS_EQUAL);
             return make_token(lexer, TOKEN_LESS);
 
         case '>':
+            if (match(lexer, '>')) return make_token(lexer, TOKEN_SHIFT_RIGHT);
             if (match(lexer, '=')) return make_token(lexer, TOKEN_GREATER_EQUAL);
             return make_token(lexer, TOKEN_GREATER);
 

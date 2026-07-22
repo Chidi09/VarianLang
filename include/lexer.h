@@ -49,6 +49,8 @@ typedef enum {
     TOKEN_QUESTION_DOT,               /* ?. */
     TOKEN_DOUBLE_COLON,              /* :: */
     TOKEN_LEFT_ARROW,                /* <- */
+    TOKEN_SHIFT_LEFT,                /* << */
+    TOKEN_SHIFT_RIGHT,               /* >> */
 
     /* Literals */
     TOKEN_IDENTIFIER,

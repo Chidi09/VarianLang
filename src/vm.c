@@ -1442,11 +1442,11 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
                 case OP_GE:  emit_byte(compiler, BC_GREATER_EQUAL); break;
                 case OP_AND: emit_byte(compiler, BC_AND); break;
                 case OP_OR:  emit_byte(compiler, BC_OR); break;
-                case OP_BIT_AND: emit_byte(compiler, BC_AND); break;
-                case OP_BIT_OR:  emit_byte(compiler, BC_OR); break;
-                case OP_BIT_XOR: emit_byte(compiler, BC_EQUAL); break; /* placeholder: XOR */
-                case OP_SHL:     emit_byte(compiler, BC_MUL); break;  /* placeholder */
-                case OP_SHR:     emit_byte(compiler, BC_DIV); break;  /* placeholder */
+                case OP_BIT_AND: emit_byte(compiler, BC_BIT_AND); break;
+                case OP_BIT_OR:  emit_byte(compiler, BC_BIT_OR); break;
+                case OP_BIT_XOR: emit_byte(compiler, BC_BIT_XOR); break;
+                case OP_SHL:     emit_byte(compiler, BC_SHL); break;
+                case OP_SHR:     emit_byte(compiler, BC_SHR); break;
                 case OP_NIL_COALESCE: emit_byte(compiler, BC_NIL_COALESCE); break;
                 default: compiler_error(compiler, "Unknown binary operator"); break;
             }
@@ -4067,6 +4067,11 @@ bool task_run(VM *vm, Task *task) {
         dispatch_table[BC_AND] = &&L_BC_AND;
         dispatch_table[BC_OR] = &&L_BC_OR;
         dispatch_table[BC_NIL_COALESCE] = &&L_BC_NIL_COALESCE;
+        dispatch_table[BC_BIT_AND] = &&L_BC_BIT_AND;
+        dispatch_table[BC_BIT_OR] = &&L_BC_BIT_OR;
+        dispatch_table[BC_BIT_XOR] = &&L_BC_BIT_XOR;
+        dispatch_table[BC_SHL] = &&L_BC_SHL;
+        dispatch_table[BC_SHR] = &&L_BC_SHR;
         dispatch_table[BC_DEFINE_GLOBAL] = &&L_BC_DEFINE_GLOBAL;
         dispatch_table[BC_GET_GLOBAL] = &&L_BC_GET_GLOBAL;
         dispatch_table[BC_SET_GLOBAL] = &&L_BC_SET_GLOBAL;
@@ -4457,6 +4462,39 @@ L_BC_LOOP_TOP:
             BINARY_OP_NUM(<=); DISPATCH();
             L_BC_GREATER_EQUAL:
             BINARY_OP_NUM(>=); DISPATCH();
+
+            L_BC_BIT_AND:
+            L_BC_BIT_OR:
+            L_BC_BIT_XOR:
+            {
+                Value b = POP();
+                Value a = POP();
+                if (a.type != VAL_INT || b.type != VAL_INT) {
+                    RAISE("Bitwise operands must be integers");
+                }
+                if (instruction == BC_BIT_AND) PUSH(val_int(a.as.integer & b.as.integer));
+                else if (instruction == BC_BIT_OR) PUSH(val_int(a.as.integer | b.as.integer));
+                else PUSH(val_int(a.as.integer ^ b.as.integer));
+                DISPATCH();
+            }
+            L_BC_SHL:
+            L_BC_SHR:
+            {
+                Value b = POP();
+                Value a = POP();
+                if (a.type != VAL_INT || b.type != VAL_INT) {
+                    RAISE("Shift operands must be integers");
+                }
+                if (b.as.integer < 0 || b.as.integer >= 64) {
+                    RAISE("Shift count must be between 0 and 63");
+                }
+                if (instruction == BC_SHL) {
+                    PUSH(val_int((int64_t)((uint64_t)a.as.integer << (uint64_t)b.as.integer)));
+                } else {
+                    PUSH(val_int(a.as.integer >> b.as.integer));
+                }
+                DISPATCH();
+            }
 
             L_BC_AND:
             {
