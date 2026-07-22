@@ -26,12 +26,12 @@ you run `vn dev`, the dev server banner reads **"Aurora — fullstack Varian pla
 
 | Concern | Next.js / Nuxt | Aurora (Zenith + Lumen) |
 |---|---|---|
-| **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere (with Strict TypeScript support)** — `.ts` only on the frontend, compiled on the fly |
-| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Strict TypeScript (.ts) only** — Type annotations are stripped natively at runtime; raw `.js` is forbidden |
-| **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step, native type stripper |
+| **Language** | JS/TS across separate browser and server runtimes | **Varian on the server** with HTML and directive-selected browser actions |
+| **Client bundle** | Webpack/Vite bundles a component runtime | Static pages emit no optional action code; interactive pages emit only detected Lumen actions |
+| **Build pipeline** | `npm run build` plus a JS bundler | `vn dev` or `vn build main.vn` composes Lumen routes with the Zenith entry |
 | **Data loading** | `getServerSideProps` / `loader` / server actions | **Remix-style `load(req)` and `action(req)`** — auto-hydrated states on GET and WebSocket loops |
 | **API + pages** | Separate `app/api/` and `app/` directories | Same `main.vn`, same `ZenithApp` instance |
-| **Background jobs** | External workers (Bull, Sidekiq) | **Durable `vn_jobs` queue** — SQLite/Postgres persistence, LiveDashboard |
+| **Background jobs** | External workers (Bull, Sidekiq) | Durable local SQLite <code>vn_jobs</code> queue with bounded retries; use an external broker for distributed workers |
 | **Swagger docs** | Manual setup or `next-swagger-doc` plugin | Automatic — `app.enable_docs("/docs")` |
 | **Security middleware** | Manual — helmet, cors, csurf, express-rate-limit | `cors()`, `rate_limit()`, `csrf()` from `shield.vn` — built in |
 | **Deploy** | Node.js runtime + `node_modules` required | **Single native binary** — no runtime, no deps |
@@ -65,13 +65,12 @@ This structure:
 - Ships data state transparently to the browser to bootstrap `/live` WebSocket connections.
 - Automatically handles POST requests using the component's `action(req)` block.
 - Integrates folder-level hierarchies including `layout.lumen` nesting and nearest `loading.lumen` fallback states.
-- Protects route groups using directory-level security guards (`+guard.vn`) compiled and executed on route matching.
 
 ```sh
 vn new myapp          # Scaffold a full Aurora project
 cd myapp
 vn dev                # http://localhost:8090 — live reload
-vn build --release    # Compile to a native binary
+vn build main.vn --release    # Compile the composed app to a native binary
 ```
 
 Aurora is **not a separate framework**. It is a project structure convention that the
@@ -80,14 +79,14 @@ toolchain (`vn new`, `vn dev`, `vn build`) recognises. A `constellation.toml` wi
 
 - Compile `.lumen` pages via the Lumen build pass
 - Embed `public/` assets into the output binary
-- Wire the Zenith app with middleware, API routes, and page mounts
+- Generate `aurora_mount_pages(app)` and compose it with `main.vn`
 - Produce a single runnable artifact (`.vnb` or native binary)
 
 ---
 
 ## Reference storefront
 
-The `aurora/` directory at the repository root is a **demonstration storefront** that
+The `aurora-chat/` directory at the repository root is a larger **demonstration application** that
 exercises nearly every capability the Varian stack exposes — SQLite, auth, sessions,
 background jobs, email, API routes, Lumen SSR pages, Swagger docs, rate limiting, and
 more.
@@ -95,7 +94,7 @@ more.
 ### Quick start
 
 ```bash
-cd aurora
+cd aurora-chat
 ../vn run build_pages.vn    # Compile .lumen pages → .gen/pages.vn
 ../vn run main.vn           # Start integrated API + page server
 # Open http://localhost:8080
@@ -104,7 +103,7 @@ cd aurora
 ### Architecture
 
 ```
-aurora/
+aurora-chat/
   main.vn                  # Entry: use lib/*, build app, wire, listen
   build_pages.vn           # Compile .lumen pages → .gen/pages.vn
   lib/

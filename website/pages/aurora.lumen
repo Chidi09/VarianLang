@@ -192,7 +192,7 @@
   </a>
 </div>
 
-<p>All <code>vn_modules/</code> files — including <code>zenith.vn</code>, <code>lumen.vn</code>, <code>lumen_ui.vn</code>, <code>db.vn</code>, and <code>http.vn</code> — are automatically concatenated as a prelude when you run an Aurora project. <code>new_app()</code>, <code>lumen_mount()</code>, <code>sqlite.connect()</code>, and the entire Lumen UI registry are always in scope. <strong>No <code>import</code>, no <code>require</code>, no <code>npm install</code>.</strong> The toolchain auto-detects Aurora, Lumen, or Zenith project type and compiles accordingly.</p>
+<p>The top-level standard modules — including <code>zenith.vn</code>, <code>lumen.vn</code>, and <code>db.vn</code> — form Varian's ambient prelude; Lumen's facade loads its package leaves and built-in UI registry. Native facilities such as <code>http</code> and <code>sqlite</code> are registered by the VM. <code>new_app()</code>, <code>lumen_mount()</code>, and <code>sqlite.connect()</code> are therefore available without npm or application-level framework imports. A <code>kind = "aurora"</code> manifest tells <code>vn dev</code> and <code>vn build main.vn</code> to compose generated page routes with the project's Zenith entry.</p>
 
 <!-- ============ WHY AURORA ============ -->
 <Heading size="2xl" as="h2" id="why-aurora">Why Aurora?</Heading>
@@ -216,7 +216,7 @@
       JWT auth, signed sessions, password hashing, CORS, rate limiting, Redis driver, HTML template engine, request validation, Lumen UI component registry — all built in through <code>vn_modules/</code>. Zero external dependencies.
     </Feature>
     <Feature icon="package_2" title="Deploys as one binary">
-      <code>vn build --release</code> produces a single native executable with Zenith, Lumen, the ORM, and the database schema all compiled in. No runtime to install, no <code>node_modules</code> on the server, no "works on my machine."
+      <code>vn build main.vn --release</code> produces a native executable containing the composed Zenith and Lumen program plus embedded public assets. No <code>node_modules</code> or separate application runtime is required.
     </Feature>
     <Feature icon="description" title="OpenAPI for free">
       Every route's <code>summary</code> string feeds a generated OpenAPI spec at <code>/docs</code>. Request and response schemas are declared inline with the handler — no separate spec file, no decorator soup.
@@ -244,30 +244,21 @@ vn dev                <span class="token-comment"># live-reload dev server on :8
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">project tree</span></div>
   <div class="code-block-body"><pre>myapp/
-  main.vn               <span class="token-comment"># Zenith entry point — app config, routes, middleware</span>
+  main.vn               <span class="token-comment"># one Zenith app; generated page routes mount here</span>
   pages/
     index.lumen          <span class="token-comment"># Lumen landing page (live reactive component)</span>
-    components/          <span class="token-comment"># shared UI components (ProductCard, Nav, etc.)</span>
   lib/
     config.vn            <span class="token-comment"># env-based configuration</span>
-    db.vn                <span class="token-comment"># SQLite schema, migration, seed</span>
-    middleware.vn         <span class="token-comment"># logging, CORS, rate limiter</span>
-    api_products.vn       <span class="token-comment"># product listing REST endpoints</span>
-    api_cart.vn           <span class="token-comment"># session-backed shopping cart</span>
-    api_orders.vn         <span class="token-comment"># checkout + order creation</span>
-    auth.vn               <span class="token-comment"># registration, login, logout</span>
-    jobs.vn               <span class="token-comment"># email worker pool + cron</span>
-    pages.vn              <span class="token-comment"># Lumen page mounting with SSR data</span>
   public/                <span class="token-comment"># static assets (images, favicons)</span>
   constellation.toml     <span class="token-comment"># package manifest (kind = "aurora")</span>
 </pre></div>
 </div>
 
-<p><code>vn dev</code> detects the Aurora project type automatically, starts the Zenith server, mounts all Lumen pages, and watches for changes with live reload. <code>vn build --release</code> compiles everything into a single native binary.</p>
+<p><code>vn dev</code> detects the Aurora manifest, generates <code>aurora_mount_pages(app)</code>, composes it with <code>main.vn</code>, and watches pages plus the backend entry for restart-based live reload. Both UI and API routes share port 8090. <code>vn build main.vn --release</code> applies the same composition before native compilation.</p>
 
 <!-- ============ EXAMPLES ============ -->
 <Heading size="2xl" as="h2" id="examples"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">code</span> Full-stack examples</Heading>
-<p>Every Aurora project follows the same architecture. Here is the complete walkthrough of a production fullstack app — the <strong>Aurora storefront</strong> reference implementation.</p>
+<p>The minimal scaffold intentionally contains one page, one health endpoint, and configuration. The following storefront is an illustrative expansion showing how a larger Aurora application can be organized; those feature files are not generated by <code>vn new</code>.</p>
 
 <Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">input</span> Entry point — <code>main.vn</code></Heading>
 <p>The <code>main.vn</code> wires together every module: config, database, middleware, API routes, auth, background jobs, and Lumen page mounting. It is the single entry point for the entire application.</p>
@@ -745,7 +736,7 @@ app.<span class="token-function">listen</span>(c.port)
   </tr>
   <tr>
     <td>Build output</td>
-    <td><strong>Single native binary</strong> — <code>vn build --release</code>, no runtime to install</td>
+    <td><strong>Single native binary</strong> — <code>vn build main.vn --release</code>, no separate runtime to install</td>
     <td>Node.js project + <code>node_modules</code> + build artifacts — deploy requires Node runtime</td>
   </tr>
   <tr>
@@ -795,7 +786,7 @@ app.<span class="token-function">listen</span>(c.port)
 <ol>
   <li><code>vn new myapp</code> — creates <code>main.vn</code>, <code>pages/</code>, <code>lib/</code>, <code>public/</code>, schema, config, middleware, auth scaffold</li>
   <li><code>vn dev</code> — live-reload dev server with everything mounted</li>
-  <li>Deploy: <code>vn build --release</code> → copy <strong>one binary</strong> to server, run it</li>
+  <li>Deploy: <code>vn build main.vn --release</code> → copy <strong>one binary</strong> to server, run it</li>
 </ol>
 
 <!-- ============ WHEN TO USE ============ -->
@@ -808,7 +799,7 @@ app.<span class="token-function">listen</span>(c.port)
   <tr><td>API server or microservice (no frontend)</td><td><strong>Zenith</strong></td><td>manual</td></tr>
   <tr><td>CLI tool or script</td><td><strong>Varian</strong></td><td><code>vn init</code></td></tr>
 </table>
-<p><code>vn build</code> prints the detected type: "Aurora" when both <code>pages/</code> and a Zenith entry exist, "Lumen" for frontend-only, "Zenith" for server-only.</p>
+<p><code>vn build main.vn</code> prints “Detected Aurora project” when <code>pages/</code> and a <code>kind = "aurora"</code> manifest are present. A pages directory without that manifest builds as a standalone Lumen application.</p>
 
     </main>
   </div>

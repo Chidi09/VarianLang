@@ -169,7 +169,7 @@ fn _lumen_name_for_path(path) {
     return _lumen_pascal(file)
 }
 
-fn _lumen_build_dir(pages_dir, out_path, port) {
+fn _lumen_build_dir_mode(pages_dir, out_path, port, standalone) {
     if type_of(port) != "int" or port < 1 or port > 65535 {
         throw("Lumen: dev server port must be an integer from 1 to 65535")
     }
@@ -333,10 +333,23 @@ fn _lumen_build_dir(pages_dir, out_path, port) {
     let statics = "app.serve_static(\"/\", \"public\")\n"
     // Serve directly via http.serve (not app.listen) so the framework's own
     // startup line is suppressed — `vn dev` prints its own Lumen console.
-    let program = combined + "\nlet app = new_app()\n" + mounts + statics +
+    let program = combined + "\n"
+    if standalone {
+        program = program + "let app = new_app()\n" + mounts + statics +
                   "http.serve(" + port + ", |req| \{ return app.handle(req) \})\n"
+    } else {
+        program = program + "fn aurora_mount_pages(app) \{\n" + mounts + statics + "    return app\n\}\n"
+    }
     io.write_text(out_path, program)
     return count
+}
+
+fn _lumen_build_dir(pages_dir, out_path, port) {
+    return _lumen_build_dir_mode(pages_dir, out_path, port, true)
+}
+
+fn _lumen_build_aurora_dir(pages_dir, out_path, port) {
+    return _lumen_build_dir_mode(pages_dir, out_path, port, false)
 }
 
 // Emit a complete, runnable SSG program that registers every component and

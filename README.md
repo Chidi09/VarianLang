@@ -285,7 +285,7 @@ See [`docs/AURORA.md`](docs/AURORA.md) for the full reference storefront documen
 vn new myapp          # Scaffold a full Aurora project
 cd myapp
 vn dev                # http://localhost:8090 — live reload
-vn build --release    # Compile to a native binary
+vn build main.vn --release    # Compile the composed app to a native binary
 ```
 
 ### Aurora vs Next.js / Nuxt

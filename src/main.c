@@ -488,6 +488,74 @@ static int lumen_build(const char *pages, const char *out, const char *port) {
     return r;
 }
 
+/* Compile pages as a mount function instead of a standalone server. Aurora
+ * prepends this generated module to main.vn, whose single Zenith app owns API,
+ * page, live, and static routes on one listener. */
+static int lumen_build_aurora(const char *pages, const char *out, const char *port) {
+    const char *boot = ".lumen-aurora-boot.vn";
+    FILE *bf = fopen(boot, "wb");
+    if (!bf) { fprintf(stderr, "aurora: cannot create %s\n", boot); return 1; }
+    fprintf(bf, "_lumen_build_aurora_dir(\"%s\", \"%s\", %s)\n", pages, out, port);
+    fclose(bf);
+    char *bsrc = read_file_with_modules(boot);
+    if (!bsrc) { remove(boot); return 1; }
+    g_varian_script_path = boot;
+    int r = run_source(bsrc, boot, g_prelude_line_count);
+    free(bsrc);
+    remove(boot);
+    return r;
+}
+
+static bool lumen_project_is_aurora(void) {
+    struct stat st;
+    if (stat("constellation.toml", &st) != 0) return false;
+    ConstellationManifest manifest;
+    return pkg_manifest_load(&manifest, "constellation.toml") &&
+           manifest.kind == MANIFEST_KIND_AURORA;
+}
+
+static int lumen_compose_aurora(const char *routes_path, const char *entry_path,
+                                const char *out_path) {
+    char *routes = read_file(routes_path);
+    char *entry = read_file(entry_path);
+    if (!routes || !entry) {
+        fprintf(stderr, "aurora: cannot compose %s with %s\n", routes_path, entry_path);
+        free(routes); free(entry);
+        return 1;
+    }
+    FILE *out = fopen(out_path, "wb");
+    if (!out) { free(routes); free(entry); return 1; }
+    fputs("// AUTO-GENERATED Aurora integration — do not edit.\n", out);
+    fputs(routes, out);
+    fputc('\n', out);
+    fputs(entry, out);
+    int failed = ferror(out);
+    fclose(out);
+    free(routes); free(entry);
+    return failed ? 1 : 0;
+}
+
+static int lumen_prepare_dev_app(const char *pages, const char *app,
+                                 const char *port, bool aurora) {
+    if (!aurora) return lumen_build(pages, app, port);
+    const char *routes = ".lumen-aurora-routes.vn";
+    if (lumen_build_aurora(pages, routes, port) != 0) return 1;
+    int r = lumen_compose_aurora(routes, "main.vn", app);
+    remove(routes);
+    return r;
+}
+
+static long lumen_pages_fingerprint(const char *dir);
+
+static long lumen_dev_fingerprint(const char *pages, bool aurora) {
+    long fingerprint = lumen_pages_fingerprint(pages);
+    if (aurora) {
+        struct stat st;
+        if (stat("main.vn", &st) == 0) fingerprint += (long)st.st_mtime + (long)st.st_size;
+    }
+    return fingerprint;
+}
+
 /* Recursively copy a directory tree (used to drop public/ into the static
  * export output). Creates dst dirs as needed. */
 static void lumen_copy_tree(const char *src, const char *dst) {
@@ -747,8 +815,9 @@ static int lumen_copy_assets(const char *public_dir) {
  * running and prints the error, rather than dropping the page. */
 static int lumen_dev(const char *pages, const char *port) {
     const char *app = ".lumen-build.vn";
+    bool aurora = lumen_project_is_aurora();
     double t0 = lumen_now_ms();
-    if (lumen_build(pages, app, port) != 0) {
+    if (lumen_prepare_dev_app(pages, app, port, aurora) != 0) {
         fprintf(stderr, "lumen: build failed.\n");
         return 1;
     }
@@ -774,17 +843,17 @@ static int lumen_dev(const char *pages, const char *port) {
     const char *RED= color ? "\033[38;5;203m" : "";
     const char *R  = color ? LUM_RESET  : "";
 
-    long last = lumen_pages_fingerprint(pages);
+    long last = lumen_dev_fingerprint(pages, aurora);
 #ifdef _WIN32
     HANDLE hChild = (HANDLE)(intptr_t)child;
     for (;;) {
         Sleep(400);
         if (WaitForSingleObject(hChild, 0) == WAIT_OBJECT_0) break;
-        long now = lumen_pages_fingerprint(pages);
+        long now = lumen_dev_fingerprint(pages, aurora);
         if (now != last && now != -1) {
             last = now;
             double rt0 = lumen_now_ms();
-            if (lumen_build(pages, app, port) == 0) {
+            if (lumen_prepare_dev_app(pages, app, port, aurora) == 0) {
                 TerminateProcess(hChild, 0);
                 WaitForSingleObject(hChild, INFINITE);
                 CloseHandle(hChild);
@@ -804,11 +873,11 @@ static int lumen_dev(const char *pages, const char *port) {
         nanosleep(&poll, NULL);
         int status;
         if (waitpid(child, &status, WNOHANG) == child) break;
-        long now = lumen_pages_fingerprint(pages);
+        long now = lumen_dev_fingerprint(pages, aurora);
         if (now != last && now != -1) {
             last = now;
             double rt0 = lumen_now_ms();
-            if (lumen_build(pages, app, port) == 0) {
+            if (lumen_prepare_dev_app(pages, app, port, aurora) == 0) {
                 kill(child, SIGTERM);
                 waitpid(child, NULL, 0);
                 child = lumen_spawn_server(app);
@@ -868,16 +937,15 @@ static int lumen_new(const char *name) {
     if (mf) {
         fputs("// Aurora — fullstack Varian app.\n", mf);
         fputs("//\n", mf);
-        fputs("// Your Lumen UI lives in pages/ and is served by `vn dev` (development)\n", mf);
-        fputs("// and `vn build` (production). main.vn is the Zenith backend half:\n", mf);
-        fputs("// the custom JSON / API endpoints your frontend calls. Run it with:\n", mf);
-        fputs("//   vn run main.vn\n\n", mf);
+        fputs("// `vn dev` and `vn build main.vn` generate aurora_mount_pages(app)\n", mf);
+        fputs("// from pages/ and compose it with this backend on one Zenith app.\n\n", mf);
         fputs("let app = new_app()\n\n", mf);
         fputs("// Example API route. Add your own below; the frontend fetches these.\n", mf);
         fputs("app.get(\"/api/health\", |_req| {\n", mf);
-        fputs("  return Response { status: 200, body: \"{\\\"ok\\\":true}\", content_type: \"application/json\" }\n", mf);
+        fputs("  return json_response({ ok: true }, 200)\n", mf);
         fputs("}, \"Health check\", null)\n\n", mf);
-        fputs("app.listen(8091)\n", mf);
+        fputs("aurora_mount_pages(app)\n", mf);
+        fputs("app.listen(8090)\n", mf);
         fclose(mf);
     }
 
@@ -890,7 +958,7 @@ static int lumen_new(const char *name) {
         fputs("// environment and provide safe local fallbacks here. `use \"lib/config.vn\"`\n", lf);
         fputs("// from main.vn to share these across the backend.\n\n", lf);
         fprintf(lf, "let APP_NAME = \"%s\"\n", base);
-        fputs("let API_PORT = 8091\n", lf);
+        fputs("let API_PORT = 8090\n", lf);
         fclose(lf);
     }
 
@@ -2271,7 +2339,16 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("[Kiln] Detected Lumen project (pages/ directory present). Pre-compiling routes...\n");
             }
-            if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
+            if (is_aurora) {
+                const char *routes = ".lumen-aurora-routes.vn";
+                if (lumen_build_aurora("pages", routes, "8090") != 0 ||
+                    lumen_compose_aurora(routes, entry, ".lumen-build.vn") != 0) {
+                    remove(routes);
+                    fprintf(stderr, "[Kiln] Aurora route composition failed.\n");
+                    return 1;
+                }
+                remove(routes);
+            } else if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
                 fprintf(stderr, "[Kiln] Pre-compilation of Lumen pages failed.\n");
                 return 1;
             }
