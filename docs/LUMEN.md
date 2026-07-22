@@ -280,6 +280,16 @@ The built-in Markdown subset escapes HTML before rendering headings, paragraphs,
 and fenced code. Content collection work is entirely server/build-side and adds zero
 browser JavaScript.
 
+### Cursor and infinite resources
+
+`lumen_infinite_resource(key, fetch_page, options)` loads cursor pages into the
+shared deterministic resource cache. A page fetcher returns
+`{ items: [...], next_cursor: value | null }`; the resource exposes flattened
+`items`, the original `pages`, `has_next`, `fetching_next`, and retry-safe error
+state through `state()`, plus `fetch_next()`, `invalidate()`, and `reset()`.
+Calling `fetch_next()` from a normal Varian handler keeps fetching and cache
+ownership on the server and adds zero browser JavaScript.
+
 ### Opt-in browser directives
 
 LumenJS includes a curated set of browser-only behaviors. The compiler scans each

@@ -1744,6 +1744,82 @@ fn lumen_resource_cache_gc(max_age_ms) {
     return evicted
 }
 
+// ─── Cursor/infinite resources ───
+// Pages use the deterministic server cache. fetch_page(cursor) returns
+// { items: [...], next_cursor: value|null }; no browser cache is required.
+fn lumen_infinite_resource(key, fetch_page, opts) {
+    let pages = [[]]
+    let page_keys = [[]]
+    let cursor = [null]
+    let has_next = [true]
+    let error = [null]
+    let fetching_next = [false]
+
+    let snapshot = | | {
+        let items = []
+        for i in 0..pages[0].len() {
+            let page_items = _validate.get_field(pages[0][i], "items")
+            for j in 0..page_items.len() { items = items.push(page_items[j]) }
+        }
+        let status = "success"
+        if fetching_next[0] { status = "pending" }
+        if error[0] != null { status = "error" }
+        return http.create_struct(
+            ["key", "status", "pages", "items", "next_cursor", "has_next", "fetching_next", "error"],
+            [_lumen_resource_key(key), status, pages[0], items, cursor[0], has_next[0], fetching_next[0], error[0]]
+        )
+    }
+
+    let load_next = | | {
+        if fetching_next[0] or has_next[0] == false { return snapshot() }
+        let retrying = error[0] != null
+        fetching_next[0] = true
+        error[0] = null
+        let page_cursor = cursor[0]
+        let page_key = ["lumen-infinite", key, page_cursor]
+        let resource = lumen_cached_resource(page_key, | | { return fetch_page(page_cursor) }, opts)
+        let resource_state = (resource.state)()
+        if retrying and resource_state.error != null { resource_state = (resource.refetch)() }
+        if resource_state.error != null {
+            error[0] = resource_state.error
+            fetching_next[0] = false
+            return snapshot()
+        }
+        let page = resource_state.data
+        if page == null or type_of(_validate.get_field(page, "items")) != "array" {
+            error[0] = "Lumen infinite resource page must contain an items array"
+            fetching_next[0] = false
+            return snapshot()
+        }
+        pages[0] = pages[0].push(page)
+        page_keys[0] = page_keys[0].push(page_key)
+        cursor[0] = _validate.get_field(page, "next_cursor")
+        has_next[0] = cursor[0] != null
+        fetching_next[0] = false
+        return snapshot()
+    }
+
+    let invalidate = | | {
+        for i in 0..page_keys[0].len() { lumen_resource_invalidate(page_keys[0][i]) }
+        return snapshot()
+    }
+    let reset = | | {
+        let _ = (invalidate)()
+        pages[0] = []
+        page_keys[0] = []
+        cursor[0] = null
+        has_next[0] = true
+        error[0] = null
+        fetching_next[0] = false
+        return load_next()
+    }
+    let _ = load_next()
+    return http.create_struct(
+        ["state", "fetch_next", "invalidate", "reset"],
+        [snapshot, load_next, invalidate, reset]
+    )
+}
+
 // ─── Server mutation lifecycle ───
 // `opts` may provide on_mutate(value)->context, on_success(data,value,context),
 // on_error(error,value,context), and invalidate_keys (an array of resource keys).
