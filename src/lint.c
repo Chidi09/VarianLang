@@ -178,7 +178,7 @@ static const char *known_native_methods[] = {
     "totp_generate", "totp_secret", "totp_verify", "trim", "trunc",
     "try_receive", "upper", "variance", "verify_jwt", "verify_jwt_v2",
     "verify_password", "verify_password_v2", "where", "write_bytes",
-    "write_socket", "write_text", "yield",
+    "write_socket", "write_text", "stream_start", "stream_write", "stream_end", "yield",
 };
 #define KNOWN_NATIVE_METHOD_COUNT (sizeof(known_native_methods) / sizeof(known_native_methods[0]))
 

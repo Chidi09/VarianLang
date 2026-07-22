@@ -3634,6 +3634,37 @@ fn lumen_load_dependencies(req) {
     return dependencies
 }
 
+// Ordered, server-native HTML streaming. String chunks flush immediately;
+// function/closure chunks are invoked only when the stream reaches them, so
+// earlier markup reaches the browser while later server work is still
+// pending. No browser JavaScript is emitted by this primitive.
+fn _lumen_validate_stream_chunks(chunks) {
+    let kind = type_of(chunks)
+    if kind != "array" and kind != "tuple" { throw("Lumen stream chunks must be an array") }
+    for i in 0..chunks.len() {
+        let chunk_kind = type_of(chunks[i])
+        if chunk_kind != "string" and chunk_kind != "function" and chunk_kind != "closure" {
+            throw("Lumen stream chunks must be strings or zero-argument functions")
+        }
+    }
+    return chunks
+}
+
+fn lumen_stream_html(chunks, headers) {
+    chunks = _lumen_validate_stream_chunks(chunks)
+    if headers == null { headers = http.create_struct([], []) }
+    if type_of(headers) != "struct" { throw("Lumen stream headers must be a struct") }
+    return stream_response(200, "text/html; charset=utf-8", headers, |stream| {
+        for i in 0..chunks.len() {
+            let chunk = chunks[i]
+            if type_of(chunk) != "string" { chunk = chunk() }
+            if type_of(chunk) != "string" { throw("Lumen stream functions must return strings") }
+            stream = stream.write(chunk)
+        }
+        return stream
+    })
+}
+
 fn _lumen_run_loader(component, req, state, dependencies) {
     let loader = _lumen_handler(component, "load")
     if loader == null { return http.create_struct(["state", "dependencies"], [state, dependencies]) }

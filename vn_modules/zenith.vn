@@ -175,6 +175,48 @@ impl SseSender {
     }
 }
 
+// TLS-aware HTTP chunk writer. Unlike WebSocket/SSE raw socket helpers this
+// delegates to the native server transport, so the same API works under
+// listen() and listen_tls().
+struct StreamWriter { ended: bool }
+
+impl StreamWriter {
+    fn write(self, chunk) {
+        if self.ended { throw("Zenith stream is already closed") }
+        if type_of(chunk) != "string" { chunk = "" + chunk }
+        http.stream_write(chunk)
+        return self
+    }
+
+    fn end(self) {
+        if self.ended == false { http.stream_end() }
+        return StreamWriter { ended: true }
+    }
+}
+
+// Sends headers immediately and each producer write as a real HTTP/1.1
+// chunk. Once headers are committed, failures cannot become a second HTTP
+// response; the stream is terminated cleanly and the connection closes.
+fn stream_response(status, content_type, headers, producer) {
+    if headers == null { headers = http.create_struct([], []) }
+    if type_of(headers) != "struct" { throw("Zenith stream headers must be a struct") }
+    let producer_kind = type_of(producer)
+    if producer_kind != "function" and producer_kind != "closure" { throw("Zenith stream producer must be a function") }
+    http.stream_start(status, content_type, headers)
+    let writer = StreamWriter { ended: false }
+    try {
+        let returned = producer(writer)
+        if type_of(returned) == "struct" and _get_req_field(returned, "ended", false) == true {
+            writer = returned
+        }
+    } catch stream_error {}
+    writer = writer.end()
+    return http.create_struct(
+        ["status", "body", "content_type", "headers", "_keep_open", "_already_sent"],
+        [status, "", content_type, headers, false, true]
+    )
+}
+
 // CAVEAT: Not TLS-aware — writes handshake directly to the raw socket FD via
 // http.write_socket(), bypassing any TLS layer. wss:// is unsupported; deploy
 // behind a reverse proxy (nginx/Caddy) that terminates TLS and speaks plain

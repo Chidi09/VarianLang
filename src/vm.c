@@ -2844,6 +2844,8 @@ Task *task_new(VM *vm) {
         t->wakeup_time = 0.0;
         t->http_response_fd = -1;
         t->http_response_ssl = NULL;
+        t->http_stream_started = false;
+        t->http_stream_ended = false;
         t->http_pending_conns = NULL;
         t->arena_base = saved_arena;
         t->arena_offset = 0;
@@ -2856,6 +2858,8 @@ Task *task_new(VM *vm) {
     t->http_listen_fd = -1;
     t->http_response_fd = -1;
     t->http_response_ssl = NULL;
+    t->http_stream_started = false;
+    t->http_stream_ended = false;
     t->http_pending_conns = NULL;
     t->wakeup_time = 0.0;
     t->arena_base = NULL;

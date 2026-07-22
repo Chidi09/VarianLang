@@ -109,3 +109,9 @@ test "a failing custom error handler falls back safely" {
     assert_eq(response.status, 500)
     assert_eq(response.body.index_of("secret"), -1)
 }
+
+test "native stream primitives reject use outside a server response" {
+    assert_throws(| | { http.stream_start(200, "text/plain", {}) })
+    assert_throws(| | { http.stream_write("orphan") })
+    assert_throws(| | { http.stream_end() })
+}

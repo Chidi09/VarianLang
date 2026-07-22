@@ -2661,7 +2661,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
         const char *builtin_methods[] = {
             "len", "upper", "lower", "substring", "trim", "spawn",
             "serve", "serve_with_routes", "push", "append", "join", "split", "starts_with", "replace",
-            "write_socket", "close_socket", "read_socket", "code_at", "from_codes",
+            "write_socket", "close_socket", "read_socket", "stream_start", "stream_write", "stream_end", "code_at", "from_codes",
             "sha1_base64", "hash_password", "verify_password",
             "bit_and", "bit_or", "bit_xor", "index_of", "last_index_of",
             "contains", "ends_with",

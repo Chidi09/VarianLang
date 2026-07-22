@@ -133,3 +133,13 @@ test "loader contracts reject ambiguous data and invalid dependencies" {
     assert_throws(| | { lumen_load({}, "not-an-array") })
     assert_throws(| | { _lumen_loader_result("not-a-struct") })
 }
+
+test "stream chunks preserve ordered lazy server work without client JS" {
+    let suffix = "later"
+    let chunks = _lumen_validate_stream_chunks(["<h1>now</h1>", | | { return "<p>" + suffix + "</p>" }])
+    assert_eq(chunks.len(), 2)
+    assert_eq(chunks[0], "<h1>now</h1>")
+    assert_eq(chunks[1](), "<p>later</p>")
+    assert_throws(| | { _lumen_validate_stream_chunks("not-an-array") })
+    assert_throws(| | { _lumen_validate_stream_chunks([42]) })
+}

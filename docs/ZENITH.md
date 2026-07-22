@@ -237,6 +237,11 @@ unwinds. Dynamic parameters are percent-decoded. GET routes automatically answer
 with identical status/headers and no body. Unsupported methods return 405 with `Allow`,
 and automatic OPTIONS returns 204 with `Allow`; all still traverse middleware.
 
+For incremental HTML, large exports, or deferred server output, return
+`stream_response(status, content_type, headers, |stream| { ... })`. Each
+`stream.write(chunk)` is emitted immediately with HTTP/1.1 chunked encoding, and the
+native writer remains TLS-aware under `listen_tls`. The producer needs no browser runtime.
+
 ## OpenAPI docs
 
 ```varian

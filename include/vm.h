@@ -539,6 +539,8 @@ struct Task {
     void  *http_response_ssl; /* opaque to the VM (an OpenSSL SSL*, cast by lib_http.c) --
                                  companion to http_response_fd for a deferred handler on a
                                  TLS connection; NULL for plain HTTP. */
+    bool   http_stream_started; /* native chunked response state for this handler */
+    bool   http_stream_ended;
     void  *http_pending_conns; /* opaque to the VM -- owned and cast by lib_http.c.
                                   Holds the set of accepted-but-not-yet-fully-read or
                                   kept-alive connections this task's http.serve() is

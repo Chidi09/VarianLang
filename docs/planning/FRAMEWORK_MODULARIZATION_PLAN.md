@@ -75,7 +75,7 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | Tables/virtualization | TanStack Table/Virtual | Headless server-compatible models; optional measured browser action | **done** — server sort/filter/page, live DB refetch, bounded virtual windows, identifier contracts, opt-in `vtable` action and SQLite conformance tests |
 | Deterministic browser actions | all three ecosystems | Registry plus dependency closure and exact emission | **done** — authoritative registry, detection markers, stable transitive dependency closure, exact module/byte tests |
 | Server template rendering | Svelte/Astro templates | Escaped interpolation and server control flow | **done** — `zenith/template.vn`, focused tests |
-| Streaming/deferred rendering | modern meta-frameworks | Ordered server chunks with explicit fallback boundaries | **gap** |
+| Streaming/deferred rendering | modern meta-frameworks | Ordered server chunks with explicit fallback boundaries | **partial** — TLS-aware native chunk transport and zero-JS lazy ordered HTML chunks ship; replacement-style fallback boundaries remain planned |
 
 ---
 

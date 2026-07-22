@@ -150,6 +150,12 @@ This aggregation is server-native and adds no browser JavaScript.
 Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
 successful status or a raw stack trace.
 
+For ordered deferred server work, `lumen_stream_html(chunks, headers)` accepts HTML
+strings and zero-argument functions. Strings flush immediately; each function runs only
+when its position is reached and its returned HTML becomes the next TLS-aware HTTP chunk.
+The primitive emits no client script, making it suitable for streamed documents and large
+server-rendered results where replacement-style fallback boundaries are unnecessary.
+
 ### The interactive dev console
 
 `vn dev` prints a Nuxt/Next-style console and then watches for changes:
