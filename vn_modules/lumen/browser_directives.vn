@@ -21,6 +21,88 @@
 // _lumen_module has no dependency on any other lumen.vn symbol — it is a
 // pure function of `name` — which is what makes it a safe leaf extraction.
 
+fn _lumen_action(name, markers, deps) {
+    return http.create_struct(["name", "markers", "deps"], [name, markers, deps])
+}
+
+// Authoritative browser-action metadata. Registry order is emission order.
+fn _lumen_action_registry() {
+    return [
+        _lumen_action("event-bridge", [], []),
+        _lumen_action("clipboard", ["data-lumen-copy"], []),
+        _lumen_action("focus", ["data-lumen-focus"], []),
+        _lumen_action("scroll", ["data-lumen-scroll"], []),
+        _lumen_action("toast", ["data-lumen-toast"], []),
+        _lumen_action("key", ["data-lumen-key"], ["event-bridge"]),
+        _lumen_action("persist", ["data-lumen-persist"], []),
+        _lumen_action("time", ["data-lumen-time"], []),
+        _lumen_action("media", ["data-lumen-media"], []),
+        _lumen_action("window", ["data-lumen-window"], []),
+        _lumen_action("nav", ["data-lumen-nav"], ["event-bridge"]),
+        _lumen_action("toggle", ["data-lumen-toggle"], []),
+        _lumen_action("transition", ["data-lumen-transition"], []),
+        _lumen_action("anchor", ["data-lumen-anchor"], []),
+        _lumen_action("inview", ["data-lumen-inview"], ["event-bridge"]),
+        _lumen_action("sortable", ["data-lumen-sortable"], ["event-bridge"])
+    ]
+}
+
+fn _lumen_action_list_has(items, value) {
+    for i in 0..items.len() {
+        if items[i] == value { return true }
+    }
+    return false
+}
+
+fn _lumen_action_entry(name) {
+    let registry = _lumen_action_registry()
+    for i in 0..registry.len() {
+        if _validate.get_field(registry[i], "name") == name { return registry[i] }
+    }
+    return null
+}
+
+fn _lumen_detect_actions(tpl) {
+    let found = []
+    let registry = _lumen_action_registry()
+    for i in 0..registry.len() {
+        let entry = registry[i]
+        let markers = _validate.get_field(entry, "markers")
+        let matched = false
+        for j in 0..markers.len() {
+            if tpl.index_of(markers[j]) >= 0 { matched = true }
+        }
+        if matched { found = found.push(_validate.get_field(entry, "name")) }
+    }
+    return found
+}
+
+fn _lumen_resolve_action(name, resolved) {
+    if _lumen_action_list_has(resolved, name) { return resolved }
+    let entry = _lumen_action_entry(name)
+    if entry == null { return resolved }
+    let deps = _validate.get_field(entry, "deps")
+    for i in 0..deps.len() {
+        resolved = _lumen_resolve_action(deps[i], resolved)
+    }
+    return resolved.push(name)
+}
+
+// Normalize arbitrary manifests to stable registry order, then resolve the
+// transitive dependency closure. Unknown names emit no JavaScript.
+fn _lumen_resolve_actions(requested) {
+    let resolved = []
+    if requested == null { return resolved }
+    let registry = _lumen_action_registry()
+    for i in 0..registry.len() {
+        let name = _validate.get_field(registry[i], "name")
+        if _lumen_action_list_has(requested, name) {
+            resolved = _lumen_resolve_action(name, resolved)
+        }
+    }
+    return resolved
+}
+
 fn _lumen_module(name) {
     if name == "event-bridge" {
         return "(function()\{var q=[];window.__lumen_push=function(h,v)\{var m=JSON.stringify(\{t:'event',h:h,v:v\}),w=window.__lumen_ws;if(w&&w.readyState===1)w.send(m);else q.push(m)\};setInterval(function()\{var w=window.__lumen_ws;if(!w||w.readyState!==1)return;while(q.length)w.send(q.shift())\},100)\})()"

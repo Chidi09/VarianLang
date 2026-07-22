@@ -70,3 +70,36 @@ test "event modules share reconnect-safe queued transport" {
     assert_ne(js.index_of("while(q.length)"), -1)
     assert_eq(_count_text(js, "else q.push(m)"), 1)
 }
+
+test "action registry resolves dependencies in stable order" {
+    let a = _lumen_resolve_actions(["sortable", "nav", "key", "inview", "nav"])
+    let b = _lumen_resolve_actions(["inview", "key", "nav", "sortable"])
+    assert_eq(b.len(), a.len())
+    for i in 0..a.len() { assert_eq(b[i], a[i]) }
+    assert_eq(a.len(), 5)
+    assert_eq(a[0], "event-bridge")
+    assert_eq(a[1], "key")
+    assert_eq(a[2], "nav")
+    assert_eq(a[3], "inview")
+    assert_eq(a[4], "sortable")
+}
+
+test "unknown actions and unused dependencies emit zero bytes" {
+    let core = _lumen_client_core()
+    assert_eq(_lumen_resolve_actions(["unknown"]).len(), 0)
+    assert_eq(_lumen_client_js_with_manifest([]).len(), core.len())
+    assert_eq(_lumen_client_js_with_manifest(["unknown"]).len(), core.len())
+    assert_eq(_lumen_client_js_with_manifest(["clipboard"]).len(),
+              core.len() + 1 + _lumen_module("clipboard").len())
+}
+
+test "browser action payloads stay within explicit regression ceilings" {
+    // These are uncompressed emitted bytes. The core ceiling records today's
+    // baseline until transport/morph/form concerns are split into actions.
+    assert_eq(_lumen_client_core().len() <= 7000, 1)
+    let registry = _lumen_action_registry()
+    for i in 0..registry.len() {
+        let name = _validate.get_field(registry[i], "name")
+        assert_eq(_lumen_module(name).len() <= 850, 1)
+    }
+}

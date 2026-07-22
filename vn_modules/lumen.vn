@@ -4415,28 +4415,7 @@ use "lumen"
 // Scan a template string for directive attributes and return a list of required LumenJS module names.
 // Looks for data-lumen-* attributes that map to known modules, data-lumen-hook=X, and event modifiers.
 fn _lumen_scan_directives(tpl) {
-    let mods = []
-    // Single source of truth: directive attribute -> module name, index-aligned.
-    // Every name here MUST be implemented in _lumen_module(); keep the two lists
-    // in lock-step (a name with no module would ship a dead directive, and an
-    // unscanned attr would silently never load its module). data-lumen-mod
-    // (debounce/throttle/key modifiers) is handled by core, so it has no module.
-    let attrs = ["data-lumen-copy", "data-lumen-focus", "data-lumen-scroll",
-                 "data-lumen-toast", "data-lumen-key", "data-lumen-persist",
-                 "data-lumen-time", "data-lumen-media", "data-lumen-window",
-                 "data-lumen-nav", "data-lumen-toggle", "data-lumen-transition",
-                 "data-lumen-anchor", "data-lumen-inview", "data-lumen-sortable"]
-    let names = ["clipboard", "focus", "scroll", "toast", "key", "persist",
-                 "time", "media", "window", "nav", "toggle", "transition",
-                 "anchor", "inview", "sortable"]
-    for i in 0..attrs.len() {
-        if tpl.index_of(attrs[i]) >= 0 {
-            if _lumen_list_has(mods, names[i]) == false {
-                mods = mods.push(names[i])
-            }
-        }
-    }
-    return mods
+    return _lumen_detect_actions(tpl)
 }
 
 // ─── LumenJS client runtime ───
@@ -4454,16 +4433,10 @@ fn _lumen_client_core() {
 
 fn _lumen_client_js_with_manifest_and_loading(manifest, loading_html) {
     let js = _lumen_client_core()
-    if manifest != null {
-        let needs_events = _lumen_list_has(manifest, "key") or
-                           _lumen_list_has(manifest, "nav") or
-                           _lumen_list_has(manifest, "inview") or
-                           _lumen_list_has(manifest, "sortable")
-        if needs_events { js = js + ";" + _lumen_module("event-bridge") }
-        for i in 0..manifest.len() {
-            let mod_js = _lumen_module(manifest[i])
-            if mod_js != "" { js = js + ";" + mod_js }
-        }
+    let resolved = _lumen_resolve_actions(manifest)
+    for i in 0..resolved.len() {
+        let mod_js = _lumen_module(resolved[i])
+        if mod_js != "" { js = js + ";" + mod_js }
     }
     if loading_html != null and loading_html != "" {
         js = js + ";window.__LUMEN_LOADING__=\"" + _lumen_escape_string(loading_html) + "\";"
@@ -4541,10 +4514,11 @@ fn _lumen_dev_inject(manifest) {
     let ver = env.get("VN_VERSION")
     if ver == null { ver = "dev" }
     let modjs = "["
-    if manifest != null {
-        for i in 0..manifest.len() {
+    let resolved = _lumen_resolve_actions(manifest)
+    if resolved != null {
+        for i in 0..resolved.len() {
             if i > 0 { modjs = modjs + "," }
-            modjs = modjs + "\"" + manifest[i] + "\""
+            modjs = modjs + "\"" + resolved[i] + "\""
         }
     }
     modjs = modjs + "]"

@@ -101,8 +101,8 @@ Every browser directive maps statically from a `data-lumen-*` attribute to a pur
 - `sortable`: HTML5 drag-and-drop list reordering handler.
 
 ### 4.2 Performance & Quality Budgets
-1. **Core Client Shell**: target under 2.0 KB, enforced by a byte test before it becomes a guarantee.
-2. **Individual Directive Snippet**: target under 600 bytes per module, with documented exceptions or decomposition where behavior genuinely requires more.
+1. **Core Client Shell**: measured at 6,945 uncompressed bytes in this phase, with a 7,000-byte regression ceiling. The target is below 2 KB after transport, morphing, form capture, navigation, virtual-table, and error-overlay concerns become independently detectable actions.
+2. **Individual Directive Snippet**: measured range 191–826 uncompressed bytes, with an 850-byte regression ceiling. Larger actions should be decomposed when that reduces real page payload rather than merely moving text.
 3. **Zero Unused Bytes**: Pages with zero directives ship 0 bytes of optional directive JS.
 4. **Deterministic Output**: Pure function output for identical input (`_lumen_module`).
 
