@@ -372,7 +372,11 @@ typedef struct Shape {
 } Shape;
 
 /* ─── Shape Registry (per-VM, stores every Shape ever created) ─── */
-#define SHAPE_REGISTRY_SIZE 256
+/* Large generated Lumen applications legitimately create hundreds of distinct
+ * response, state, and attribute layouts during startup. Keep enough interned
+ * layouts per VM that those applications retain shape sharing and cleanup
+ * ownership instead of falling off the registry's fixed-capacity fast path. */
+#define SHAPE_REGISTRY_SIZE 1024
 typedef struct {
     Shape *shapes[SHAPE_REGISTRY_SIZE];
     int count;
