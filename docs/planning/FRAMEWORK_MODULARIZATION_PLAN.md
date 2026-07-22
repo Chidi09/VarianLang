@@ -72,7 +72,7 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | Query cache | TanStack Query | Request-keyed server resource cache with stale windows, deduplication, previous-data retention, invalidation, and metrics | **done** — `lumen_cached_resource`, focused cache tests; expiry/garbage collection remains planned |
 | Mutations | TanStack Query/Form | Server mutation lifecycle with optimistic context, rollback/success callbacks, reset, and resource invalidation | **done** — `lumen_mutation`, focused lifecycle tests; background mutation execution remains planned |
 | Router search state | TanStack Router | Schema-validated URL state and deterministic route matching | **done** — strict typed coercion, UTF-8 codec, validator/default contracts, URL marker and runtime tests |
-| Tables/virtualization | TanStack Table/Virtual | Headless server-compatible models; optional measured browser action | **gap** |
+| Tables/virtualization | TanStack Table/Virtual | Headless server-compatible models; optional measured browser action | **done** — server sort/filter/page, live DB refetch, bounded virtual windows, identifier contracts, opt-in `vtable` action and SQLite conformance tests |
 | Deterministic browser actions | all three ecosystems | Registry plus dependency closure and exact emission | **done** — authoritative registry, detection markers, stable transitive dependency closure, exact module/byte tests |
 | Server template rendering | Svelte/Astro templates | Escaped interpolation and server control flow | **done** — `zenith/template.vn`, focused tests |
 | Streaming/deferred rendering | modern meta-frameworks | Ordered server chunks with explicit fallback boundaries | **gap** |

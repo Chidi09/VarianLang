@@ -421,6 +421,7 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | Scoped CSS | CSS modules, styled-components | **Built-in** — `data-lumen-css` attribute rewrite |
 | Reactive store | Zustand, Pinia | **Built-in** — `lumen_store()`, `lumen_broadcast_store()` |
 | Async data fetching | React Query, TanStack Query | **Built-in** — keyed resources plus mutations with optimistic context, rollback hooks, and invalidation |
+| Tables and virtualization | TanStack Table / Virtual | **Built-in** — headless server queries, live refetch, bounded DOM windows, optional measured scroll action |
 | Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
 | Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |

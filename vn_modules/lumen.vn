@@ -1781,9 +1781,9 @@ fn _lumen_ensure_reactive() {
 
 fn live_query(fetcher) {
     _lumen_ensure_reactive()
-    db.capture_start()
+    capture_start()
     let res = lumen_resource(fetcher)
-    let tables = db.capture_end()
+    let tables = capture_end()
     let i = 0
     while i < tables.len() {
         let tbl = tables[i]
@@ -1804,6 +1804,64 @@ fn live_query(fetcher) {
 //                         columns: [ {name:"id",label:"ID",sortable:true}, ... ],
 //                         page_size: 25, order_by: "id", order_dir: "desc", filters: [] })
 //   render:  each (dt.rows)() ...      handler: (dt.set_sort)("name")
+fn _data_table_identifier(name) {
+    if name == null or name == "" { return false }
+    let segment_start = true
+    for i in 0..name.len() {
+        let c = name.substring(i, i + 1)
+        if c == "." {
+            if segment_start { return false }
+            segment_start = true
+        } else {
+            if _lumen_is_ident_char(c) == false { return false }
+            let code = c.code_at(0)
+            if segment_start and code >= 48 and code <= 57 { return false }
+            segment_start = false
+        }
+    }
+    return segment_start == false
+}
+
+fn _data_table_column(columns, field, require_sortable) {
+    if field == null { return false }
+    for i in 0..columns.len() {
+        if _validate.get_field(columns[i], "name") == field {
+            if require_sortable and _validate.get_field(columns[i], "sortable") != true { return false }
+            return true
+        }
+    }
+    return false
+}
+
+fn _data_table_validate_filters(columns, filters) {
+    let allowed = ["=", "!=", "<>", "<", "<=", ">", ">=", "LIKE"]
+    for i in 0..filters.len() {
+        let field = _validate.get_field(filters[i], "field")
+        let op = _validate.get_field(filters[i], "op")
+        if _data_table_column(columns, field, false) == false {
+            throw("Lumen table: unknown filter column '" + field + "'")
+        }
+        let valid_op = false
+        for j in 0..allowed.len() { if op == allowed[j] { valid_op = true } }
+        if valid_op == false { throw("Lumen table: unsafe filter operator '" + op + "'") }
+    }
+    return true
+}
+
+fn _data_table_validate_contract(table, columns, filters, initial_sort) {
+    if _data_table_identifier(table) == false { throw("Lumen table: unsafe table identifier") }
+    for i in 0..columns.len() {
+        if _data_table_identifier(_validate.get_field(columns[i], "name")) == false {
+            throw("Lumen table: unsafe column identifier")
+        }
+    }
+    _data_table_validate_filters(columns, filters)
+    if initial_sort != null and _data_table_column(columns, initial_sort, true) == false {
+        throw("Lumen table: sort column must be declared sortable")
+    }
+    return true
+}
+
 fn data_table(opts) {
     let conn = _validate.get_field(opts, "conn")
     let table = _validate.get_field(opts, "table")
@@ -1820,6 +1878,7 @@ fn data_table(opts) {
     let st_page = [1]
     let st_filters = [_validate.get_field(opts, "filters")]
     if st_filters[0] == null { st_filters[0] = [] }
+    _data_table_validate_contract(table, columns, st_filters[0], st_sort[0])
 
     // column name list for SELECT (fall back to "*")
     let col_names = []
@@ -1869,6 +1928,7 @@ fn data_table(opts) {
         return null
     }
     let set_sort = |field| {
+        if _data_table_column(columns, field, true) == false { return null }
         if st_sort[0] == field {
             if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
         } else {
@@ -1879,6 +1939,7 @@ fn data_table(opts) {
         return (_apply)()
     }
     let set_filter = |filters| {
+        _data_table_validate_filters(columns, filters)
         st_filters[0] = filters
         st_page[0] = 1
         return (_apply)()
@@ -1990,6 +2051,7 @@ fn data_table_component(opts) {
     if init_dir == null { init_dir = "asc" }
     let filters = _validate.get_field(opts, "filters")
     if filters == null { filters = [] }
+    _data_table_validate_contract(table, columns, filters, init_sort)
     let cfg = http.create_struct(
         ["conn", "table", "columns", "page_size", "filters"],
         [conn, table, columns, page_size, filters]
@@ -2003,6 +2065,7 @@ fn data_table_component(opts) {
     let handler_names = ["dt_sort", "dt_next", "dt_prev", "dt_reload"]
     let handler_fns = [
         |s, v| {
+            if _data_table_column(columns, v, true) == false { return s }
             if s.dt_sort == v {
                 if s.dt_dir == "asc" { s.dt_dir = "desc" } else { s.dt_dir = "asc" }
             } else {
@@ -2132,6 +2195,7 @@ fn data_table_virtual(opts) {
     if init_dir != null { st_dir[0] = init_dir }
     let st_filters = [_validate.get_field(opts, "filters")]
     if st_filters[0] == null { st_filters[0] = [] }
+    _data_table_validate_contract(table, columns, st_filters[0], st_sort[0])
     let st_first = [0]
     let st_count = [40]
     let initc = _validate.get_field(opts, "window_count")
@@ -2217,6 +2281,7 @@ fn data_table_virtual(opts) {
         return (_wake)()
     }
     let set_sort = |field| {
+        if _data_table_column(columns, field, true) == false { return null }
         if st_sort[0] == field {
             if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
         } else {
@@ -2227,6 +2292,7 @@ fn data_table_virtual(opts) {
         return (_wake)()
     }
     let set_filter = |filters| {
+        _data_table_validate_filters(columns, filters)
         st_filters[0] = filters
         st_first[0] = 0
         return (_wake_all)()
@@ -2333,6 +2399,7 @@ fn data_table_virtual_component(opts) {
     if init_dir == null { init_dir = "asc" }
     let filters = _validate.get_field(opts, "filters")
     if filters == null { filters = [] }
+    _data_table_validate_contract(table, columns, filters, init_sort)
 
     let cfg = http.create_struct(
         ["conn", "table", "columns", "row_height", "viewport_height"],
@@ -2348,6 +2415,7 @@ fn data_table_virtual_component(opts) {
     let handler_names = ["dt_window", "dt_sort", "dt_reload"]
     let handler_fns = [
         |s, v| {
+            if _data_table_column(columns, v, true) == false { return s }
             let f = _validate.get_field(v, "f")
             let c = _validate.get_field(v, "c")
             if f < 0 { f = 0 }

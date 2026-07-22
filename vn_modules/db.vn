@@ -169,6 +169,15 @@ fn capture_end() {
     return t
 }
 
+fn _db_capture_sql(sql) {
+    if _db_capture[0] == null { return null }
+    let captured = _db_capture[0]
+    let tables = _db_sql_tables(sql)
+    for i in 0..tables.len() { captured = captured.push(tables[i]) }
+    _db_capture[0] = captured
+    return null
+}
+
 // Spawn a connection wrapper with .query() and .execute() methods
 fn spawn_or_struct(driver, raw_conn) {
     return http.create_struct(
@@ -176,7 +185,7 @@ fn spawn_or_struct(driver, raw_conn) {
         [driver, raw_conn,
          |sql, params| {
              if params == null { params = [] }
-             if _db_capture[0] != null { _db_capture[0] = _db_capture[0] + _db_sql_tables(sql) }
+             _db_capture_sql(sql)
              if driver == "sqlite" {
                  return sqlite.query(raw_conn, sql, params)
              } else {
@@ -185,7 +194,7 @@ fn spawn_or_struct(driver, raw_conn) {
          },
          |sql, params| {
              if params == null { params = [] }
-             if _db_capture[0] != null { _db_capture[0] = _db_capture[0] + _db_sql_tables(sql) }
+             _db_capture_sql(sql)
              if driver == "sqlite" {
                  return sqlite.query(raw_conn, sql, params)
              } else {

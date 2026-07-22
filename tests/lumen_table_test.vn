@@ -1,0 +1,105 @@
+fn _table_fixture() {
+    let conn = db.connect("sqlite", "/tmp/varian_lumen_table_test.db")
+    let _ = (conn.execute)("CREATE TABLE IF NOT EXISTS lumen_people (id INTEGER PRIMARY KEY, name TEXT, team TEXT)", [])
+    let _ = (conn.execute)("DELETE FROM lumen_people", [])
+    let names = ["Ada", "Grace", "Linus", "Margaret", "Ken", "Edsger"]
+    let teams = ["compiler", "navy", "kernel", "compiler", "kernel", "compiler"]
+    for i in 0..names.len() {
+        let _ = (conn.execute)("INSERT INTO lumen_people (id, name, team) VALUES (?, ?, ?)", [i + 1, names[i], teams[i]])
+    }
+    return conn
+}
+
+fn _table_columns() {
+    return [
+        { name: "id", label: "ID", sortable: true },
+        { name: "name", label: "Name <unsafe>", sortable: true },
+        { name: "team", label: "Team", sortable: false }
+    ]
+}
+
+fn _table_manifest_index(values, needle) {
+    for i in 0..values.len() { if values[i] == needle { return i } }
+    return -1
+}
+
+test "headless table pages sorts and filters server-side" {
+    let table = data_table({
+        conn: _table_fixture(), table: "lumen_people", columns: _table_columns(),
+        page_size: 2, order_by: "id", order_dir: "asc", filters: []
+    })
+    assert_eq((table.rows)().len(), 2)
+    assert_eq((table.rows)()[0].name, "Ada")
+
+    let _ = (table.next_page)()
+    assert_eq((table.meta)().page, 2)
+    assert_eq((table.rows)()[0].name, "Linus")
+
+    let _ = (table.set_sort)("name")
+    assert_eq((table.meta)().page, 1)
+    assert_eq((table.meta)().sort, "name")
+    assert_eq((table.rows)()[0].name, "Ada")
+
+    let _ = (table.set_filter)([{ field: "team", op: "=", value: "compiler" }])
+    assert_eq((table.rows)().len(), 2)
+    assert_eq((table.rows)()[0].name, "Ada")
+
+    let _ = (table.set_sort)("name; DROP TABLE lumen_people")
+    assert_eq((table.meta)().sort, "name")
+    assert_throws(| | { (table.set_filter)([{ field: "team", op: "OR 1=1", value: "compiler" }]) })
+}
+
+test "table contracts reject undeclared SQL identifiers" {
+    let conn = _table_fixture()
+    assert_throws(| | { data_table({
+        conn: conn, table: "lumen_people; DROP TABLE lumen_people", columns: _table_columns(), filters: []
+    }) })
+    assert_throws(| | { data_table({
+        conn: conn, table: "lumen_people", columns: _table_columns(), order_by: "team", filters: []
+    }) })
+}
+
+test "live table resources refetch after captured database changes" {
+    let conn = _table_fixture()
+    let table = data_table({
+        conn: conn, table: "lumen_people", columns: _table_columns(),
+        page_size: 2, order_by: "id", filters: []
+    })
+    assert_eq((table.rows)()[0].name, "Ada")
+    let _ = (conn.execute)("UPDATE lumen_people SET name = ? WHERE id = ?", ["Ada Updated", 1])
+    _lumen_reactive_tick()
+    assert_eq((table.rows)()[0].name, "Ada Updated")
+}
+
+test "table renderer escapes labels and emits only event behavior" {
+    let table = data_table({
+        conn: _table_fixture(), table: "lumen_people", columns: _table_columns(),
+        page_size: 3, order_by: "id", filters: []
+    })
+    let html = _data_table_html(table)
+    assert_ne(html.index_of("Name &lt;unsafe&gt;"), -1)
+    assert_ne(html.index_of("data-lumen-click=\"dt_sort\""), -1)
+    let manifest = _lumen_scan_directives(html)
+    assert_ne(_table_manifest_index(manifest, "events"), -1)
+    assert_eq(_table_manifest_index(manifest, "vtable"), -1)
+}
+
+test "virtual table moves a bounded server window and reports total" {
+    let table = data_table_virtual({
+        conn: _table_fixture(), table: "lumen_people", columns: _table_columns(),
+        row_height: 30, viewport_height: 90, window_count: 2,
+        order_by: "id", order_dir: "asc", filters: []
+    })
+    assert_eq((table.total)(), 6)
+    assert_eq((table.rows)().len(), 2)
+    let _ = (table.set_window)(3, 2)
+    assert_eq((table.meta)().first, 3)
+    assert_eq((table.rows)()[0].name, "Margaret")
+
+    let html = _data_table_virtual_html(table)
+    assert_ne(html.index_of("data-lumen-vtable"), -1)
+    assert_ne(html.index_of("height:90px"), -1)
+    let manifest = _lumen_scan_directives(html)
+    assert_ne(_table_manifest_index(manifest, "vtable"), -1)
+    assert_ne(_table_manifest_index(manifest, "events"), -1)
+}
