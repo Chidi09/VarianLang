@@ -70,7 +70,7 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | Nested layouts and error boundaries | SvelteKit layouts/errors | Route-tree layouts with explicit loading/error states | **gap** |
 | Data loading and invalidation | SvelteKit load/dependencies | Server-first loaders with declared invalidation keys | **gap** |
 | Query cache | TanStack Query | Request-keyed server resource cache with stale windows, deduplication, previous-data retention, invalidation, and metrics | **done** — `lumen_cached_resource`, focused cache tests; expiry/garbage collection remains planned |
-| Mutations | TanStack Query/Form | Typed actions with pending/error/success and invalidation | **gap** |
+| Mutations | TanStack Query/Form | Server mutation lifecycle with optimistic context, rollback/success callbacks, reset, and resource invalidation | **done** — `lumen_mutation`, focused lifecycle tests; background mutation execution remains planned |
 | Router search state | TanStack Router | Schema-validated URL state and deterministic route matching | **gap** |
 | Tables/virtualization | TanStack Table/Virtual | Headless server-compatible models; optional measured browser action | **gap** |
 | Deterministic browser actions | all three ecosystems | Registry plus dependency closure and exact emission | **partial** — catalog/scanner ship; explicit dependency metadata is the next milestone |

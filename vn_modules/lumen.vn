@@ -1632,6 +1632,52 @@ fn lumen_resource_cache_stats() {
     )
 }
 
+// ─── Server mutation lifecycle ───
+// `opts` may provide on_mutate(value)->context, on_success(data,value,context),
+// on_error(error,value,context), and invalidate_keys (an array of resource keys).
+// The context is deliberately application-defined: it can contain the exact
+// previous server state needed for rollback without a second client cache.
+fn _lumen_mutation_state(status, data, error, variables, context, submitted_at) {
+    return http.create_struct(
+        ["status", "idle", "pending", "success", "failed", "data", "error", "variables", "context", "submitted_at"],
+        [status, status == "idle", status == "pending", status == "success", status == "error",
+         data, error, variables, context, submitted_at]
+    )
+}
+
+fn lumen_mutation(mutate_fn, opts) {
+    let holder = [_lumen_mutation_state("idle", null, null, null, null, null)]
+    let execute = |value| {
+        let context = null
+        let on_mutate = null
+        if opts != null { on_mutate = _validate.get_field(opts, "on_mutate") }
+        if on_mutate != null { context = (on_mutate)(value) }
+        holder[0] = _lumen_mutation_state("pending", null, null, value, context, time.now_ms())
+        try {
+            let data = mutate_fn(value)
+            let keys = null
+            if opts != null { keys = _validate.get_field(opts, "invalidate_keys") }
+            if keys != null {
+                for i in 0..keys.len() { lumen_resource_invalidate(keys[i]) }
+            }
+            let on_success = null
+            if opts != null { on_success = _validate.get_field(opts, "on_success") }
+            if on_success != null { let _ = (on_success)(data, value, context) }
+            holder[0] = _lumen_mutation_state("success", data, null, value, context, holder[0].submitted_at)
+        } catch e {
+            let message = "" + e
+            let on_error = null
+            if opts != null { on_error = _validate.get_field(opts, "on_error") }
+            if on_error != null { let _ = (on_error)(message, value, context) }
+            holder[0] = _lumen_mutation_state("error", null, message, value, context, holder[0].submitted_at)
+        }
+        return holder[0]
+    }
+    let state = | | { return holder[0] }
+    let reset = | | { holder[0] = _lumen_mutation_state("idle", null, null, null, null, null); return holder[0] }
+    return http.create_struct(["state", "mutate", "reset"], [state, execute, reset])
+}
+
 // ─── Pillar 1: reactive tick — drain DB changes, refetch dependent live
 // queries, then wake all live loops so they re-render + morph. Driven by a
 // single background task on a 30ms cadence (coalesces bulk writes). ───

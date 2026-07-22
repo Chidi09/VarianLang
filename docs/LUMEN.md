@@ -23,7 +23,7 @@ Lumen + batteries).
 | **Hydration mismatch** | Common bug | **Impossible** — server owns all state and rendering |
 | **UI components** | None built-in (need MUI, Chakra, Shadcn) | **28 built-in** — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, etc. |
 | **State management** | External (Zustand, Pinia, stores) | **Built-in** `lumen_store()` |
-| **Async data** | External (React Query, TanStack Query) | **Built-in** `lumen_resource()`, `lumen_async_resource()`, keyed `lumen_cached_resource()` |
+| **Async data** | External (React Query, TanStack Query) | **Built-in** keyed resources plus `lumen_mutation()` lifecycle/rollback |
 | **Form validation** | External (Zod, VeeValidate, yup) | **Built-in** `lumen_form()` — Zod-style |
 | **Pub-sub / broadcast** | External library or manual WebSocket | **Built-in** `lumen_publish()`, `lumen_subscribe()`, `lumen_broadcast_store()` |
 | **CSS scoping** | Compiler plugin or CSS modules | **Built-in** `data-lumen-css` attribute rewrite |
@@ -377,7 +377,7 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | Dynamic route params | External lib feature | **Built-in** — `[id].lumen` → `/:id` |
 | Scoped CSS | CSS modules, styled-components | **Built-in** — `data-lumen-css` attribute rewrite |
 | Reactive store | Zustand, Pinia | **Built-in** — `lumen_store()`, `lumen_broadcast_store()` |
-| Async data fetching | React Query, TanStack Query | **Built-in** — local, async, and shared keyed resources with freshness/invalidation |
+| Async data fetching | React Query, TanStack Query | **Built-in** — keyed resources plus mutations with optimistic context, rollback hooks, and invalidation |
 | Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
 | Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
