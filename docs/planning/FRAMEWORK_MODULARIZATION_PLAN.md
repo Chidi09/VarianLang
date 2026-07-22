@@ -71,9 +71,9 @@ Status is deliberately explicit: **done** means shipped and covered, **partial**
 | Data loading and invalidation | SvelteKit load/dependencies | Page `load(req)` merges server data; keyed resources declare invalidation keys | **partial** — initial load and resource invalidation ship; dependency-key aggregation across layouts remains planned |
 | Query cache | TanStack Query | Request-keyed server resource cache with stale windows, deduplication, previous-data retention, invalidation, and metrics | **done** — `lumen_cached_resource`, focused cache tests; expiry/garbage collection remains planned |
 | Mutations | TanStack Query/Form | Server mutation lifecycle with optimistic context, rollback/success callbacks, reset, and resource invalidation | **done** — `lumen_mutation`, focused lifecycle tests; background mutation execution remains planned |
-| Router search state | TanStack Router | Schema-validated URL state and deterministic route matching | **gap** |
+| Router search state | TanStack Router | Schema-validated URL state and deterministic route matching | **done** — strict typed coercion, UTF-8 codec, validator/default contracts, URL marker and runtime tests |
 | Tables/virtualization | TanStack Table/Virtual | Headless server-compatible models; optional measured browser action | **gap** |
-| Deterministic browser actions | all three ecosystems | Registry plus dependency closure and exact emission | **partial** — catalog/scanner ship; explicit dependency metadata is the next milestone |
+| Deterministic browser actions | all three ecosystems | Registry plus dependency closure and exact emission | **done** — authoritative registry, detection markers, stable transitive dependency closure, exact module/byte tests |
 | Server template rendering | Svelte/Astro templates | Escaped interpolation and server control flow | **done** — `zenith/template.vn`, focused tests |
 | Streaming/deferred rendering | modern meta-frameworks | Ordered server chunks with explicit fallback boundaries | **gap** |
 
@@ -106,7 +106,9 @@ Every browser directive maps statically from a `data-lumen-*` attribute to a pur
 3. **Zero Unused Bytes**: Pages with zero directives ship 0 bytes of optional directive JS.
 4. **Deterministic Output**: Pure function output for identical input (`_lumen_module`).
 
-The current scanner manually couples attribute names, module names, and the event-bridge dependency. The next phase replaces that coupling with one action registry containing detection markers and dependencies. Resolution must compute a stable transitive closure, emit each module once, and make tests assert exact module sets and byte counts—not merely search for a representative string.
+The scanner is driven by one action registry containing detection markers and explicit
+dependencies. Resolution computes a stable transitive closure, emits each module once, and
+tests assert exact module sets and byte ceilings.
 
 ---
 

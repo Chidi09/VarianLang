@@ -3147,6 +3147,32 @@ static Value native_print(VM *vm, int arg_count, Value *args) {
     return val_nil();
 }
 
+static Value native_type_of(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 1) return val_string(copy_string("nil", 3));
+    const char *name = "unknown";
+    switch (args[0].type) {
+        case VAL_NIL:          name = "nil"; break;
+        case VAL_BOOL:         name = "bool"; break;
+        case VAL_INT:          name = "int"; break;
+        case VAL_FLOAT:        name = "float"; break;
+        case VAL_STRING:       name = "string"; break;
+        case VAL_ARRAY:        name = "array"; break;
+        case VAL_TUPLE:        name = "tuple"; break;
+        case VAL_FUNCTION:     name = "function"; break;
+        case VAL_CLOSURE:      name = "closure"; break;
+        case VAL_NATIVE_FN:    name = "native_function"; break;
+        case VAL_STRUCT:       name = "struct"; break;
+        case VAL_ENUM:         name = "enum"; break;
+        case VAL_MODULE:       name = "module"; break;
+        case VAL_TASK:         name = "task"; break;
+        case VAL_CHANNEL:      name = "channel"; break;
+        case VAL_ACTOR:        name = "actor"; break;
+        case VAL_BOUND_METHOD: name = "bound_method"; break;
+    }
+    return val_string(copy_string(name, (int)strlen(name)));
+}
+
 /* `__lumen_log_start()` — enable print capture and clear the buffer (Lumen dev).
  * `__lumen_log_drain()` — return captured text since last drain, clearing it. */
 static Value native_lumen_log_start(VM *vm, int arg_count, Value *args) {
@@ -3602,6 +3628,7 @@ bool vm_run(VM *vm, bool run_tests) {
     }
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
+    define_global(vm, copy_string("type_of", 7), val_native_fn((void *)native_type_of));
     define_global(vm, copy_string("__test_enable_arena", 19), val_native_fn((void *)native_test_enable_arena));
     define_global(vm, copy_string("__test_recycle_arena", 20), val_native_fn((void *)native_test_recycle_arena));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));

@@ -1,0 +1,16 @@
+test "type_of reports primitive runtime types" {
+    assert_eq(type_of(null), "nil")
+    assert_eq(type_of(true), "bool")
+    assert_eq(type_of(7), "int")
+    assert_eq(type_of(1.5), "float")
+    assert_eq(type_of("seven"), "string")
+}
+
+test "type_of reports collection and callable runtime types" {
+    assert_eq(type_of([]), "array")
+    assert_eq(type_of({ answer: 42 }), "struct")
+    assert_eq(type_of(|v| { return v }), "function")
+    let captured = 42
+    let closure = | | { return captured }
+    assert_eq(type_of(closure), "closure")
+}

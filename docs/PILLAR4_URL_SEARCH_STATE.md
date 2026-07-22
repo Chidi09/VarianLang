@@ -7,7 +7,7 @@ into the address bar (so views are shareable / bookmarkable / back-button-able);
 restores state. Pairs with Pillars 1–3 (sort/filter/page/search live in the URL and drive the
 live queries).
 
-## Ground truth (from a DeepSeek read of lumen.vn + zenith.vn)
+## Runtime contract
 - `req.query` = raw query string on the zenith Request (zenith.vn:647); the page/load path gives a
   component `req` with `.path/.query/.params`. zenith has `query_params(req)`/`query(req,k,d)` but
   `lumen.vn` does NOT call `zenith.*` — so we parse the query ourselves in lumen.vn.
@@ -19,8 +19,10 @@ live queries).
 ## Design
 Server (lumen.vn, append-only new fns):
 - `_lumen_parse_query(raw)` → struct (char-scan split on `&`/`=`, `_lumen_qs_decode` on values).
-- `_lumen_qs_decode(v)` / `_lumen_qs_encode(v)` → minimal percent/`+` codec for `space & = % #`.
-- `_lumen_coerce(rawv, type)` → `json_decode` for int/number/bool (try/catch → null), raw for string.
+- `_lumen_qs_decode(v)` / `_lumen_qs_encode(v)` implement UTF-8 percent encoding for URL
+  components, decode `+` as space, and preserve malformed escape sequences literally.
+- `_lumen_coerce(rawv, type)` strictly distinguishes `int`, `number`, `bool`, and `string`.
+  For example, `2.5` is not accepted as an integer and `1` is not accepted as a boolean.
 - `lumen_search(req, schema)` → typed struct. schema = name→`{type, default, validator?}`. Missing/
   invalid → default. Reusable for popstate too (pass `{query: location.search}` as a fake req).
 - `lumen_search_to_qs(values)` → `"?k=v&..."` (skips null/empty, encodes values).
@@ -34,8 +36,9 @@ Client (lumen.vn `_lumen_client_core`, hand-written):
   `lumen_nav` handler ignore it).
 
 ## Status
-Chunk 1 = the above. Example: `examples/lumen_search_url.vn` (a search box + sort whose state lives
-in `?q=&sort=`; load seeds state from the URL, the marker writes it back, `lumen_nav` restores it on
-back/forward). Untested at runtime (Windows LSP-only / `.vn` interpreted) — needs Linux/WSL.
-v1 codec handles `space & = % #` only (documented); full percent-decode + pushState history +
-data_table auto-URL-binding are later polish.
+Shipped and runtime-tested. `tests/lumen_search_test.vn` covers UTF-8/reserved-character
+round trips, strict coercion, validator refinement, deterministic serialization, safe HTML
+markers, and invalid schema contracts. `examples/lumen_search_url.vn` demonstrates a search
+box and sort order whose state lives in `?q=&sort=`; load seeds state from the URL, the marker
+writes it back, and `lumen_nav` restores it on back/forward. Deliberate `pushState` navigation
+and automatic data-table binding remain separate opt-in concerns.

@@ -1,0 +1,54 @@
+fn _search_spec(fields, values) {
+    return http.create_struct(fields, values)
+}
+
+test "search codec round trips reserved characters and UTF-8" {
+    let original = "space & equals = hash # percent % check ✓"
+    let encoded = _lumen_qs_encode(original)
+    assert_eq(encoded, "space%20%26%20equals%20%3D%20hash%20%23%20percent%20%25%20check%20%E2%9C%93")
+    assert_eq(_lumen_qs_decode(encoded), original)
+    assert_eq(_lumen_qs_decode("a+b%2Fc"), "a b/c")
+    assert_eq(_lumen_qs_decode("bad%2"), "bad%2")
+}
+
+test "typed search state coerces strictly and falls back deterministically" {
+    let schema = _search_spec(
+        ["page", "ratio", "active", "q"],
+        [
+            _search_spec(["type", "default"], ["int", 1]),
+            _search_spec(["type", "default"], ["number", 0.5]),
+            _search_spec(["type", "default"], ["bool", false]),
+            _search_spec(["type", "default"], ["string", ""])
+        ]
+    )
+    let state = lumen_search(_search_spec(["query"], ["?page=3&ratio=1.25&active=true&q=hello%20world"]), schema)
+    assert_eq(state.page, 3)
+    assert_eq(state.ratio, 1.25)
+    assert_eq(state.active, true)
+    assert_eq(state.q, "hello world")
+
+    let invalid = lumen_search(_search_spec(["query"], ["page=2.5&ratio=false&active=1"]), schema)
+    assert_eq(invalid.page, 1)
+    assert_eq(invalid.ratio, 0.5)
+    assert_eq(invalid.active, false)
+}
+
+test "search validators refine coerced values" {
+    let schema = _search_spec(["page"], [
+        _search_spec(["type", "default", "validator"], ["int", 1, validate.num().min(1).max(50)])
+    ])
+    assert_eq(lumen_search(_search_spec(["query"], ["page=12"]), schema).page, 12)
+    assert_eq(lumen_search(_search_spec(["query"], ["page=99"]), schema).page, 1)
+}
+
+test "search serialization is deterministic and HTML marker safe" {
+    let values = _search_spec(["q", "page", "empty"], ["a & b", 2, ""])
+    assert_eq(lumen_search_to_qs(values), "?q=a%20%26%20b&page=2")
+    let marker = _lumen_url_marker(values)
+    assert_ne(marker.index_of("data-lumen-url=\"?q=a%20%26%20b&amp;page=2\""), -1)
+}
+
+test "unknown search schema types fail loudly" {
+    let schema = _search_spec(["bad"], [_search_spec(["type", "default"], ["mystery", null])])
+    assert_throws(| | { lumen_search(_search_spec(["query"], ["bad=x"]), schema) })
+}
