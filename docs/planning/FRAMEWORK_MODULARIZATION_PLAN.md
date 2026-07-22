@@ -31,6 +31,9 @@ To ensure zero risk to existing application code and compiler semantics, Phase 1
 6. **Lumen Server Resource Boundary** (`vn_modules/lumen/resources.vn`):
    - Extracted basic and keyed resources, cache ownership/GC, infinite queries, and mutation lifecycle state.
    - The subsystem remains server-owned and adds no browser payload; existing focused suites exercise the unchanged ambient facade.
+7. **Lumen Routing and Build Boundary** (`vn_modules/lumen/routing.vn`):
+   - Extracted recursive route discovery, dev-app generation, and the live two-phase SSG emitter.
+   - Removed the unreferenced incomplete SSG duplicate and hardened generated literals, ports, component identifiers, sitemap URLs, and XML output.
 
 ---
 
@@ -128,7 +131,7 @@ tests assert exact module sets and byte ceilings.
 
 1. **Leaf extraction (complete here)**: one behavior-preserving leaf per framework, facades unchanged.
 2. **Action registry**: centralize Lumen detection/dependency metadata and enforce exact output budgets.
-3. **Framework seams**: Zenith request/response and Lumen resources are extracted; continue with routing and forms one coherent subsystem at a time, with public facade compatibility tests.
+3. **Framework seams**: Zenith request/response plus Lumen resources/routing are extracted; continue with forms and runtime rendering one coherent subsystem at a time, with public facade compatibility tests.
 4. **Opt-in prelude**: design explicit framework imports before claiming compiler parse-time improvements; retain a documented compatibility mode.
 5. **Conformance applications**: static content, authenticated CRUD, streaming UI, and large data examples exercised in real browsers.
 

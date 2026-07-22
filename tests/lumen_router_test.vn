@@ -13,6 +13,16 @@ test "maps file bases to routes (index is root)" {
     assert_eq(_lumen_route("about"), "/about")
 }
 
+test "routing rejects unsafe generated identifiers ports and sitemap URLs" {
+    assert_eq(_lumen_route_component_valid("AdminUser"), true)
+    assert_eq(_lumen_route_component_valid("9Admin"), false)
+    assert_eq(_lumen_route_component_valid("Bad-Name"), false)
+    assert_throws(| | { _lumen_build_dir("_lumen_router_test_pages", "/tmp/nope.vn", 0) })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "javascript:alert(1)", "/tmp/nope.vn") })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "https://example.test\nInjected", "/tmp/nope.vn") })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "https://example.test/?query=bad", "/tmp/nope.vn") })
+}
+
 test "build_dir compiles a pages directory into one runnable app" {
     let dir = "_lumen_router_test_pages"
     io.mkdir(dir)
