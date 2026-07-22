@@ -433,6 +433,7 @@ fn _zenith_error_response(app, error, req) {
 struct ZenithApp {
     root: RadixNode,
     middlewares: array,
+    guards: array,
     route_list: array,
     docs_enabled: bool,
     docs_endpoint: string,
@@ -456,6 +457,7 @@ fn new_app() {
     let app = ZenithApp {
         root: new_radix_node(),
         middlewares: [],
+        guards: [],
         route_list: [],
         docs_enabled: false,
         docs_endpoint: "/docs",
@@ -623,6 +625,23 @@ impl ZenithApp {
 
     fn add_middleware(self, handler) {
         self.middlewares = self.middlewares.push(handler)
+    }
+
+    // Route guards are compiled application code, not source evaluated during
+    // a request. A null result allows the request to continue; any response
+    // short-circuits the endpoint. Rules run in registration order.
+    fn add_guard(self, route_prefix, handler) {
+        if type_of(route_prefix) != "string" or !route_prefix.starts_with("/") {
+            throw("route guard prefix must start with /")
+        }
+        let handler_type = type_of(handler)
+        if handler_type != "function" and handler_type != "closure" {
+            throw("route guard handler must be callable")
+        }
+        self.guards = self.guards.push(http.create_struct(
+            ["prefix", "handler"], [route_prefix, handler]
+        ))
+        return self
     }
 
     // Serves files under `directory` for any GET request whose path starts
@@ -903,27 +922,29 @@ fn _run_middleware(app, req) {
         if handler == null {
             return Response { status: 404, body: "Not Found", content_type: "text/plain" }
         }
-        let dir_segs = req.dir_segs
-        if dir_segs != null {
-            let current_dir = "pages"
-            let guard_paths = [current_dir + "/+guard.vn"]
-            for s in 0..dir_segs.len() {
-                current_dir = current_dir + "/" + dir_segs[s]
-                guard_paths = guard_paths.push(current_dir + "/+guard.vn")
-            }
-            for gp in 0..guard_paths.len() {
-                let guard_file = guard_paths[gp]
-                let guard_code = io.read_text(guard_file)
-                if guard_code != null {
-                    let guard_res = _execute_guard_file(guard_file, guard_code, req)
-                    if guard_res != null {
-                        return guard_res
-                    }
+        for gi in 0..app.guards.len() {
+            let rule = app.guards[gi]
+            if _zenith_guard_matches(rule.prefix, req.path) {
+                let guard_result = null
+                try { guard_result = rule.handler(req) } catch guard_error {
+                    return _zenith_normalize_response(_zenith_error_response(app, guard_error, req))
                 }
+                if guard_result != null { return _zenith_normalize_response(guard_result) }
             }
         }
         try { return _zenith_normalize_response(handler(req)) } catch e { return _zenith_normalize_response(_zenith_error_response(app, e, req)) }
     }
+}
+
+fn _zenith_guard_matches(prefix, path) {
+    if prefix == "/" { return true }
+    let wanted = _split_path(prefix)
+    let actual = _split_path(path)
+    if actual.len() < wanted.len() { return false }
+    for i in 0..wanted.len() {
+        if !wanted[i].starts_with(":") and wanted[i] != actual[i] { return false }
+    }
+    return true
 }
 
 // ─── OpenAPI ───
@@ -1203,43 +1224,6 @@ fn _swagger_handler(app, req) {
 // top-level prelude (see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
 // It needs the `Response` struct above, so this `use` must come after it.
 use "zenith"
-
-fn _execute_guard_file(file_path, guard_code, req) {
-    let rand = crypto.random_string(8)
-    if rand == null { rand = "xyz" }
-    let req_file = "temp_req_" + rand + ".json"
-    let guard_vn_file = "temp_guard_" + rand + ".vn"
-    let req_data = http.create_struct(
-        ["method", "path", "query", "body", "json", "params", "headers", "ip"],
-        [req.method, req.path, req.query, req.body, req.json, req.params, req.headers, req.ip]
-    )
-    io.write_text(req_file, json_encode(req_data))
-    let runner_code = guard_code + "\n\n" +
-        "fn _run_guard_bootstrap() {\n" +
-        "    let req_str = io.read_text(\"" + req_file + "\")\n" +
-        "    if req_str == null or req_str == \"\" { return }\n" +
-        "    let req = json_decode(req_str)\n" +
-        "    let res = guard(req)\n" +
-        "    if res != null {\n" +
-        "        print(json_encode(res))\n" +
-        "    }\n" +
-        "}\n" +
-        "_run_guard_bootstrap()\n"
-    io.write_text(guard_vn_file, runner_code)
-    let out = null
-    try {
-        let cmd = "vn " + guard_vn_file
-        let result_str = python.run("subprocess", "getoutput", [cmd])
-        if result_str != null and result_str != "" {
-            out = json_decode(result_str)
-        }
-    } catch e {
-        print("Guard execution error on " + file_path + ":", e)
-    }
-    io.delete(req_file)
-    io.delete(guard_vn_file)
-    return out
-}
 
 fn _admin_jobs_handler(req) {
     _queue_init_db()

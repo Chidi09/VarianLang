@@ -159,6 +159,25 @@ response with `Location` and no client redirect script.
 Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
 successful status or a raw stack trace.
 
+Place `+guard.vn` in `pages/` or any nested route directory to protect that subtree:
+
+```vn
+fn guard(req) {
+    if request_context(req, "user", null) == null {
+        return redirect_with("/login", 303)
+    }
+    return null
+}
+```
+
+The build renames and compiles each guard into the generated application. Parent guards
+run before child guards; dynamic directories such as `[team]/+guard.vn` match their real
+route segment. Returning `null` continues, while any normal response short-circuits the
+page. Production requests never read guard source, create temporary files, or launch a
+compiler subprocess.
+Static export rejects a tree containing guards instead of accidentally publishing
+protected page output as public HTML.
+
 Keyed resources accept both `stale_ms` and `gc_ms`. Access refreshes an entry's inactivity
 clock; `lumen_resource_cache_gc(age_ms)` evicts inactive, non-fetching entries and their
 version metadata, while cache statistics report cumulative `evicted` entries. Mutations

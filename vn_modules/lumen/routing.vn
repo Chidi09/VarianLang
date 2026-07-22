@@ -135,6 +135,33 @@ fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_l
     return results
 }
 
+// Discover +guard.vn files in parent-before-child order. Guards are compiled
+// into the generated application and registered against their directory route;
+// no source file is read or executed while handling a request.
+fn _lumen_collect_guards(dir, route_prefix) {
+    let names = io.list_dir(dir)
+    if names == null { return [] }
+    let guards = []
+    if io.read_text(dir + "/+guard.vn") != null {
+        let prefix = route_prefix
+        if prefix == "" { prefix = "/" }
+        guards.append(http.create_struct(["path", "prefix"], [dir + "/+guard.vn", prefix]))
+    }
+    for i in 0..names.len() {
+        let name = names[i]
+        if name == "components" or name.starts_with("+") { continue }
+        let child = dir + "/" + name
+        if io.list_dir(child) == null { continue }
+        let segment = name
+        if name.starts_with("[") and name.ends_with("]") {
+            segment = ":" + name.substring(1, name.len() - 1)
+        }
+        let nested = _lumen_collect_guards(child, route_prefix + "/" + segment)
+        for ni in 0..nested.len() { guards.append(nested[ni]) }
+    }
+    return guards
+}
+
 // Scan a pages directory, compile every .lumen file, and emit ONE runnable
 // Varian app that registers each component and mounts it at its file route.
 // (No eval in the language, so the dev command runs this generated file in a
@@ -185,6 +212,23 @@ fn _lumen_build_dir_mode(pages_dir, out_path, port, standalone) {
     let compiled = []
     let work_paths = []
     let work_bases = []
+
+    let guard_mounts = ""
+    let guards = _lumen_collect_guards(pages_dir, "")
+    for gi in 0..guards.len() {
+        let guard_info = guards[gi]
+        let guard_source = io.read_text(guard_info.path)
+        let definitions = regex.find_all("fn[[:space:]]+guard[[:space:]]*\\(", guard_source)
+        if definitions.len() != 1 {
+            throw("Lumen: " + guard_info.path + " must define exactly one fn guard(req)")
+        }
+        let guard_name = "_lumen_file_guard_" + gi
+        let renamed = regex.replace(
+            "fn[[:space:]]+guard[[:space:]]*\\(", guard_source, "fn " + guard_name + "("
+        )
+        combined = combined + renamed + "\n"
+        guard_mounts = guard_mounts + "app.add_guard(\"" + _lumen_generated_string(guard_info.prefix) + "\", " + guard_name + ")\n"
+    }
 
     // Compile every component in pages/components/ (kept for back-compat: an
     // un-imported component here still resolves), recording its name + scanning
@@ -335,10 +379,10 @@ fn _lumen_build_dir_mode(pages_dir, out_path, port, standalone) {
     // startup line is suppressed — `vn dev` prints its own Lumen console.
     let program = combined + "\n"
     if standalone {
-        program = program + "let app = new_app()\n" + mounts + statics +
+        program = program + "let app = new_app()\n" + guard_mounts + mounts + statics +
                   "http.serve(" + port + ", |req| \{ return app.handle(req) \})\n"
     } else {
-        program = program + "fn aurora_mount_pages(app) \{\n" + mounts + statics + "    return app\n\}\n"
+        program = program + "fn aurora_mount_pages(app) \{\n" + guard_mounts + mounts + statics + "    return app\n\}\n"
     }
     io.write_text(out_path, program)
     return count
@@ -368,6 +412,10 @@ fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
     let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
     if pages.len() == 0 {
         throw("Lumen SSG: no .lumen files found in " + pages_dir)
+    }
+    let protected_routes = _lumen_collect_guards(pages_dir, "")
+    if protected_routes.len() > 0 {
+        throw("Lumen SSG: protected +guard.vn routes cannot be exported as public static HTML")
     }
     // Create the output dir now (mkdir -p): the render program re-creates it in
     // phase 2, but sitemap.xml/robots.txt are written below in THIS phase and

@@ -143,6 +143,14 @@ aurora-chat/
 | `/product/:id` | SSR product detail — DB query → render | SSR Lumen page |
 | `/api/products` | Product listing with pagination | JSON API |
 | `/api/products/:id` | Single product | JSON API |
+
+### Route guards
+
+An optional `pages/+guard.vn` protects the complete page tree; nested guards such as
+`pages/account/+guard.vn` or `pages/teams/[team]/+guard.vn` refine a subtree. Each file
+defines `fn guard(req)` and returns `null` to continue or a normal Zenith response to stop.
+Aurora compiles guards into the composed application, so authorization executes in the
+same process with the same request context and no per-request source evaluation.
 | `/api/cart` | Session-backed cart read | JSON API |
 | `/api/cart/:id` | Add/remove cart items | JSON API |
 | `/api/checkout` | Validate, create order, enqueue email | JSON API |

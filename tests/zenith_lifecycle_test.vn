@@ -19,6 +19,33 @@ test "static MIME handling never pretends TypeScript is JavaScript" {
     assert_eq(_mime_type_for_path("client.ts"), "text/plain")
 }
 
+test "compiled route guards inherit in order and short circuit" {
+    let app = new_app()
+    let calls = []
+    app.add_guard("/", |req| { calls.append("root"); return null })
+    app.add_guard("/teams/:team", |req| {
+        calls.append("team")
+        if req.params.team == "blocked" {
+            return http.create_struct(["status", "body", "content_type"], [403, "Denied", "text/plain"])
+        }
+        return null
+    })
+    app.get("/teams/:team/settings", |req| { calls.append("route"); return "ok" }, "settings", null)
+
+    let allowed = app.handle(_zenith_request("GET", "/teams/blue/settings", ""))
+    assert_eq(allowed.status, 200)
+    assert_eq(calls.join(","), "root,team,route")
+    let denied = app.handle(_zenith_request("GET", "/teams/blocked/settings", ""))
+    assert_eq(denied.status, 403)
+    assert_eq(calls.join(","), "root,team,route,root,team")
+}
+
+test "route guard contracts reject ambiguous registrations" {
+    let app = new_app()
+    assert_throws(| | { app.add_guard("private", |req| { return null }) })
+    assert_throws(| | { app.add_guard("/private", "not callable") })
+}
+
 test "middleware preserves request data context and onion ordering" {
     let app = new_app()
     let order = []

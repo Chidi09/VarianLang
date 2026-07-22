@@ -50,14 +50,24 @@ test "build_dir compiles a pages directory into one runnable app" {
 test "Aurora route builds compose into an existing Zenith app" {
     let dir = "_lumen_aurora_route_pages"
     io.mkdir(dir)
+    io.mkdir(dir + "/teams")
+    io.mkdir(dir + "/teams/[team]")
     io.write_text(dir + "/index.lumen",
         "<template><h1>Aurora</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/+guard.vn", "fn guard(req) \{ return null \}")
+    io.write_text(dir + "/teams/[team]/+guard.vn", "fn guard(req) \{ return null \}")
     let out = "_lumen_aurora_routes.vn"
     assert_eq(_lumen_build_aurora_dir(dir, out, 8090), 1)
     let generated = io.read_text(out)
     assert_ne(generated.index_of("fn aurora_mount_pages(app)"), -1)
     assert_ne(generated.index_of("lumen_mount(app, \"/\""), -1)
     assert_ne(generated.index_of("app.serve_static(\"/\", \"public\")"), -1)
+    assert_ne(generated.index_of("fn _lumen_file_guard_0(req)"), -1)
+    assert_ne(generated.index_of("fn _lumen_file_guard_1(req)"), -1)
+    assert_ne(generated.index_of("app.add_guard(\"/\", _lumen_file_guard_0)"), -1)
+    assert_ne(generated.index_of("app.add_guard(\"/teams/:team\", _lumen_file_guard_1)"), -1)
+    assert_eq(generated.index_of("temp_guard_"), -1)
+    assert_eq(generated.index_of("python.run"), -1)
     assert_eq(generated.index_of("let app = new_app()"), -1)
     assert_eq(generated.index_of("http.serve("), -1)
 }
@@ -76,6 +86,17 @@ test "static render program selects one page per bounded VM pass" {
     assert_ne(program.index_of("if _ssg_page == \"0\""), -1)
     assert_ne(program.index_of("if _ssg_page == \"1\""), -1)
     assert_eq(io.read_text(render + ".count"), "2")
+}
+
+test "static export refuses to publish guarded route trees" {
+    let dir = "_lumen_ssg_guarded_pages"
+    io.mkdir(dir)
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Private</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/+guard.vn", "fn guard(req) \{ return null \}")
+    assert_throws(| | {
+        _lumen_emit_static_program(dir, "/tmp/lumen-guarded-out", "https://example.test", "/tmp/lumen-guarded.vn")
+    })
 }
 
 test "route collector inherits nested layout loading and error boundaries" {
