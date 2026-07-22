@@ -5,7 +5,7 @@
       <Row gap="12" align="center">
         <Stack gap="4" style="flex:1">
           <Heading size="4xl" as="h2">Zenith Web Server</Heading>
-          <Text size="lg" muted={true}>Zenith is Varian's high-performance HTTP and WebSocket server. Capable of handling millions of concurrent connections, Zenith leverages Varian's actor model to serve traffic with unparalleled efficiency and virtually zero overhead.</Text>
+          <Text size="lg" muted={true}>Zenith is Varian's HTTP and WebSocket server. Requests and live connections run as cooperative tasks within each worker process, while <code>listen_cluster</code> provides explicit multi-core scaling through isolated OS processes.</Text>
           <Row gap="3">
             <Button href="/zenith" variant="outline">Explore Zenith docs &gt;</Button>
           </Row>
