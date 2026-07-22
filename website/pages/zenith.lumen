@@ -539,17 +539,20 @@ app.<span class="token-function">post</span>(<span class="token-string">"/signup
 
 <div class="code-block" style="margin-bottom:var(--space-4);">
   <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">ws.vn</span></div>
-  <div class="code-block-body"><pre>app.<span class="token-function">ws</span>(<span class="token-string">"/live"</span>, |ws| {
-    <span class="token-comment">// Handle WebSocket messages</span>
-    <span class="token-keyword">let</span> msg = ws.<span class="token-function">read</span>()
-    <span class="token-keyword">if</span> msg != <span class="token-string">""</span> {
-        <span class="token-function">print</span>(<span class="token-string">"received:"</span>, msg)
-        ws.<span class="token-function">write</span>(<span class="token-string">"Echo: "</span> + msg)
+  <div class="code-block-body"><pre>app.<span class="token-function">get</span>(<span class="token-string">"/live"</span>, |req| {
+    <span class="token-keyword">let</span> ws = <span class="token-function">upgrade_websocket</span>(req)
+    <span class="token-keyword">if</span> ws == <span class="token-keyword">null</span> { <span class="token-keyword">return</span> Response { status: <span class="token-number">426</span>, body: <span class="token-string">"upgrade required"</span>, content_type: <span class="token-string">"text/plain"</span> } }
+    <span class="token-keyword">while</span> <span class="token-keyword">true</span> {
+        <span class="token-keyword">let</span> msg = ws.<span class="token-function">read</span>()
+        <span class="token-keyword">if</span> msg == <span class="token-keyword">null</span> { <span class="token-keyword">break</span> }
+        <span class="token-keyword">if</span> msg != <span class="token-string">""</span> { ws.<span class="token-function">write</span>(<span class="token-string">"Echo: "</span> + msg) }
+        task.<span class="token-function">yield</span>()
     }
+    <span class="token-keyword">return</span> http.<span class="token-function">create_struct</span>([<span class="token-string">"_keep_open"</span>], [<span class="token-keyword">true</span>])
 })</pre></div>
 </div>
 
-<p>Zenith handles the WebSocket upgrade (RFC 6455) automatically when you register a <code>ws(path, handler)</code> route. The handler receives a WebSocket struct with <code>read()</code> and <code>write()</code> methods. Server-sent events (SSE) are also supported via the standard response streaming API.</p>
+<p><code>upgrade_websocket(req)</code> performs the RFC 6455 handshake and returns a WebSocket value with non-blocking <code>read()</code> and <code>write()</code> methods. Yield when no complete frame is ready so other tasks can run. The active connection transport is TLS-aware, so this route uses <code>ws://</code> with <code>listen()</code> and <code>wss://</code> with <code>listen_tls()</code>. Server-sent events can use <code>sse_handshake(req)</code>; finite streamed responses use <code>stream_response</code>.</p>
 
 <!-- ============ COMPTIME ORM ============ -->
 <h2><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">database</span> Meridian: the comptime ORM</h2>

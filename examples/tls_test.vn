@@ -10,8 +10,8 @@
 //   ./vn examples/tls_test.vn
 //   curl -k https://localhost:8943/ping
 //
-// Known gap: WebSocket/SSE upgrades aren't TLS-aware yet (wss:// isn't
-// supported, only https:// request/response, including serve_static()).
+// WebSocket/SSE upgrades use the same active transport, so wss:// and event
+// streams remain encrypted under listen_tls() as well.
 let app = new_app()
 app.get("/ping", | req | {
     return Response { status: 200, body: "pong", content_type: "text/plain" }

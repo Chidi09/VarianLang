@@ -66,6 +66,9 @@ in `.lumen` files read from disk, where `{{ }}` is written plainly.
   VM requires `task.yield()` in the live loop. Tested in `tests/lumen_live_test.vn`
   (dispatch + route registration, no browser needed). Example in
   `examples/lumen_counter.vn`.
+  The native active-connection transport is shared by plain HTTP and TLS, so
+  WebSocket/SSE reads, handshakes, frames, and Lumen live patches also work
+  under `listen_tls()`/`wss://` without bypassing encryption.
 - **M3 — `.lumen` single-file components (DONE).** A `.lumen` file = `<template>` markup + a
   Varian `<script>` logic block (`state` + handlers). `lumen_compile_source`/`lumen_compile_file`
   emit a backing `.vn` that calls `lumen_register_component(name, ...)`; `<UserCard id=".." prop=".." />`

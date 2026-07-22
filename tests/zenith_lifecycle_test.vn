@@ -114,4 +114,6 @@ test "native stream primitives reject use outside a server response" {
     assert_throws(| | { http.stream_start(200, "text/plain", {}) })
     assert_throws(| | { http.stream_write("orphan") })
     assert_throws(| | { http.stream_end() })
+    assert_throws(| | { http.connection_write("orphan") })
+    assert_throws(| | { http.connection_read(1) })
 }

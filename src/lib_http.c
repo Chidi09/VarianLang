@@ -2463,6 +2463,60 @@ static bool http_stream_task(VM *vm, Task **out, SSL **ssl) {
     return true;
 }
 
+/* Raw protocol access to the active server connection. Unlike write_socket /
+ * read_socket these preserve the connection's TLS layer, so upgrades such as
+ * WebSocket work identically under serve() and serve_tls(). The server task
+ * remains the sole owner of the fd and SSL object and closes both when the
+ * handler finishes. */
+static Value lib_http_connection_write(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_STRING) {
+        runtime_error(vm, "http.connection_write(data) requires a string");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    ObjString *data = args[base].as.string;
+    if (data->length == 0) return val_int(0);
+    if (!conn_io_send_all(t->http_response_fd, ssl, data->chars, data->length)) {
+        runtime_error(vm, "http.connection_write failed");
+        return val_nil();
+    }
+    return val_int(data->length);
+}
+
+static Value lib_http_connection_read(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_INT) {
+        runtime_error(vm, "http.connection_read(max_bytes) requires an int");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    int max_bytes = (int)args[base].as.integer;
+    if (max_bytes <= 0) return val_string(allocate_string(vm, "", 0));
+    if (max_bytes > 16 * 1024 * 1024) {
+        runtime_error(vm, "http.connection_read max_bytes exceeds 16MB");
+        return val_nil();
+    }
+    char *buf = malloc((size_t)max_bytes);
+    if (!buf) {
+        runtime_error(vm, "http.connection_read allocation failed");
+        return val_nil();
+    }
+    int n = conn_io_recv(t->http_response_fd, ssl, buf, max_bytes);
+    if (n <= 0) {
+        free(buf);
+        if (n == -1) return val_string(allocate_string(vm, "", 0));
+        return val_nil();
+    }
+    ObjString *result = allocate_string(vm, buf, n);
+    free(buf);
+    return val_string(result);
+}
+
 static bool safe_http_header_part(const char *s) {
     return s && strchr(s, '\r') == NULL && strchr(s, '\n') == NULL;
 }
@@ -2666,6 +2720,8 @@ void lib_http_init(VM *vm) {
     vm_register_dispatch(vm, "http", "create_struct", val_native_fn((void *)lib_http_create_struct));
     vm_register_dispatch(vm, "http", "test_request", val_native_fn((void *)lib_http_test_request));
     vm_register_dispatch(vm, "http", "write_socket", val_native_fn((void *)lib_http_write_socket));
+    vm_register_dispatch(vm, "http", "connection_write", val_native_fn((void *)lib_http_connection_write));
+    vm_register_dispatch(vm, "http", "connection_read", val_native_fn((void *)lib_http_connection_read));
     vm_register_dispatch(vm, "http", "stream_start", val_native_fn((void *)lib_http_stream_start));
     vm_register_dispatch(vm, "http", "stream_write", val_native_fn((void *)lib_http_stream_write));
     vm_register_dispatch(vm, "http", "stream_end", val_native_fn((void *)lib_http_stream_end));

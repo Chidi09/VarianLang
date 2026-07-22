@@ -37,7 +37,7 @@ struct WebSocket {
 
 impl WebSocket {
     fn read(self) {
-        let incoming = http.read_socket(self.socket_fd, 4096)
+        let incoming = http.connection_read(4096)
         if incoming != null {
             self._buffer = self._buffer + incoming
         }
@@ -148,15 +148,14 @@ impl WebSocket {
         }
 
         let frame = "".from_codes(frame_codes)
-        http.write_socket(self.socket_fd, frame)
+        http.connection_write(frame)
     }
 
     fn close(self) {
         let close_frame = "".from_codes([136, 0])
         try {
-            http.write_socket(self.socket_fd, close_frame)
+            http.connection_write(close_frame)
         } catch e {}
-        http.close_socket(self.socket_fd)
     }
 }
 
@@ -167,11 +166,13 @@ struct SseSender {
 impl SseSender {
     fn send(self, data) {
         let chunk = "data: " + data + "\n\n"
-        http.write_socket(self.socket_fd, chunk)
+        http.connection_write(chunk)
     }
 
     fn close(self) {
-        http.close_socket(self.socket_fd)
+        // The active handler task owns and closes both plain and TLS sockets.
+        // Return from the handler after close() to finish the connection.
+        return null
     }
 }
 
@@ -217,10 +218,8 @@ fn stream_response(status, content_type, headers, producer) {
     )
 }
 
-// CAVEAT: Not TLS-aware — writes handshake directly to the raw socket FD via
-// http.write_socket(), bypassing any TLS layer. wss:// is unsupported; deploy
-// behind a reverse proxy (nginx/Caddy) that terminates TLS and speaks plain
-// ws:// to Zenith. See listen_tls for the same caveat.
+// The task-scoped connection transport preserves TLS, so the same upgrade is
+// used for ws:// under listen() and wss:// under listen_tls().
 fn upgrade_websocket(req) {
     let headers = req.headers
     if headers == null {
@@ -238,7 +237,7 @@ fn upgrade_websocket(req) {
                    "Connection: Upgrade\r\n" +
                    "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
 
-    http.write_socket(req.socket_fd, response)
+    http.connection_write(response)
 
     return WebSocket {
         socket_fd: req.socket_fd,
@@ -246,13 +245,12 @@ fn upgrade_websocket(req) {
     }
 }
 
-// CAVEAT: Same TLS limitation as upgrade_websocket — writes to raw socket FD.
 fn sse_handshake(req) {
     let response = "HTTP/1.1 200 OK\r\n" +
                    "Content-Type: text/event-stream\r\n" +
                    "Cache-Control: no-cache\r\n" +
                    "Connection: keep-alive\r\n\r\n"
-    http.write_socket(req.socket_fd, response)
+    http.connection_write(response)
     return SseSender { socket_fd: req.socket_fd }
 }
 
@@ -848,12 +846,8 @@ impl ZenithApp {
     // certbot, or a self-signed cert for local dev -- see
     // examples/tls_test.vn for how to generate one with openssl).
     //
-    // CAVEAT: WebSocket/SSE upgrades (upgrade_websocket/sse_handshake)
-    // write directly to the raw socket via http.write_socket(), which is
-    // not TLS-aware — wss:// is unsupported. Lumen reactivity (lumen_mount)
-    // silently breaks behind listen_tls because the browser tries wss://
-    // and the server can't upgrade it. Production workaround: terminate TLS
-    // at a reverse proxy (nginx/Caddy) that proxies plain ws:// to Zenith.
+    // WebSocket and SSE transports share the active server connection, so
+    // upgrades remain encrypted under listen_tls() without a reverse proxy.
     fn listen_tls(self, port, cert_path, key_path) {
         self.port = port
         print("Zenith running on https://localhost:", port)
