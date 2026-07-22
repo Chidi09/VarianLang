@@ -3540,6 +3540,26 @@ fn lumen_test_count(html, substr) {
     return count
 }
 
+// Emit a browser-native document hint. This requires no Lumen client action;
+// the browser may fetch the destination when it has spare capacity.
+fn lumen_prefetch(href) {
+    let url = "" + href
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw "lumen_prefetch: href must be a non-empty URL without control characters"
+    }
+    return "<link rel=\"prefetch\" as=\"document\" href=\"" + _sanitize.escape_html(url) + "\">"
+}
+
+// Mark an ordinary anchor for intent prefetch. Navigation remains native and
+// works without JavaScript; only the small prefetch action is conditionally emitted.
+fn lumen_prefetch_link(href, content) {
+    let url = "" + href
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw "lumen_prefetch_link: href must be a non-empty URL without control characters"
+    }
+    return "<a href=\"" + _sanitize.escape_html(url) + "\" data-lumen-prefetch>" + content + "</a>"
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }

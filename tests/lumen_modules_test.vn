@@ -25,6 +25,7 @@ test "pure browser modules are implemented" {
     _assert_module("media", "IntersectionObserver")
     _assert_module("window", "prefers-color-scheme")
     _assert_module("nav", "history.pushState")
+    _assert_module("prefetch", "rel='prefetch'")
     _assert_module("transition", "requestAnimationFrame")
     _assert_module("defer", "data-lumen-defer-result")
     _assert_module("anchor", "getBoundingClientRect")
@@ -85,6 +86,23 @@ test "selected manifest ships only selected modules" {
     assert_ne(js.index_of("localStorage"), -1)
     assert_ne(js.index_of("RelativeTimeFormat"), -1)
     assert_eq(js.index_of("navigator.clipboard"), -1)
+    assert_eq(js.index_of("history.pushState"), -1)
+}
+
+test "prefetch is opt-in, deduplicated, and independent of navigation" {
+    let hint = lumen_prefetch("/reports?range=week&team=core")
+    assert_ne(hint.index_of("rel=\"prefetch\""), -1)
+    assert_ne(hint.index_of("range=week&amp;team=core"), -1)
+    assert_eq(_lumen_scan_directives(hint).len(), 0)
+
+    let anchor = lumen_prefetch_link("/reports", "Reports")
+    let actions = _lumen_scan_directives(anchor)
+    assert_eq(actions.len(), 1)
+    assert_eq(actions[0], "prefetch")
+    let js = _lumen_client_js_with_manifest(actions)
+    assert_ne(js.index_of("new Set"), -1)
+    assert_ne(js.index_of("a.origin!==location.origin"), -1)
+    assert_eq(js.index_of("preventDefault"), -1)
     assert_eq(js.index_of("history.pushState"), -1)
 }
 

@@ -298,6 +298,7 @@ business rules still belong in Varian handlers.
 | `data-lumen-media="lazy\|lightbox\|autoplay"` | Browser-native media behavior |
 | `data-lumen-window="online\|theme\|resize"` | Reflect browser/window state as classes or CSS variables |
 | `data-lumen-nav` | Same-origin History API navigation, reported to the server |
+| `data-lumen-prefetch` | Prefetch a same-origin document on pointer or keyboard intent without intercepting navigation |
 | `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
 | `data-lumen-anchor="#target"` | Position a popover below an anchor element |
 | `data-lumen-inview="load_more"` | Report viewport entry to a Varian handler |
@@ -310,6 +311,12 @@ business rules still belong in Varian handlers.
 latency escape hatch for tabs, accordions, and menus. Server state remains authoritative.
 Event-producing directives share the core's reconnect-safe delivery behavior, so an event
 raised during a short socket interruption is queued and flushed after reconnection.
+
+For known likely destinations, `lumen_prefetch(href)` emits a native
+`<link rel="prefetch" as="document">` and adds zero JavaScript. For contextual links,
+`lumen_prefetch_link(href, content)` preserves an ordinary resilient anchor and emits the
+small intent-prefetch action only when such a link appears. Repeated hover/focus intent is
+deduplicated and cross-origin destinations are left entirely to normal navigation.
 
 ### Lumen UI (Component Registry)
 
