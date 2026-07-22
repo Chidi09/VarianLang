@@ -279,6 +279,11 @@ absent, and a component without `<client>` emits no island JavaScript. Multiple 
 retain independent policies. Invalid policies and missing media queries fail during
 compilation.
 
+The body is emitted verbatim and may declare `lang="js"` or `lang="javascript"`.
+Lumen deliberately rejects `lang="ts"`: it does not disguise regular-expression removal
+as a TypeScript compiler. Precompile external TypeScript to JavaScript, then embed or serve
+the resulting JavaScript explicitly.
+
 The generated script runs once and is left untouched by morphing (`cloneNode` and
 `innerHTML` do not re-run scripts). This is the *honest* island—real client code where
 you ask for it, while the rest remains server-driven. Lumen deliberately does **not**

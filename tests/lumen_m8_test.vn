@@ -84,4 +84,13 @@ test "invalid client activation contracts fail at compile time" {
     let base = "<template><div></div></template><script>fn state() \{ return \{\} \}</script>"
     assert_throws(| | { lumen_compile_source("BadPolicy", base + "<client when=\"hover\">x()</client>") })
     assert_throws(| | { lumen_compile_source("BadMedia", base + "<client when=\"media\">x()</client>") })
+    assert_throws(| | { lumen_compile_source("BadLang", base + "<client lang=\"ts\">const x: string = 'x'</client>") })
+}
+
+test "client JavaScript is emitted verbatim without regex rewriting" {
+    let src = "<template><div>safe</div></template>" +
+              "<script>fn state() \{ return \{\} \}</script>" +
+              "<client lang=\"js\">const label = ': string'; window.label = label;</client>"
+    let compiled = lumen_compile_source("VerbatimClient", src)
+    assert_ne(compiled.index_of("const label = ': string'; window.label = label;"), -1)
 }

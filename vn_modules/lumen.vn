@@ -925,14 +925,6 @@ fn lumen_compile_source(name, lumen_src) {
         }
     }
 
-    fn _ts_strip(code) {
-        code = regex.replace("interface[[:space:]]+[^{]+\\{[^}]*\\}", code, "")
-        code = regex.replace("type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[^;]+;", code, "")
-        code = regex.replace(":[[:space:]]*(string|number|boolean|any|void|unknown)", code, "")
-        code = regex.replace("[[:space:]]+as[[:space:]]+[A-Za-z0-9_]+", code, "")
-        return code
-    }
-
     // ─── Client islands ───
     // Browser code remains explicit. Activation wrappers are emitted only for
     // the policies an author requests; a component without <client> ships none.
@@ -947,9 +939,15 @@ fn lumen_compile_source(name, lumen_src) {
 
         let client_attrs = lumen_src.substring(client_start + 7, client_open_end)
         let attrs = _lumen_parse_attrs(client_attrs)
+        let client_lang = _validate.get_field(attrs, "lang")
+        if client_lang != null and client_lang != "" and client_lang != "js" and client_lang != "javascript" {
+            throw("Lumen: <client> accepts browser JavaScript; precompile '" + client_lang + "' before embedding it in " + name)
+        }
         let policy = _validate.get_field(attrs, "when")
         if policy == null or policy == "" { policy = "load" }
-        let client_js = _ts_strip(lumen_src.substring(client_open_end + 1, client_end))
+        // Verbatim by contract. Lumen must not pretend a few regular
+        // expressions are a JavaScript or TypeScript compiler.
+        let client_js = lumen_src.substring(client_open_end + 1, client_end)
         let activated = client_js
 
         if policy == "idle" {

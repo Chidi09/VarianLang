@@ -498,11 +498,14 @@ browser JS. It's embedded as a <code>&lt;script&gt;</code> that runs once on fir
 untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-run scripts). This is the <em>honest</em>
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
-reintroduces hydration-mismatch bugs.</Text>
+reintroduces hydration-mismatch bugs. Client bodies are emitted verbatim and accept
+<code>lang="js"</code> or <code>lang="javascript"</code>. Lumen rejects <code>lang="ts"</code> instead of
+pretending a regex rewrite is a TypeScript compiler; precompile TypeScript before embedding it.</Text>
 <Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS &amp; event modifiers</Heading>
 <Text>When a page opts into live behavior, Lumen emits a small client-side action runtime called
 <strong>LumenJS</strong>. It is not a framework you write against — it is a transport layer
-that Lumen emits on your behalf. The user never writes JS; they write Varian.
+that Lumen emits on your behalf. Normal live components stay in Varian; JavaScript is an
+explicit escape hatch only for a requested client island.
 LumenJS handles WebSocket reconnect with exponential backoff, event delegation,
 DOM morphing, and a small set of opt-in browser API shims.</Text>
 <Text><strong>Event modifiers</strong> can be attached to any <code>@event</code> handler using the
