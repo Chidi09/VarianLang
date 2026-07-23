@@ -1834,66 +1834,315 @@ static void handle_hover(int id, const char *json, const char *uri) {
 /* ────────────────────────────────────────────────
  *  handle_completion
  * ──────────────────────────────────────────────── */
+typedef struct {
+    char *buf;
+    size_t len;
+    size_t cap;
+    int count;
+} CompletionList;
+
+static void completion_init(CompletionList *cl) {
+    cl->cap = 8192;
+    cl->len = 0;
+    cl->count = 0;
+    cl->buf = malloc(cl->cap);
+    cl->buf[0] = '\0';
+}
+
+static bool completion_has(CompletionList *cl, const char *label) {
+    if (!cl->buf || !label) return false;
+    char pattern[256];
+    char *lbl_enc = encode_json_string(label);
+    snprintf(pattern, sizeof(pattern), "\"label\":%s", lbl_enc);
+    free(lbl_enc);
+    return strstr(cl->buf, pattern) != NULL;
+}
+
+static void completion_add(CompletionList *cl, const char *label, int kind, const char *detail, const char *doc) {
+    if (!label || !label[0]) return;
+    if (completion_has(cl, label)) return;
+
+    char *lbl_enc = encode_json_string(label);
+    char *dtl_enc = detail ? encode_json_string(detail) : NULL;
+    char *doc_enc = doc ? encode_json_string(doc) : NULL;
+
+    size_t needed = strlen(lbl_enc) + (dtl_enc ? strlen(dtl_enc) : 0) + (doc_enc ? strlen(doc_enc) : 0) + 256;
+    char *item_buf = malloc(needed);
+
+    int n = snprintf(item_buf, needed, "%s{\"label\":%s,\"kind\":%d",
+                     cl->count > 0 ? "," : "", lbl_enc, kind);
+    if (dtl_enc) {
+        n += snprintf(item_buf + n, needed - n, ",\"detail\":%s", dtl_enc);
+    }
+    if (doc_enc) {
+        n += snprintf(item_buf + n, needed - n, ",\"documentation\":{\"kind\":\"markdown\",\"value\":%s}", doc_enc);
+    }
+    snprintf(item_buf + n, needed - n, "}");
+
+    size_t item_len = strlen(item_buf);
+    if (cl->len + item_len + 2 >= cl->cap) {
+        cl->cap = (cl->len + item_len + 512) * 2;
+        cl->buf = realloc(cl->buf, cl->cap);
+    }
+    strcat(cl->buf, item_buf);
+    cl->len += item_len;
+    cl->count++;
+
+    free(lbl_enc);
+    if (dtl_enc) free(dtl_enc);
+    if (doc_enc) free(doc_enc);
+    free(item_buf);
+}
+
+static void completion_free(CompletionList *cl) {
+    if (cl->buf) free(cl->buf);
+}
+
 static void handle_completion(int id, const char *json, const char *uri) {
-    (void)json;
-    (void)uri;
+    const char *text = get_doc(uri);
+    int line_lsp = extract_json_int(json, "line");
+    int char_lsp = extract_json_int(json, "character");
 
-    /* Built‑in keywords and type names */
-    const char *keywords[] = {
-        "let", "const", "fn", "return", "if", "else", "while", "for", "in",
-        "loop", "match", "case", "struct", "enum", "actor", "impl", "trait",
-        "type", "use", "pub", "mut", "async", "await", "break", "continue",
-        "comptime", "try", "catch", "assert", "test", "true", "false", "null",
-        "bool", "int", "float", "string", "byte", "void", "self",
-        /* Standard library modules */
-        "http", "regex", "io", "math", "env", "time", "json", "string", "sqlite",
-        "postgres", "redis", "auth", "validate", "sanitize", "crypto", "zenith",
-        /* Common methods */
-        "len", "push", "get", "post", "query", "split", "trim", "replace",
-        "contains", "starts_with", "ends_with", "index_of", "last_index_of",
-        "substring", "upper", "lower",
-        "read_text", "write_text", "read_bytes", "write_bytes",
-        "exists", "delete", "list_dir", "mkdir",
-        /* Zenith specific */
-        "serve", "serve_tls", "middleware", "json", "html", "text", "param", "status", "redirect",
-    };
-    int kw_count = sizeof(keywords) / sizeof(keywords[0]);
+    CompletionList cl;
+    completion_init(&cl);
 
-    /* Build JSON array of completion items */
-    size_t cap = 8192;
-    size_t len = 0;
-    char *items = malloc(cap);
-    items[0] = '\0';
-
-    for (int i = 0; i < kw_count; i++) {
-        char *label_enc = encode_json_string(keywords[i]);
-        char buf[512];
-        int kind = 14; /* 14 = Keyword in LSP */
-        if (i >= 33 && i <= 38) kind = 6; /* type name → 6 = Class */
-        else if (strcmp(keywords[i], "true") == 0 || strcmp(keywords[i], "false") == 0 || strcmp(keywords[i], "null") == 0) kind = 21; /* 21 = Constant */
-        else if (strcmp(keywords[i], "self") == 0) kind = 10; /* 10 = Variable */
-
-        snprintf(buf, sizeof(buf), "%s{\"label\":%s,\"kind\":%d}", (len > 0 ? "," : ""), label_enc, kind);
-        free(label_enc);
-
-        size_t blen = strlen(buf);
-        if (len + blen + 2 >= cap) {
-            cap *= 2;
-            items = realloc(items, cap);
-        }
-        strcat(items, buf);
-        len += blen;
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"isIncomplete\":false,\"items\":[]}}", id);
+        send_response(buf);
+        completion_free(&cl);
+        return;
     }
 
-    size_t out_cap = len + 256;
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
+
+    /* Extract line text up to char_lsp */
+    const char *p = text;
+    for (int i = 0; i < line_lsp && *p; p++) {
+        if (*p == '\n') i++;
+    }
+    const char *line_start = p;
+    const char *line_end = strchr(p, '\n');
+    int line_len = line_end ? (int)(line_end - line_start) : (int)strlen(line_start);
+    int cursor_col = char_lsp < line_len ? char_lsp : line_len;
+
+    char line_sub[512] = {0};
+    if (cursor_col > 0 && cursor_col < (int)sizeof(line_sub)) {
+        strncpy(line_sub, line_start, cursor_col);
+        line_sub[cursor_col] = '\0';
+    }
+
+    /* Check context 1: after `use` */
+    const char *use_ptr = strstr(line_sub, "use");
+    if (use_ptr && (use_ptr == line_sub || isspace(*(use_ptr - 1)))) {
+        /* Module completion */
+        static const char *modules[] = {
+            "array", "async", "auth", "ai", "b64", "builtin", "cache", "color", "config",
+            "crypto", "csv", "db", "env", "event", "fs", "hash", "http", "io", "json",
+            "jwt", "math", "net", "path", "pg", "process", "queue", "redis", "regex",
+            "sanitize", "shield", "sqlite", "testing"
+        };
+        int num_mods = sizeof(modules) / sizeof(modules[0]);
+        for (int i = 0; i < num_mods; i++) {
+            completion_add(&cl, modules[i], 9, "module", "Varian standard module");
+        }
+    } else {
+        /* Check context 2: after `.` */
+        char *dot_pos = strrchr(line_sub, '.');
+        if (dot_pos) {
+            /* Dot completion */
+            int dot_idx = dot_pos - line_sub;
+            int start_idx = dot_idx - 1;
+            while (start_idx >= 0 && (isalnum(line_sub[start_idx]) || line_sub[start_idx] == '_')) {
+                start_idx--;
+            }
+            start_idx++;
+            char var_name[128] = {0};
+            if (dot_idx - start_idx > 0 && dot_idx - start_idx < (int)sizeof(var_name)) {
+                strncpy(var_name, line_sub + start_idx, dot_idx - start_idx);
+            }
+
+            const char *recv_type = NULL;
+            if (program && var_name[0] && arena) {
+                AstNode *vnode = ast_identifier(arena, (SourceLoc){0}, var_name);
+                recv_type = resolve_receiver_type(program, vnode);
+            }
+            if (!recv_type && var_name[0]) recv_type = var_name;
+
+            bool type_matched = false;
+            if (recv_type) {
+                for (size_t i = 0; i < native_docs_count; i++) {
+                    const char *nd = native_docs[i].name;
+                    const char *dot = strchr(nd, '.');
+                    if (dot) {
+                        size_t type_len = dot - nd;
+                        if (strncmp(recv_type, nd, type_len) == 0 && recv_type[type_len] == '\0') {
+                            type_matched = true;
+                            completion_add(&cl, dot + 1, 2, native_docs[i].signature, native_docs[i].description);
+                        }
+                    }
+                }
+                if (program) {
+                    AstNode *sdecl = find_decl(program, recv_type);
+                    if (sdecl) {
+                        if (sdecl->kind == NODE_STRUCT_DECL) {
+                            type_matched = true;
+                            for (int i = 0; i < sdecl->struct_decl.field_count; i++) {
+                                completion_add(&cl, sdecl->struct_decl.field_names[i], 5, "field", NULL);
+                            }
+                        } else if (sdecl->kind == NODE_SCHEMA_DECL) {
+                            type_matched = true;
+                            for (int i = 0; i < sdecl->schema_decl.field_count; i++) {
+                                char tbuf[128] = {0};
+                                if (sdecl->schema_decl.field_types[i])
+                                    type_render(sdecl->schema_decl.field_types[i], tbuf, sizeof(tbuf));
+                                completion_add(&cl, sdecl->schema_decl.field_names[i], 5, tbuf[0] ? tbuf : "field", NULL);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!type_matched) {
+                for (size_t i = 0; i < native_docs_count; i++) {
+                    const char *nd = native_docs[i].name;
+                    const char *dot = strchr(nd, '.');
+                    if (dot) {
+                        completion_add(&cl, dot + 1, 2, native_docs[i].signature, native_docs[i].description);
+                    }
+                }
+                if (program && program->kind == NODE_PROGRAM) {
+                    for (int i = 0; i < program->program.stmt_count; i++) {
+                        AstNode *s = program->program.stmts[i];
+                        if (!s) continue;
+                        if (s->kind == NODE_STRUCT_DECL) {
+                            for (int j = 0; j < s->struct_decl.field_count; j++) {
+                                completion_add(&cl, s->struct_decl.field_names[j], 5, "field", NULL);
+                            }
+                        } else if (s->kind == NODE_SCHEMA_DECL) {
+                            for (int j = 0; j < s->schema_decl.field_count; j++) {
+                                completion_add(&cl, s->schema_decl.field_names[j], 5, "field", NULL);
+                            }
+                        }
+                    }
+                }
+            }
+        } else {
+            /* Context 3 & 4: Call parameter completion + Statement/Expression completion */
+
+            /* Check if inside call parameters */
+            char *lparen = strrchr(line_sub, '(');
+            if (lparen) {
+                int lp_idx = lparen - line_sub;
+                int start_idx = lp_idx - 1;
+                while (start_idx >= 0 && (isalnum(line_sub[start_idx]) || line_sub[start_idx] == '_')) {
+                    start_idx--;
+                }
+                start_idx++;
+                char callee_name[128] = {0};
+                if (lp_idx - start_idx > 0 && lp_idx - start_idx < (int)sizeof(callee_name)) {
+                    strncpy(callee_name, line_sub + start_idx, lp_idx - start_idx);
+                }
+                if (callee_name[0] && program) {
+                    AstNode *cdecl = find_decl(program, callee_name);
+                    if (cdecl && cdecl->kind == NODE_FN_DECL) {
+                        for (int i = 0; i < cdecl->fn_decl.param_count; i++) {
+                            if (cdecl->fn_decl.param_names[i]) {
+                                completion_add(&cl, cdecl->fn_decl.param_names[i], 6, "parameter", "Function parameter");
+                            }
+                        }
+                    }
+                }
+            }
+
+            /* Statement / Expression context: Keywords */
+            static const char *kw_list[] = {
+                "let", "const", "fn", "return", "if", "else", "while", "for", "in",
+                "loop", "match", "case", "struct", "schema", "enum", "actor", "impl", "trait",
+                "type", "use", "pub", "mut", "async", "await", "break", "continue",
+                "comptime", "try", "catch", "assert", "test", "true", "false", "null",
+                "bool", "int", "float", "string", "byte", "void", "self"
+            };
+            int kw_num = sizeof(kw_list) / sizeof(kw_list[0]);
+            for (int i = 0; i < kw_num; i++) {
+                int kind = 14;
+                if (i >= 33 && i <= 38) kind = 6;
+                else if (strcmp(kw_list[i], "true") == 0 || strcmp(kw_list[i], "false") == 0 || strcmp(kw_list[i], "null") == 0) kind = 21;
+                else if (strcmp(kw_list[i], "self") == 0) kind = 10;
+
+                char *kdoc = lookup_language_doc(kw_list[i], false);
+                completion_add(&cl, kw_list[i], kind, "keyword", kdoc);
+                if (kdoc) free(kdoc);
+            }
+
+            /* In-scope symbols from program */
+            if (program && program->kind == NODE_PROGRAM) {
+                for (int i = 0; i < program->program.stmt_count; i++) {
+                    AstNode *s = program->program.stmts[i];
+                    if (!s) continue;
+                    if (s->kind == NODE_FN_DECL) {
+                        if (s->fn_decl.name && !s->fn_decl.is_module_init) {
+                            char *sig = decl_signature(s);
+                            char *doc = extract_docstring(text, s->loc.line, line_offset);
+                            completion_add(&cl, s->fn_decl.name, 3, sig, doc);
+                            if (sig) free(sig);
+                            if (doc) free(doc);
+                        }
+                    } else if (s->kind == NODE_STRUCT_DECL) {
+                        char *sig = decl_signature(s);
+                        char *doc = extract_docstring(text, s->loc.line, line_offset);
+                        completion_add(&cl, s->struct_decl.name, 7, sig, doc);
+                        if (sig) free(sig);
+                        if (doc) free(doc);
+                    } else if (s->kind == NODE_SCHEMA_DECL) {
+                        char *sig = decl_signature(s);
+                        char *doc = extract_docstring(text, s->loc.line, line_offset);
+                        completion_add(&cl, s->schema_decl.name, 7, sig, doc);
+                        if (sig) free(sig);
+                        if (doc) free(doc);
+                    } else if (s->kind == NODE_ENUM_DECL) {
+                        char *sig = decl_signature(s);
+                        char *doc = extract_docstring(text, s->loc.line, line_offset);
+                        completion_add(&cl, s->enum_decl.name, 13, sig, doc);
+                        if (sig) free(sig);
+                        if (doc) free(doc);
+                    } else if (s->kind == NODE_ACTOR_DECL) {
+                        char *sig = decl_signature(s);
+                        char *doc = extract_docstring(text, s->loc.line, line_offset);
+                        completion_add(&cl, s->actor_decl.name, 7, sig, doc);
+                        if (sig) free(sig);
+                        if (doc) free(doc);
+                    } else if (s->kind == NODE_LET_DECL || s->kind == NODE_CONST_DECL) {
+                        for (int j = 0; j < s->let_decl.name_count; j++) {
+                            char *sig = decl_signature(s);
+                            completion_add(&cl, s->let_decl.names[j], 6, sig, NULL);
+                            if (sig) free(sig);
+                        }
+                    }
+                }
+            }
+
+            /* Native top-level functions */
+            for (size_t i = 0; i < native_docs_count; i++) {
+                if (!strchr(native_docs[i].name, '.')) {
+                    completion_add(&cl, native_docs[i].name, 3, native_docs[i].signature, native_docs[i].description);
+                }
+            }
+        }
+    }
+
+    size_t out_cap = cl.len + 256;
     char *out_json = malloc(out_cap);
     snprintf(out_json, out_cap,
              "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"isIncomplete\":false,\"items\":[%s]}}",
-             id, items);
+             id, cl.buf);
     send_response(out_json);
 
-    free(items);
     free(out_json);
+    completion_free(&cl);
+    if (arena) arena_destroy(arena);
 }
 
 /* ────────────────────────────────────────────────

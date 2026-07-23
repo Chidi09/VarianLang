@@ -62,9 +62,30 @@ class LspClient:
         self.send(req)
 
     def close(self):
-        self.notify("exit")
-        self.proc.terminate()
-        self.proc.wait()
+        if self.proc and self.proc.poll() is None:
+            try:
+                self.notify("exit")
+            except Exception:
+                pass
+            try:
+                if self.proc.stdin:
+                    self.proc.stdin.close()
+            except Exception:
+                pass
+            try:
+                self.proc.wait(timeout=1.0)
+            except Exception:
+                try:
+                    self.proc.kill()
+                    self.proc.wait()
+                except Exception:
+                    pass
+            if self.proc.stdout:
+                try: self.proc.stdout.close()
+                except Exception: pass
+            if self.proc.stderr:
+                try: self.proc.stderr.close()
+                except Exception: pass
 
 def test_parameter_provenance():
     client = LspClient()
@@ -147,10 +168,76 @@ def test_hover_depth():
     })
     val_struct = hover_struct["result"]["contents"]["value"]
     assert "struct Point {" in val_struct and "x" in val_struct, f"Struct fields missing: {val_struct}"
+    client.close()
+
+def test_completion():
+    client = LspClient()
+    res = client.call("initialize", {"capabilities": {}})
+    assert res and "result" in res
+    
+    doc_uri = "file:///test_comp.vn"
+    code = (
+        "use \"math\"\n"
+        "fn calculate(width: int, height: int) -> int {\n"
+        "    let msg = \"hello\";\n"
+        "    msg.\n"
+        "    calculate(\n"
+        "}\n"
+    )
+    client.notify("textDocument/didOpen", {
+        "textDocument": {
+            "uri": doc_uri,
+            "languageId": "varian",
+            "version": 1,
+            "text": code
+        }
+    })
+    
+    # 1. Module completion after use "
+    print("Testing use completion...")
+    comp_use = client.call("textDocument/completion", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 0, "character": 5}
+    })
+    items_use = [item["label"] for item in comp_use["result"]["items"]]
+    assert "math" in items_use or "json" in items_use, f"Module completion failed: {comp_use}"
+    print("Use completion OK")
+    
+    # 2. Dot completion on string
+    print("Testing dot completion...")
+    comp_dot = client.call("textDocument/completion", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 3, "character": 8}
+    })
+    items_dot = [item["label"] for item in comp_dot["result"]["items"]]
+    assert "len" in items_dot or "push" in items_dot, f"Dot completion failed: {comp_dot}"
+    print("Dot completion OK")
+    
+    # 3. Call parameter completion
+    print("Testing call completion...")
+    comp_call = client.call("textDocument/completion", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 4, "character": 14}
+    })
+    items_call = [item["label"] for item in comp_call["result"]["items"]]
+    assert "width" in items_call and "height" in items_call, f"Parameter completion failed: {comp_call}"
+    print("Call completion OK")
+    
+    # 4. Statement completion
+    print("Testing stmt completion...")
+    comp_stmt = client.call("textDocument/completion", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 1, "character": 0}
+    })
+    items_stmt = {item["label"]: item for item in comp_stmt["result"]["items"]}
+    assert "let" in items_stmt and "detail" in items_stmt["let"], f"Statement completion failed: {comp_stmt}"
+    print("Stmt completion OK")
     
     client.close()
 
 if __name__ == "__main__":
     test_parameter_provenance()
     test_hover_depth()
-    print("All LSP hover tests passed!")
+    test_completion()
+    print("All LSP tests passed!")
+    sys.exit(0)
