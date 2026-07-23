@@ -787,12 +787,9 @@ static int type_render(const Type *t, char *out, size_t cap) {
  * bare names wherever an annotation is missing or unrenderable.
  *
  * KNOWN LIMITATION: parser.c:611 gives every UNANNOTATED parameter a synthetic
- * `int` type, and that synthetic type is indistinguishable from a written one
- * by the time it reaches the AST. So `fn plain(a, b)` renders as
- * `fn plain(a: int, b: int)` — a type the author never wrote and which nothing
- * enforces. Fixing this properly requires recording annotation provenance at
- * parse time (a parallel `bool *param_type_explicit` on fn_decl); it cannot be
- * recovered here. */
+/* Render parameters. Parameter types are only rendered if the author explicitly
+ * wrote a type annotation (tracked via node->fn_decl.param_type_explicit).
+ * Unannotated parameters render bare. */
 static void params_render(AstNode *node, char *out, size_t cap) {
     out[0] = '\0';
     size_t used = 0;
@@ -809,7 +806,9 @@ static void params_render(AstNode *node, char *out, size_t cap) {
         if (!pname) continue;
 
         char tbuf[128] = {0};
-        if (have_types)
+        bool is_explicit = node->fn_decl.param_type_explicit ?
+                            node->fn_decl.param_type_explicit[i] : false;
+        if (have_types && is_explicit)
             type_render(fn_type->function.param_types[i], tbuf, sizeof(tbuf));
 
         int n = snprintf(out + used, cap - used, "%s%s%s%s",

@@ -586,6 +586,7 @@ static AstNode *parse_fn_decl(Parser *parser) {
     /* Parameters */
     char *param_names[64];
     Type *param_types[64];
+    bool param_type_explicit[64];
     int param_count = 0;
 
     consume(parser, TOKEN_LPAREN, "Expected '(' after function name");
@@ -607,8 +608,10 @@ static AstNode *parse_fn_decl(Parser *parser) {
             Type *pt = NULL;
             if (match(parser, TOKEN_COLON)) {
                 pt = parse_type(parser);
+                param_type_explicit[param_count] = true;
             } else {
                 pt = type_primitive(parser->arena, PRIMITIVE_INT); /* default */
+                param_type_explicit[param_count] = false;
             }
             param_types[param_count] = pt;
             param_count++;
@@ -670,7 +673,7 @@ static AstNode *parse_fn_decl(Parser *parser) {
     parser_register_function(parser, name, param_names, param_count);
 
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
-                        param_names, param_count,
+                        param_names, param_count, param_type_explicit,
                         type_params, type_param_count,
                         body, false, false, false, NULL,
                         NULL, NULL, 0);
@@ -1235,6 +1238,7 @@ static AstNode *parse_actor_decl(Parser *parser) {
             consume(parser, TOKEN_LPAREN, "Expected '(' after method name");
             char *param_names[64];
             Type *param_types[64];
+            bool param_type_explicit[64];
             int param_count = 0;
 
             if (!check(parser, TOKEN_RPAREN)) {
@@ -1244,10 +1248,13 @@ static AstNode *parse_actor_decl(Parser *parser) {
                     advance(parser);
                     param_names[param_count] = token_strdup(&parser->previous);
                     Type *pt = NULL;
-                    if (match(parser, TOKEN_COLON))
+                    if (match(parser, TOKEN_COLON)) {
                         pt = parse_type(parser);
-                    else
+                        param_type_explicit[param_count] = true;
+                    } else {
                         pt = type_primitive(parser->arena, PRIMITIVE_INT);
+                        param_type_explicit[param_count] = false;
+                    }
                     param_types[param_count] = pt;
                     param_count++;
                 } while (match(parser, TOKEN_COMMA));
@@ -1287,7 +1294,7 @@ static AstNode *parse_actor_decl(Parser *parser) {
             }
 
             AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
-                                param_names, param_count, NULL, 0,
+                                param_names, param_count, param_type_explicit, NULL, 0,
                                 body, false, false, true, name,
                                 NULL, NULL, 0);
             for (int i = 0; i < param_count; i++)
@@ -1611,6 +1618,7 @@ static AstNode *parse_impl_block(Parser *parser) {
 
         char *param_names[64];
         Type *param_types[64];
+        bool param_type_explicit[64];
         int param_count = 0;
 
         if (!check(parser, TOKEN_RPAREN)) {
@@ -1620,10 +1628,13 @@ static AstNode *parse_impl_block(Parser *parser) {
                 advance(parser);
                 param_names[param_count] = token_strdup(&parser->previous);
                 Type *pt = NULL;
-                if (match(parser, TOKEN_COLON))
+                if (match(parser, TOKEN_COLON)) {
                     pt = parse_type(parser);
-                else
+                    param_type_explicit[param_count] = true;
+                } else {
                     pt = type_primitive(parser->arena, PRIMITIVE_INT);
+                    param_type_explicit[param_count] = false;
+                }
                 param_types[param_count] = pt;
                 param_count++;
             } while (match(parser, TOKEN_COMMA));
@@ -1664,7 +1675,7 @@ static AstNode *parse_impl_block(Parser *parser) {
         }
 
         AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
-                            param_names, param_count, NULL, 0,
+                            param_names, param_count, param_type_explicit, NULL, 0,
                             body, false, false, true, type_name,
                             NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
@@ -2638,7 +2649,7 @@ static AstNode *parse_primary(Parser *parser) {
         Type *fn_type = type_function(parser->arena, param_type_list, param_count, void_type);
 
         AstNode *fn = ast_fn_decl(parser->arena, loc, "__lambda__", fn_type,
-                                  param_names, param_count, NULL, 0,
+                                  param_names, param_count, NULL, NULL, 0,
                                   block, false, false, false, NULL,
                                   NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
@@ -2891,7 +2902,7 @@ AstNode *parser_parse(Parser *parser) {
 
                         /* Synthesize fn declaration */
                         AstNode *fn_decl_node = ast_fn_decl(parser->arena, loc, mangled_name, NULL,
-                                                           NULL, 0, NULL, 0,
+                                                           NULL, 0, NULL, NULL, 0,
                                                            body_block, false, false, false, NULL,
                                                            NULL, NULL, 0);
                         fn_decl_node->fn_decl.is_module_init = true;

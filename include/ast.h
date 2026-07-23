@@ -478,6 +478,7 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
                       AstNode *initializer, bool is_mutable, Type *type);
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
+                     const bool *param_type_explicit,
                      char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async,
                      bool is_method, const char *impl_type,

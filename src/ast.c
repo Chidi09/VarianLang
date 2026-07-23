@@ -100,6 +100,7 @@ AstNode *ast_let_decl(Arena *arena, SourceLoc loc, char **names, int name_count,
 
 AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
                      Type *fn_type, char **param_names, int param_count,
+                     const bool *param_type_explicit,
                      char **type_params, int type_param_count,
                      AstNode *body, bool is_pub, bool is_async,
                      bool is_method, const char *impl_type,
@@ -119,9 +120,12 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     } else {
         node->fn_decl.param_names = NULL;
     }
-    /* Populated by the caller where it knows; NULL means "no information",
-     * which consumers must treat as unannotated rather than as annotated. */
-    node->fn_decl.param_type_explicit = NULL;
+    if (param_count > 0 && param_type_explicit) {
+        node->fn_decl.param_type_explicit = (bool *)arena_alloc(arena, sizeof(bool) * param_count);
+        memcpy(node->fn_decl.param_type_explicit, param_type_explicit, sizeof(bool) * param_count);
+    } else {
+        node->fn_decl.param_type_explicit = NULL;
+    }
     node->fn_decl.type_param_count = type_param_count;
     node->fn_decl.type_params = NULL;
     (void)type_params;
