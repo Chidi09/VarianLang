@@ -91,7 +91,8 @@ The language server is built into the binary (`vn lsp`).
 - **VS Code** — install the packaged extension: `code --install-extension editors/vscode/varian-0.1.0.vsix`
   (syntax highlighting, hover, go-to-definition, diagnostics, formatting, completion). It launches
   `vn lsp`, so make sure `vn` is on your `PATH`.
-- **Zed** — install the dev extension in `editors/zed-varian/`.
+- **Zed** — clone [Chidi09/zed-varian](https://github.com/Chidi09/zed-varian) and
+  install it via the command palette → `zed: install dev extension`.
 - **Neovim / other** — point any LSP client at the `vn lsp` command (stdio transport).
 
 ## Quick start
