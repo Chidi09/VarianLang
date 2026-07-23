@@ -235,9 +235,54 @@ def test_completion():
     
     client.close()
 
+def test_signature_help():
+    print("Testing signature help...")
+    client = LspClient()
+    res = client.call("initialize", {"capabilities": {}})
+    assert res and "result" in res
+
+    doc_uri = "file:///test_sig.vn"
+    code = (
+        "/// Calculate area\n"
+        "fn area(width: int, height: int) -> int { return width * height; }\n"
+        "fn main() {\n"
+        "    let a = area(10, 20);\n"
+        "}\n"
+    )
+    client.notify("textDocument/didOpen", {
+        "textDocument": {
+            "uri": doc_uri,
+            "languageId": "varian",
+            "version": 1,
+            "text": code
+        }
+    })
+
+    # 1. Parameter 0 (before comma)
+    sig0 = client.call("textDocument/signatureHelp", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 3, "character": 17}
+    })
+    assert sig0 and "result" in sig0 and sig0["result"] is not None, f"Signature help failed: {sig0}"
+    assert sig0["result"]["activeParameter"] == 0, f"Expected param 0, got {sig0['result']['activeParameter']}"
+    params0 = sig0["result"]["signatures"][0]["parameters"]
+    assert len(params0) == 2 and params0[0]["label"] == "width: int"
+
+    # 2. Parameter 1 (after comma)
+    sig1 = client.call("textDocument/signatureHelp", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 3, "character": 21}
+    })
+    assert sig1 and "result" in sig1 and sig1["result"] is not None, f"Signature help failed: {sig1}"
+    assert sig1["result"]["activeParameter"] == 1, f"Expected param 1, got {sig1['result']['activeParameter']}"
+
+    print("Signature help OK")
+    client.close()
+
 if __name__ == "__main__":
     test_parameter_provenance()
     test_hover_depth()
     test_completion()
+    test_signature_help()
     print("All LSP tests passed!")
     sys.exit(0)

@@ -2690,7 +2690,7 @@ static void handle_signature_help(int id, const char *json, const char *uri) {
     const char *text = get_doc(uri);
     if (!text) {
         char buf[256];
-        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
         return;
     }
@@ -2701,55 +2701,189 @@ static void handle_signature_help(int id, const char *json, const char *uri) {
     int line_offset = 0;
     Arena *arena = NULL;
     AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
-    if (!program) {
+
+    /* Compute cursor byte offset in text */
+    int cur_line = 0;
+    const char *p = text;
+    while (*p && cur_line < line_lsp) {
+        if (*p == '\n') cur_line++;
+        p++;
+    }
+    int cur_col = 0;
+    while (*p && *p != '\n' && cur_col < char_lsp) {
+        p++;
+        cur_col++;
+    }
+    int cursor_offset = (int)(p - text);
+
+    /* Move backward from cursor_offset - 1 to find opening '(' of call site */
+    int open_paren = -1;
+    int paren_depth = 0;
+    for (int i = cursor_offset - 1; i >= 0; i--) {
+        char c = text[i];
+        if (c == ')') {
+            paren_depth++;
+        } else if (c == '(') {
+            if (paren_depth > 0) {
+                paren_depth--;
+            } else {
+                open_paren = i;
+                break;
+            }
+        }
+    }
+
+    if (open_paren < 0) {
         char buf[256];
-        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
+        if (arena) arena_destroy(arena);
         return;
     }
 
-    char *label = NULL;
-
-    /* Best-effort: scan backwards from cursor for '(' on the same line */
-    const char *line_start = text;
-    int cur_line = 0;
-    while (cur_line < line_lsp && *line_start) {
-        if (*line_start == '\n') cur_line++;
-        line_start++;
+    /* Compute activeParameter by counting top-level commas between open_paren + 1 and cursor_offset */
+    int active_param = 0;
+    int depth_p = 0, depth_b = 0, depth_k = 0;
+    bool in_str = false;
+    for (int i = open_paren + 1; i < cursor_offset; i++) {
+        char c = text[i];
+        if (c == '"' && (i == 0 || text[i - 1] != '\\')) {
+            in_str = !in_str;
+        } else if (!in_str) {
+            if (c == '(') depth_p++;
+            else if (c == ')') { if (depth_p > 0) depth_p--; }
+            else if (c == '[') depth_k++;
+            else if (c == ']') { if (depth_k > 0) depth_k--; }
+            else if (c == '{') depth_b++;
+            else if (c == '}') { if (depth_b > 0) depth_b--; }
+            else if (c == ',' && depth_p == 0 && depth_b == 0 && depth_k == 0) {
+                active_param++;
+            }
+        }
     }
 
-    if (*line_start) {
-        const char *p = line_start;
-        int col = 0;
-        const char *paren = NULL;
-        while (*p && *p != '\n' && col <= char_lsp) {
-            if (*p == '(') paren = p;
-            p++;
-            col++;
+    /* Find callee name and receiver name before open_paren */
+    int idx = open_paren - 1;
+    while (idx >= 0 && isspace((unsigned char)text[idx])) idx--;
+    int callee_end = idx;
+    while (idx >= 0 && (isalnum((unsigned char)text[idx]) || text[idx] == '_')) idx--;
+    int callee_start = idx + 1;
+
+    char callee_name[256] = {0};
+    if (callee_end >= callee_start && (callee_end - callee_start + 1) < (int)sizeof(callee_name)) {
+        strncpy(callee_name, text + callee_start, callee_end - callee_start + 1);
+    }
+
+    char recv_name[256] = {0};
+    if (idx >= 0 && text[idx] == '.') {
+        idx--;
+        while (idx >= 0 && isspace((unsigned char)text[idx])) idx--;
+        int recv_end = idx;
+        while (idx >= 0 && (isalnum((unsigned char)text[idx]) || text[idx] == '_')) idx--;
+        int recv_start = idx + 1;
+        if (recv_end >= recv_start && (recv_end - recv_start + 1) < (int)sizeof(recv_name)) {
+            strncpy(recv_name, text + recv_start, recv_end - recv_start + 1);
+        }
+    }
+
+    char *label = NULL;
+    char *doc = NULL;
+    char params_buf[1024] = {0};
+
+    if (callee_name[0]) {
+        AstNode *decl = NULL;
+        if (recv_name[0] && program) {
+            AstNode *vnode = find_decl(program, recv_name);
+            const char *recv_type = vnode ? resolve_receiver_type(program, vnode) : recv_name;
+            if (recv_type) {
+                decl = find_method_decl(program, recv_type, callee_name);
+            }
+        }
+        if (!decl && program) {
+            decl = find_decl(program, callee_name);
         }
 
-        if (paren && paren > line_start) {
-            const char *name_end = paren - 1;
-            while (name_end > line_start && isspace((unsigned char)*name_end)) name_end--;
-            const char *name_start = name_end;
-            while (name_start > line_start && (isalnum((unsigned char)*(name_start - 1)) || *(name_start - 1) == '_')) name_start--;
+        if (decl && decl->kind == NODE_FN_DECL) {
+            label = decl_signature(decl);
+            doc = extract_docstring(text, decl->loc.line, line_offset);
 
-            int name_len = (int)(name_end - name_start + 1);
-            if (name_len > 0 && name_len < 256) {
-                char name_buf[256];
-                memcpy(name_buf, name_start, name_len);
-                name_buf[name_len] = '\0';
+            int pcount = decl->fn_decl.param_count;
+            size_t pcap = 1024;
+            char *pbuf = malloc(pcap);
+            pbuf[0] = '\0';
+            size_t plen = 0;
+            const Type *fn_type = decl->fn_decl.fn_type;
 
-                AstNode *decl = find_decl(program, name_buf);
-                if (decl) {
-                    label = decl_signature(decl);
+            for (int i = 0; i < pcount; i++) {
+                char plabel[256];
+                const char *pname = decl->fn_decl.param_names ? decl->fn_decl.param_names[i] : "param";
+                bool explicit_type = decl->fn_decl.param_type_explicit ? decl->fn_decl.param_type_explicit[i] : false;
+
+                if (explicit_type && fn_type && fn_type->kind == TYPE_FUNCTION && i < fn_type->function.param_count) {
+                    char type_str[128];
+                    type_render(fn_type->function.param_types[i], type_str, sizeof(type_str));
+                    snprintf(plabel, sizeof(plabel), "%s: %s", pname, type_str);
                 } else {
-                    char *ndoc = lookup_native_doc(name_buf);
-                    if (ndoc) {
-                        label = malloc(strlen(name_buf) + 64);
-                        snprintf(label, strlen(name_buf) + 64, "fn %s(...)", name_buf);
-                        free(ndoc);
+                    snprintf(plabel, sizeof(plabel), "%s", pname);
+                }
+
+                char *plabel_enc = encode_json_string(plabel);
+                char item[512];
+                snprintf(item, sizeof(item), "%s{\"label\":%s}", i > 0 ? "," : "", plabel_enc);
+                free(plabel_enc);
+
+                if (plen + strlen(item) + 1 >= pcap) {
+                    pcap *= 2;
+                    pbuf = realloc(pbuf, pcap);
+                }
+                strcat(pbuf, item);
+                plen += strlen(item);
+            }
+            strncpy(params_buf, pbuf, sizeof(params_buf) - 1);
+            free(pbuf);
+        } else {
+            for (size_t i = 0; i < native_docs_count; i++) {
+                const char *nd = native_docs[i].name;
+                const char *dot = strchr(nd, '.');
+                const char *mname = dot ? dot + 1 : nd;
+
+                if (strcmp(mname, callee_name) == 0) {
+                    label = strdup(native_docs[i].signature);
+                    doc = strdup(native_docs[i].description);
+
+                    const char *sparen = strchr(native_docs[i].signature, '(');
+                    const char *eparen = strchr(native_docs[i].signature, ')');
+                    if (sparen && eparen && eparen > sparen + 1) {
+                        char raw_params[512] = {0};
+                        strncpy(raw_params, sparen + 1, eparen - sparen - 1);
+
+                        char *pbuf = malloc(1024);
+                        pbuf[0] = '\0';
+                        size_t plen = 0;
+                        int param_idx = 0;
+
+                        char *token = strtok(raw_params, ",");
+                        while (token) {
+                            while (isspace((unsigned char)*token)) token++;
+                            char *end = token + strlen(token) - 1;
+                            while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
+
+                            if (token[0]) {
+                                char *t_enc = encode_json_string(token);
+                                char item[512];
+                                snprintf(item, sizeof(item), "%s{\"label\":%s}", param_idx > 0 ? "," : "", t_enc);
+                                free(t_enc);
+
+                                strcat(pbuf, item);
+                                plen += strlen(item);
+                                param_idx++;
+                            }
+                            token = strtok(NULL, ",");
+                        }
+                        strncpy(params_buf, pbuf, sizeof(params_buf) - 1);
+                        free(pbuf);
                     }
+                    break;
                 }
             }
         }
@@ -2757,22 +2891,34 @@ static void handle_signature_help(int id, const char *json, const char *uri) {
 
     if (label) {
         char *label_enc = encode_json_string(label);
-        size_t out_cap = strlen(label_enc) + 256;
+        char *doc_enc = doc ? encode_json_string(doc) : NULL;
+
+        size_t out_cap = strlen(label_enc) + (doc_enc ? strlen(doc_enc) : 0) + strlen(params_buf) + 512;
         char *out_json = malloc(out_cap);
-        snprintf(out_json, out_cap,
-                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[{\"label\":%s,\"parameters\":[]}]}}",
-                 id, label_enc);
+
+        if (doc_enc) {
+            snprintf(out_json, out_cap,
+                     "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[{\"label\":%s,\"documentation\":{\"kind\":\"markdown\",\"value\":%s},\"parameters\":[%s]}],\"activeSignature\":0,\"activeParameter\":%d}}",
+                     id, label_enc, doc_enc, params_buf, active_param);
+        } else {
+            snprintf(out_json, out_cap,
+                     "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[{\"label\":%s,\"parameters\":[%s]}],\"activeSignature\":0,\"activeParameter\":%d}}",
+                     id, label_enc, params_buf, active_param);
+        }
+
         send_response(out_json);
         free(label_enc);
+        if (doc_enc) free(doc_enc);
         free(out_json);
         free(label);
+        if (doc) free(doc);
     } else {
         char buf[256];
-        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"signatures\":[]}}", id);
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
     }
 
-    arena_destroy(arena);
+    if (arena) arena_destroy(arena);
 }
 
 /* ────────────────────────────────────────────────
