@@ -100,6 +100,57 @@ def test_parameter_provenance():
     
     client.close()
 
+def test_hover_depth():
+    client = LspClient()
+    res = client.call("initialize", {"capabilities": {}})
+    assert res and "result" in res
+    
+    doc_uri = "file:///test_hover.vn"
+    code = (
+        "/// Calculate area\n"
+        "fn area(w: int, h: int) -> int { return w * h; }\n"
+        "struct Point { x: int, y: int }\n"
+        "fn main() {\n"
+        "    let a = area(10, 20);\n"
+        "    let p = Point { x: 1, y: 2 };\n"
+        "}\n"
+    )
+    client.notify("textDocument/didOpen", {
+        "textDocument": {
+            "uri": doc_uri,
+            "languageId": "varian",
+            "version": 1,
+            "text": code
+        }
+    })
+    
+    # 1. Docstring test on declaration
+    hover_area = client.call("textDocument/hover", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 1, "character": 3}
+    })
+    val_area = hover_area["result"]["contents"]["value"]
+    assert "Calculate area" in val_area, f"Docstring missing: {val_area}"
+    
+    # 2. Call site hover
+    hover_call = client.call("textDocument/hover", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 4, "character": 12}
+    })
+    val_call = hover_call["result"]["contents"]["value"]
+    assert "fn area(w: int, h: int) -> int" in val_call, f"Call signature missing: {val_call}"
+    
+    # 3. Struct literal hover lists fields
+    hover_struct = client.call("textDocument/hover", {
+        "textDocument": {"uri": doc_uri},
+        "position": {"line": 5, "character": 14}
+    })
+    val_struct = hover_struct["result"]["contents"]["value"]
+    assert "struct Point {" in val_struct and "x" in val_struct, f"Struct fields missing: {val_struct}"
+    
+    client.close()
+
 if __name__ == "__main__":
     test_parameter_provenance()
-    print("Parameter provenance tests passed!")
+    test_hover_depth()
+    print("All LSP hover tests passed!")

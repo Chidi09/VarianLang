@@ -937,36 +937,63 @@ static char *decl_signature(AstNode *node) {
     }
 }
 
-/* Walk the program's top‑level statements to find a declaration matching
- * `name`.  Returns NULL if none found. */
-static AstNode *find_decl(AstNode *program, const char *name) {
-    if (!program || program->kind != NODE_PROGRAM) return NULL;
-    for (int i = 0; i < program->program.stmt_count; i++) {
-        AstNode *s = program->program.stmts[i];
-        switch (s->kind) {
-        case NODE_FN_DECL:
-            if (strcmp(s->fn_decl.name, name) == 0) return s;
-            break;
-        case NODE_STRUCT_DECL:
-            if (strcmp(s->struct_decl.name, name) == 0) return s;
-            break;
-        case NODE_SCHEMA_DECL:
-            if (strcmp(s->schema_decl.name, name) == 0) return s;
-            break;
-        case NODE_ENUM_DECL:
-            if (strcmp(s->enum_decl.name, name) == 0) return s;
-            break;
-        case NODE_ACTOR_DECL:
-            if (strcmp(s->actor_decl.name, name) == 0) return s;
-            break;
-        case NODE_LET_DECL:
-        case NODE_CONST_DECL:
-            for (int j = 0; j < s->let_decl.name_count; j++) {
-                if (strcmp(s->let_decl.names[j], name) == 0) return s;
+/* Walk the program's statements (including inside module init functions) to find a declaration matching `name`. */
+static AstNode *find_decl(AstNode *node, const char *name) {
+    if (!node || !name) return NULL;
+    if (node->kind == NODE_PROGRAM) {
+        for (int i = 0; i < node->program.stmt_count; i++) {
+            AstNode *s = node->program.stmts[i];
+            if (!s) continue;
+            if (s->kind == NODE_FN_DECL) {
+                if (s->fn_decl.is_module_init && s->fn_decl.body) {
+                    AstNode *res = find_decl(s->fn_decl.body, name);
+                    if (res) return res;
+                }
+                if (s->fn_decl.name && strcmp(s->fn_decl.name, name) == 0) return s;
+            } else if (s->kind == NODE_STRUCT_DECL && strcmp(s->struct_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_SCHEMA_DECL && strcmp(s->schema_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_ENUM_DECL && strcmp(s->enum_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_ACTOR_DECL && strcmp(s->actor_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_TRAIT_DECL && strcmp(s->trait_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_LET_DECL || s->kind == NODE_CONST_DECL) {
+                for (int j = 0; j < s->let_decl.name_count; j++) {
+                    if (strcmp(s->let_decl.names[j], name) == 0) return s;
+                }
+            } else if (s->kind == NODE_BLOCK) {
+                AstNode *res = find_decl(s, name);
+                if (res) return res;
             }
-            break;
-        default:
-            break;
+        }
+    } else if (node->kind == NODE_BLOCK) {
+        for (int i = 0; i < node->block.stmt_count; i++) {
+            AstNode *s = node->block.stmts[i];
+            if (!s) continue;
+            if (s->kind == NODE_FN_DECL) {
+                if (s->fn_decl.is_module_init && s->fn_decl.body) {
+                    AstNode *res = find_decl(s->fn_decl.body, name);
+                    if (res) return res;
+                }
+                if (s->fn_decl.name && strcmp(s->fn_decl.name, name) == 0) return s;
+            } else if (s->kind == NODE_STRUCT_DECL && strcmp(s->struct_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_SCHEMA_DECL && strcmp(s->schema_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_ENUM_DECL && strcmp(s->enum_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_ACTOR_DECL && strcmp(s->actor_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_TRAIT_DECL && strcmp(s->trait_decl.name, name) == 0) {
+                return s;
+            } else if (s->kind == NODE_LET_DECL || s->kind == NODE_CONST_DECL) {
+                for (int j = 0; j < s->let_decl.name_count; j++) {
+                    if (strcmp(s->let_decl.names[j], name) == 0) return s;
+                }
+            }
         }
     }
     return NULL;
@@ -1059,6 +1086,7 @@ static char *extract_docstring(const char *source, int decl_line, int line_offse
 
         if (s + 1 <= line_end && s[0] == '/' && s[1] == '/') {
             s += 2;
+            if (s <= line_end && *s == '/') s++; /* skip 3rd slash for /// */
             while (s <= line_end && (*s == ' ' || *s == '\t')) s++;
             lines[count] = s;
             line_lens[count] = line_end - s + 1;
@@ -1081,6 +1109,50 @@ static char *extract_docstring(const char *source, int decl_line, int line_offse
     return res;
 }
 
+static char *get_module_origin(const char *decl_filename, const char *doc_uri) {
+    if (!decl_filename || !decl_filename[0]) return NULL;
+    if (doc_uri && strstr(doc_uri, decl_filename)) return NULL;
+
+    const char *p = strstr(decl_filename, "vn_modules/");
+    if (p) {
+        p += 11;
+    } else {
+        p = strrchr(decl_filename, '/');
+        if (p) p++; else p = decl_filename;
+    }
+    if (!p || !p[0]) return NULL;
+    char *mod = strdup(p);
+    char *dot = strrchr(mod, '.');
+    if (dot) *dot = '\0';
+    return mod;
+}
+
+static AstNode *find_method_decl(AstNode *node, const char *recv_type, const char *method_name) {
+    if (!node || !method_name) return NULL;
+    if (node->kind == NODE_PROGRAM) {
+        for (int i = 0; i < node->program.stmt_count; i++) {
+            AstNode *res = find_method_decl(node->program.stmts[i], recv_type, method_name);
+            if (res) return res;
+        }
+    } else if (node->kind == NODE_BLOCK) {
+        for (int i = 0; i < node->block.stmt_count; i++) {
+            AstNode *res = find_method_decl(node->block.stmts[i], recv_type, method_name);
+            if (res) return res;
+        }
+    } else if (node->kind == NODE_FN_DECL) {
+        if (node->fn_decl.is_method && node->fn_decl.name && strcmp(node->fn_decl.name, method_name) == 0) {
+            if (!recv_type || !node->fn_decl.impl_type || strcmp(node->fn_decl.impl_type, recv_type) == 0) {
+                return node;
+            }
+        }
+        if (node->fn_decl.is_module_init && node->fn_decl.body) {
+            AstNode *res = find_method_decl(node->fn_decl.body, recv_type, method_name);
+            if (res) return res;
+        }
+    }
+    return NULL;
+}
+
 /* ────────────────────────────────────────────────
  *  handle_hover
  * ──────────────────────────────────────────────── */
@@ -1090,18 +1162,43 @@ static const char *resolve_receiver_type(AstNode *program, AstNode *obj) {
     if (!obj) return NULL;
     if (obj->kind == NODE_IDENTIFIER) {
         const char *var_name = obj->identifier.name;
-        // Search the program for assignment/declaration of this variable
-        // Walk the AST or look for a let declaration
-        // We'll perform a quick search in the program
-        // (For simplicity, we can do a quick check to see if the initializer of that identifier is fetch())
-        // Let's write a small recursive helper to find let_decl
         AstNode *decl = find_decl(program, var_name);
-        if (decl && decl->kind == NODE_LET_DECL && decl->let_decl.initializer) {
-            AstNode *init = decl->let_decl.initializer;
-            if (init->kind == NODE_CALL && init->call.callee && init->call.callee->kind == NODE_IDENTIFIER) {
-                if (strcmp(init->call.callee->identifier.name, "fetch") == 0) {
-                    return "FetchRequest";
+        if (decl && (decl->kind == NODE_LET_DECL || decl->kind == NODE_CONST_DECL)) {
+            if (decl->let_decl.type && decl->let_decl.type->kind == TYPE_NAMED) {
+                return decl->let_decl.type->named.name;
+            }
+            if (decl->let_decl.initializer) {
+                AstNode *init = decl->let_decl.initializer;
+                if (init->kind == NODE_STRUCT_LITERAL) return init->struct_literal.name;
+                if (init->kind == NODE_STRING_LITERAL) return "String";
+                if (init->kind == NODE_ARRAY_LITERAL) return "Array";
+                if (init->kind == NODE_CALL && init->call.callee && init->call.callee->kind == NODE_IDENTIFIER) {
+                    const char *cname = init->call.callee->identifier.name;
+                    if (strcmp(cname, "fetch") == 0) return "FetchRequest";
+                    AstNode *cdecl = find_decl(program, cname);
+                    if (cdecl && (cdecl->kind == NODE_STRUCT_DECL || cdecl->kind == NODE_SCHEMA_DECL)) {
+                        return cname;
+                    }
                 }
+            }
+        }
+    } else if (obj->kind == NODE_STRUCT_LITERAL) {
+        return obj->struct_literal.name;
+    } else if (obj->kind == NODE_STRING_LITERAL) {
+        return "String";
+    } else if (obj->kind == NODE_ARRAY_LITERAL) {
+        return "Array";
+    }
+    if (obj->type) {
+        if (obj->type->kind == TYPE_NAMED) return obj->type->named.name;
+        if (obj->type->kind == TYPE_ARRAY) return "Array";
+        if (obj->type->kind == TYPE_PRIMITIVE) {
+            switch (obj->type->primitive) {
+                case PRIMITIVE_STRING: return "String";
+                case PRIMITIVE_INT: return "int";
+                case PRIMITIVE_FLOAT: return "float";
+                case PRIMITIVE_BOOL: return "bool";
+                default: break;
             }
         }
     }
@@ -1288,6 +1385,7 @@ static void handle_hover(int id, const char *json, const char *uri) {
     AstNode *found = find_node_at(program, vline, vcol, 0, &best_depth);
 
     char *markdown = NULL;
+    AstNode *module_origin_decl = NULL;
 
     /* Helper: check if cursor is on the name part of a declaration */
     #define CURSOR_ON_NAME(node, name_str) ( \
@@ -1303,6 +1401,7 @@ static void handle_hover(int id, const char *json, const char *uri) {
             if (!markdown) {
                 AstNode *decl = find_decl(program, name);
                 if (decl) {
+                    module_origin_decl = decl;
                     char *sig = decl_signature(decl);
                     char *doc = extract_docstring(text, decl->loc.line, line_offset);
                     size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 128;
@@ -1328,6 +1427,7 @@ static void handle_hover(int id, const char *json, const char *uri) {
             if (CURSOR_ON_NAME(found, found->fn_decl.name)) {
                 markdown = lookup_native_doc(found->fn_decl.name);
                 if (!markdown) {
+                    module_origin_decl = found;
                     char *sig = decl_signature(found);
                     char *doc = extract_docstring(text, found->loc.line, line_offset);
                     size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
@@ -1344,46 +1444,81 @@ static void handle_hover(int id, const char *json, const char *uri) {
             break;
         case NODE_STRUCT_DECL:
             if (CURSOR_ON_NAME(found, found->struct_decl.name)) {
+                module_origin_decl = found;
                 char *sig = decl_signature(found);
-                size_t mlen = strlen(sig) + 64;
+                char *doc = extract_docstring(text, found->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
                 free(sig);
             }
             break;
         case NODE_SCHEMA_DECL:
             if (CURSOR_ON_NAME(found, found->schema_decl.name)) {
+                module_origin_decl = found;
                 char *sig = decl_signature(found);
-                size_t mlen = strlen(sig) + 64;
+                char *doc = extract_docstring(text, found->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
                 free(sig);
             }
             break;
         case NODE_ENUM_DECL:
             if (CURSOR_ON_NAME(found, found->enum_decl.name)) {
+                module_origin_decl = found;
                 char *sig = decl_signature(found);
-                size_t mlen = strlen(sig) + 64;
+                char *doc = extract_docstring(text, found->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
                 free(sig);
             }
             break;
         case NODE_ACTOR_DECL:
             if (CURSOR_ON_NAME(found, found->actor_decl.name)) {
+                module_origin_decl = found;
                 char *sig = decl_signature(found);
-                size_t mlen = strlen(sig) + 64;
+                char *doc = extract_docstring(text, found->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
                 free(sig);
             }
             break;
         case NODE_TRAIT_DECL:
             if (CURSOR_ON_NAME(found, found->trait_decl.name)) {
+                module_origin_decl = found;
                 char *sig = decl_signature(found);
-                size_t mlen = strlen(sig) + 64;
+                char *doc = extract_docstring(text, found->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 64;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
                 free(sig);
             }
             break;
@@ -1397,7 +1532,9 @@ static void handle_hover(int id, const char *json, const char *uri) {
                 markdown = lookup_native_doc(fn_name);
                 if (!markdown) {
                     AstNode *decl = find_decl(program, fn_name);
+                    if (!decl) decl = find_method_decl(program, NULL, fn_name);
                     if (decl) {
+                        module_origin_decl = decl;
                         char *sig = decl_signature(decl);
                         char *doc = extract_docstring(text, decl->loc.line, line_offset);
                         size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 128;
@@ -1418,26 +1555,54 @@ static void handle_hover(int id, const char *json, const char *uri) {
             break;
         }
         case NODE_DISPATCH_CALL: {
-            // Check builder pattern
+            const char *method_name = found->dispatch_call.method_name;
             const char *recv_type = resolve_receiver_type(program, found->dispatch_call.object);
             if (recv_type) {
                 char buf[128];
-                snprintf(buf, sizeof(buf), "%s.%s", recv_type, found->dispatch_call.method_name);
+                snprintf(buf, sizeof(buf), "%s.%s", recv_type, method_name);
+                markdown = lookup_native_doc(buf);
+            }
+            if (!markdown && found->dispatch_call.object && found->dispatch_call.object->kind == NODE_IDENTIFIER) {
+                char buf[128];
+                snprintf(buf, sizeof(buf), "%s.%s", found->dispatch_call.object->identifier.name, method_name);
                 markdown = lookup_native_doc(buf);
             }
             if (!markdown) {
-                // Try looking up module.method or Object.method directly
-                // Check if object is a known module/object identifier
-                if (found->dispatch_call.object && found->dispatch_call.object->kind == NODE_IDENTIFIER) {
-                    char buf[128];
-                    snprintf(buf, sizeof(buf), "%s.%s", found->dispatch_call.object->identifier.name, found->dispatch_call.method_name);
-                    markdown = lookup_native_doc(buf);
+                markdown = lookup_native_doc(method_name);
+            }
+            if (!markdown) {
+                AstNode *mdecl = find_method_decl(program, recv_type, method_name);
+                if (mdecl) {
+                    module_origin_decl = mdecl;
+                    char *sig = decl_signature(mdecl);
+                    char *doc = extract_docstring(text, mdecl->loc.line, line_offset);
+                    size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + (recv_type ? strlen(recv_type) : 0) + 128;
+                    markdown = malloc(mlen);
+                    if (doc) {
+                        snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s%s%s%s",
+                                 sig, doc,
+                                 recv_type ? "\n\nReceiver: `" : "",
+                                 recv_type ? recv_type : "",
+                                 recv_type ? "`" : "");
+                        free(doc);
+                    } else {
+                        snprintf(markdown, mlen, "```varian\n%s\n```%s%s%s",
+                                 sig,
+                                 recv_type ? "\n\nReceiver: `" : "",
+                                 recv_type ? recv_type : "",
+                                 recv_type ? "`" : "");
+                    }
+                    free(sig);
                 }
             }
             if (!markdown) {
-                size_t mlen = strlen(found->dispatch_call.method_name) + 64;
+                size_t mlen = strlen(method_name) + (recv_type ? strlen(recv_type) : 0) + 128;
                 markdown = malloc(mlen);
-                snprintf(markdown, mlen, "method call: **%s**", found->dispatch_call.method_name);
+                if (recv_type) {
+                    snprintf(markdown, mlen, "fn %s.%s(...)\n\nReceiver: `%s`", recv_type, method_name, recv_type);
+                } else {
+                    snprintf(markdown, mlen, "method call: **%s**", method_name);
+                }
             }
             break;
         }
@@ -1482,9 +1647,36 @@ static void handle_hover(int id, const char *json, const char *uri) {
             break;
         }
         case NODE_STRUCT_LITERAL: {
-            size_t mlen = strlen(found->struct_literal.name) + 128;
-            markdown = malloc(mlen);
-            snprintf(markdown, mlen, "```varian\nstruct %s { .. }\n```", found->struct_literal.name);
+            const char *sname = found->struct_literal.name;
+            AstNode *decl = find_decl(program, sname);
+            if (decl) {
+                module_origin_decl = decl;
+                char *sig = decl_signature(decl);
+                char *doc = extract_docstring(text, decl->loc.line, line_offset);
+                size_t mlen = strlen(sig) + (doc ? strlen(doc) : 0) + 128;
+                markdown = malloc(mlen);
+                if (doc) {
+                    snprintf(markdown, mlen, "```varian\n%s\n```\n\n%s", sig, doc);
+                    free(doc);
+                } else {
+                    snprintf(markdown, mlen, "```varian\n%s\n```", sig);
+                }
+                free(sig);
+            } else {
+                size_t mlen = strlen(sname) + 256;
+                for (int i = 0; i < found->struct_literal.field_count; i++) {
+                    if (found->struct_literal.field_names[i])
+                        mlen += strlen(found->struct_literal.field_names[i]) + 8;
+                }
+                markdown = malloc(mlen);
+                int n = snprintf(markdown, mlen, "```varian\nstruct %s {\n", sname);
+                for (int i = 0; i < found->struct_literal.field_count; i++) {
+                    n += snprintf(markdown + n, mlen - n, "    %s%s\n",
+                                  found->struct_literal.field_names[i],
+                                  i + 1 < found->struct_literal.field_count ? "," : "");
+                }
+                snprintf(markdown + n, mlen - n, "}\n```");
+            }
             break;
         }
         case NODE_ENUM_LITERAL: {
@@ -1612,6 +1804,18 @@ static void handle_hover(int id, const char *json, const char *uri) {
         }
     }
     free(cursor_word);
+
+    if (markdown && module_origin_decl && module_origin_decl->loc.filename) {
+        char *mod = get_module_origin(module_origin_decl->loc.filename, uri);
+        if (mod) {
+            size_t new_len = strlen(markdown) + strlen(mod) + 64;
+            char *new_md = malloc(new_len);
+            snprintf(new_md, new_len, "%s\n\n*From module `%s`*", markdown, mod);
+            free(markdown);
+            markdown = new_md;
+            free(mod);
+        }
+    }
 
     char *md_enc = encode_json_string(markdown);
     size_t out_cap = strlen(md_enc) + 256;
