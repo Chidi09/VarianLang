@@ -3,6 +3,9 @@
 #include "parser.h"
 #include "lexer.h"
 #include "ast.h"
+#include "suspend_analysis.h"
+#include "ssa.h"
+#include "aot_native.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -330,7 +333,7 @@ static void output_val_serialize(FILE *out, Value val, ObjFunction **funcs, int 
 }
 
 int aot_compile(const char *source, const char *filename, const char *out_path,
-                int user_source_offset) {
+                int user_source_offset, bool dump_suspend, bool dump_ssa) {
     Lexer lexer;
     lexer_init(&lexer, source, filename);
     lexer_set_user_source_offset(&lexer, user_source_offset);
@@ -366,22 +369,55 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
                 pruned_functions, pruned_functions == 1 ? "" : "s");
     }
 
+    /* Conservatively determine which functions never reach a suspending
+     * operation (await/channel/dynamic-dispatch) — only those are eligible
+     * for Kiln's future native/typed codegen. See suspend_analysis.h for why:
+     * the scheduler's mid-function resumption contract only works when all
+     * live state is boxed Values on the task stack. */
+    SuspendAnalysis *suspend_analysis = suspend_analyze(program);
+    if (dump_suspend && suspend_analysis) {
+        fprintf(stderr, "[Kiln] Suspend analysis:\n");
+        for (int i = 0; i < suspend_analysis->count; i++) {
+            fprintf(stderr, "  %s -> %s\n", suspend_analysis->functions[i].name,
+                    suspend_analysis->functions[i].suspends ? "SUSPENDS" : "LEAF");
+        }
+    }
+
+    /* Typed SSA IR, built only for the functions suspend_analyze just proved
+     * safe, then type-inferred (monotonic, safe-by-construction — see
+     * ssa_infer_types' doc comment in ssa.h) and escape-analyzed (see
+     * ssa_escape_analyze's doc comment). Kept alive until after code emission:
+     * the native backend (aot_native.c) pairs each compiled ObjFunction back
+     * to its SsaFunction via ObjFunction.source_node. */
+    SsaModule *ssa_module = ssa_build(program, suspend_analysis);
+    ssa_infer_types(ssa_module);
+    ssa_escape_analyze(ssa_module);
+    if (dump_ssa && ssa_module) {
+        fprintf(stderr, "[Kiln] SSA IR:\n");
+        ssa_dump(ssa_module, stderr);
+    }
+
     Chunk chunk;
     chunk_init(&chunk);
 
     Compiler compiler;
     compiler_init(&compiler, arena, &chunk, program);
+    compiler.suspend_analysis = suspend_analysis;
 
     if (!compiler_compile(&compiler)) {
         fprintf(stderr, "AOT compile error: %s\n", compiler.error_message);
+        suspend_analysis_free(suspend_analysis);
+        ssa_module_free(ssa_module);
         chunk_free(&chunk);
         arena_destroy(arena);
         return 1;
     }
+    suspend_analysis_free(suspend_analysis);
 
     // Wrap main function
     ObjFunction main_fn_obj;
     memset(&main_fn_obj, 0, sizeof(ObjFunction));
+    main_fn_obj.suspends_maybe = true; /* top-level program init: always conservative */
     main_fn_obj.obj.type = VAL_FUNCTION;
     main_fn_obj.code = chunk.code;
     main_fn_obj.code_count = chunk.count;
@@ -398,6 +434,7 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
     if (!out) {
         fprintf(stderr, "Could not open output file '%s' for writing.\n", out_path);
         free(funcs);
+        ssa_module_free(ssa_module);
         chunk_free(&chunk);
         arena_destroy(arena);
         return 1;
@@ -439,8 +476,17 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
     fprintf(out, "static void aot_helper_ffi_call(VM *vm, Task *t, int pc, uint8_t ffi_idx, uint8_t arg_count);\n");
     fprintf(out, "static void aot_helper_throw(VM *vm, Task *t, int pc);\n\n");
 
+    /* Decide, once and up front, which functions get Kiln's native (typed,
+     * unboxed) body — the prototypes, the emission loop and the shadow-mode
+     * scaffolding all have to agree, so the answer is computed here rather
+     * than recomputed at each site. Everything not proven eligible keeps the
+     * existing boxed transpile under its ordinary name, unchanged. */
+    AotNativePlan *native_plan = aot_native_plan(ssa_module, funcs, fn_count);
+
     // Declare functions
     for (int i = 0; i < fn_count; i++) {
+        if (native_plan && native_plan->ssa[i])
+            fprintf(out, "static void varian_aot_fn_%d_boxed(VM *vm, Task *t);\n", i);
         fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t);\n", i);
     }
     fprintf(out, "\n");
@@ -923,11 +969,16 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
     fprintf(out, "    }\n");
     fprintf(out, "}\n\n");
 
+    aot_native_emit_prelude(out, native_plan, funcs);
+
     // Output all functions
     for (int f = 0; f < fn_count; f++) {
         ObjFunction *fn = funcs[f];
         fprintf(out, "/* Function %d */\n", f);
-        fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t) {\n", f);
+        if (native_plan && native_plan->ssa[f])
+            fprintf(out, "static void varian_aot_fn_%d_boxed(VM *vm, Task *t) {\n", f);
+        else
+            fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t) {\n", f);
         fprintf(out, "    CallFrame *frame = &t->frames[t->frame_count - 1];\n");
         fprintf(out, "    uint8_t *code = frame->function->code;\n");
         fprintf(out, "    int pc = (int)(frame->ip - code);\n\n");
@@ -1851,6 +1902,11 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
         }
         
         fprintf(out, "}\n\n");
+
+        /* The boxed body above stays byte-for-byte what it has always been;
+         * the native body is emitted alongside it as the guarded entry point
+         * that falls back to it. */
+        if (native_plan) aot_native_emit_function(out, native_plan, funcs, f);
     }
 
     // Output bytecode and constants static initialization arrays
@@ -1931,6 +1987,12 @@ int aot_compile(const char *source, const char *filename, const char *out_path,
     fprintf(out, "}\n");
 
     fclose(out);
+    if (native_plan && native_plan->count > 0) {
+        fprintf(stderr, "[Kiln] Natively compiled %d of %d function%s (typed, unboxed).\n",
+                native_plan->count, fn_count, fn_count == 1 ? "" : "s");
+    }
+    aot_native_plan_free(native_plan);
+    ssa_module_free(ssa_module);
     free(funcs);
     chunk_free(&chunk);
     arena_destroy(arena);

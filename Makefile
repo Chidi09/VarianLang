@@ -219,6 +219,11 @@ test: $(TARGET)
 	./tests/semantic_test.sh
 	./tests/formatter_test.sh
 	./tests/aot_reachability_test.sh
+	./tests/suspend_analysis_test.sh
+	./tests/ssa_dump_test.sh
+	./tests/ssa_type_inference_test.sh
+	./tests/ssa_escape_analysis_test.sh
+	./tests/ssa_differential_test.sh
 	./tests/mail_builder_test.sh
 	./$(TARGET) run examples/hello.vn
 	./$(TARGET) run examples/generics.vn

@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "json.h"
+#include "suspend_analysis.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1165,6 +1166,7 @@ void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *prog
     compiler->arena = arena;
     compiler->chunk = chunk;
     compiler->program = program;
+    compiler->suspend_analysis = NULL;
     compiler->scope_depth = 0;
     compiler->local_count = 0;
     compiler->loop_count = 0;
@@ -1186,7 +1188,7 @@ static void compiler_error(Compiler *compiler, const char *fmt, ...) {
     compiler->had_error = true;
 }
 
-static int compiler_add_local(Compiler *compiler, const char *name) {
+int compiler_add_local(Compiler *compiler, const char *name) {
     if (compiler->local_count >= 256) {
         compiler_error(compiler, "Too many local variables");
         return 0;
@@ -1198,7 +1200,7 @@ static int compiler_add_local(Compiler *compiler, const char *name) {
     return idx;
 }
 
-static int compiler_find_local(Compiler *compiler, const char *name) {
+int compiler_find_local(Compiler *compiler, const char *name) {
     for (int i = compiler->local_count - 1; i >= 0; i--) {
         if (strcmp(compiler->local_names[i], name) == 0)
             return i;
@@ -1701,6 +1703,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler fn_compiler;
             fn_compiler.enclosing = compiler;
             fn_compiler.arena = compiler->arena;
+            fn_compiler.suspend_analysis = compiler->suspend_analysis;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
             fn_compiler.had_error = false;
@@ -1770,6 +1773,12 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_counts = fn_chunk.rle_counts;
             func->rle_count = fn_chunk.rle_count;
             func->metadata = val_nil();
+            /* NULL suspend_analysis (ordinary interpreted compile) => fail-safe
+             * "true" via suspend_analysis_get; only Kiln release compiles pass
+             * a real analysis and can prove a function eligible for native
+             * codegen (see suspend_analysis.h). */
+            func->suspends_maybe = suspend_analysis_get(compiler->suspend_analysis, node);
+            func->source_node = node;
 
             /* Compile decorators into metadata array: [key1, val1, key2, val2, ...] */
             if (node->fn_decl.decorator_count > 0) {
@@ -1852,6 +1861,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler fn_compiler;
             fn_compiler.enclosing = NULL;
             fn_compiler.arena = compiler->arena;
+            /* Must be propagated explicitly: this Compiler is built field by
+             * field rather than through compiler_init, so anything left unset
+             * is an indeterminate stack value, and a nested fn decl inside this
+             * body would read it. */
+            fn_compiler.suspend_analysis = compiler->suspend_analysis;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
             fn_compiler.had_error = false;
@@ -1884,6 +1898,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_counts = fn_chunk.rle_counts;
             func->rle_count = fn_chunk.rle_count;
             func->metadata = val_nil();
+            /* Tests aren't collected by suspend_analyze; this always resolves
+             * to the fail-safe "true" default, which is fine since tests are
+             * never candidates for native AOT codegen. */
+            func->suspends_maybe = suspend_analysis_get(compiler->suspend_analysis, node);
+            func->source_node = NULL; /* a NODE_TEST, not a NODE_FN_DECL — never SSA-paired */
 
             /* Store in compiler's test registry (not emitted as global) */
             if (compiler->test_count < MAX_TESTS) {
@@ -2705,6 +2724,9 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler tmp_comp;
             tmp_comp.enclosing = NULL;
             tmp_comp.arena = compiler->arena;
+            /* See the note at NODE_TEST: field-by-field init, so this must be
+             * set explicitly or a nested fn decl reads a garbage pointer. */
+            tmp_comp.suspend_analysis = compiler->suspend_analysis;
             tmp_comp.chunk = &tmp_chunk;
             tmp_comp.scope_depth = 0;
             tmp_comp.had_error = false;

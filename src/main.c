@@ -2254,13 +2254,21 @@ int main(int argc, char *argv[]) {
 
     if (strcmp(argv[1], "compile") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: %s compile <file.vn> [output.c]\n", argv[0]);
+            fprintf(stderr, "Usage: %s compile <file.vn> [output.c] [--dump-suspend] [--dump-ssa]\n",
+                    argv[0]);
             return 1;
         }
-        const char *out_path = (argc >= 4) ? argv[3] : "aot_output.c";
+        const char *out_path = "aot_output.c";
+        bool dump_suspend = false;
+        bool dump_ssa = false;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--dump-suspend") == 0) dump_suspend = true;
+            else if (strcmp(argv[i], "--dump-ssa") == 0) dump_ssa = true;
+            else out_path = argv[i];
+        }
         char *source = read_file_with_modules(argv[2]);
         if (!source) return 1;
-        int result = aot_compile(source, argv[2], out_path, g_prelude_byte_count);
+        int result = aot_compile(source, argv[2], out_path, g_prelude_byte_count, dump_suspend, dump_ssa);
         free(source);
         return result;
     }
@@ -2305,15 +2313,27 @@ int main(int argc, char *argv[]) {
         const char *out_basename = "app";
         bool release = false;
         bool static_link = false;
+        bool dump_suspend = false;
+        bool dump_ssa = false;
+        /* Verification build: makes every natively-compiled function also run
+         * its boxed reference body and abort on any divergence. Never on by
+         * default — same spirit as a sanitizer build. See aot_native.h. */
+        bool ssa_shadow = false;
         const char *cc_compiler = getenv("CC");
         if (!cc_compiler) cc_compiler = "cc";
         const char *target_triple = NULL;
-        
+
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--release") == 0) {
                 release = true;
             } else if (strcmp(argv[i], "--static") == 0) {
                 static_link = true;
+            } else if (strcmp(argv[i], "--dump-suspend") == 0) {
+                dump_suspend = true;
+            } else if (strcmp(argv[i], "--dump-ssa") == 0) {
+                dump_ssa = true;
+            } else if (strcmp(argv[i], "--ssa-shadow") == 0) {
+                ssa_shadow = true;
             } else if (strncmp(argv[i], "--cc=", 5) == 0) {
                 cc_compiler = argv[i] + 5;
             } else if (strncmp(argv[i], "--target=", 9) == 0) {
@@ -2410,6 +2430,7 @@ int main(int argc, char *argv[]) {
         uint64_t hash_val = fnv1a_hash(source, strlen(source));
         hash_val = fnv1a_hash((const char *)&release, sizeof(bool)) ^ hash_val;
         hash_val = fnv1a_hash((const char *)&static_link, sizeof(bool)) ^ hash_val;
+        hash_val = fnv1a_hash((const char *)&ssa_shadow, sizeof(bool)) ^ hash_val;
         if (cc_compiler) hash_val ^= fnv1a_hash(cc_compiler, strlen(cc_compiler));
         if (target_triple) hash_val ^= fnv1a_hash(target_triple, strlen(target_triple));
         for (int i = 0; i < asset_count; i++) {
@@ -2453,7 +2474,7 @@ int main(int argc, char *argv[]) {
         if (release) {
             char out_c[256];
             snprintf(out_c, sizeof(out_c), "%s.c", out_basename);
-            int res = aot_compile(source, build_entry, out_c, g_prelude_byte_count);
+            int res = aot_compile(source, build_entry, out_c, g_prelude_byte_count, dump_suspend, dump_ssa);
             free(source);
             if (temp_lumen_entry) remove(build_entry);
             if (res != 0) {
@@ -2533,7 +2554,8 @@ int main(int argc, char *argv[]) {
                 snprintf(target_flag, sizeof(target_flag), "-target %s", target_triple);
             }
             const char *static_flag = static_link ? "-static" : "";
-            snprintf(cmd, sizeof(cmd), "%s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring -lz", cc_compiler, static_flag, target_flag, exe_dir, out_c, out_basename, exe_dir);
+            const char *shadow_flag = ssa_shadow ? "-DVARIAN_SSA_SHADOW_MODE" : "";
+            snprintf(cmd, sizeof(cmd), "%s %s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring -lz", cc_compiler, static_flag, target_flag, shadow_flag, exe_dir, out_c, out_basename, exe_dir);
             printf("Compiling native binary: %s\n", cmd);
             res = system(cmd);
             if (res == 0) {
