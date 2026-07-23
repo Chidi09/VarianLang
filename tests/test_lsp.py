@@ -316,11 +316,61 @@ def test_inlay_hints():
     print("Inlay hints OK")
     client.close()
 
+def test_symbols():
+    print("Testing document & workspace symbols...")
+    client = LspClient()
+    res = client.call("initialize", {"capabilities": {}})
+    assert res and "result" in res
+
+    doc_uri = "file:///test_sym.vn"
+    code = (
+        "struct Point {\n"
+        "    x: int,\n"
+        "    y: int\n"
+        "}\n"
+        "fn Point.area(self) -> int { return self.x * self.y; }\n"
+        "fn calculate_distance(p1, p2) { return 0; }\n"
+    )
+    client.notify("textDocument/didOpen", {
+        "textDocument": {
+            "uri": doc_uri,
+            "languageId": "varian",
+            "version": 1,
+            "text": code
+        }
+    })
+
+    # Document symbols
+    doc_syms = client.call("textDocument/documentSymbol", {
+        "textDocument": {"uri": doc_uri}
+    })
+    assert doc_syms and "result" in doc_syms and isinstance(doc_syms["result"], list)
+    names = [s["name"] for s in doc_syms["result"]]
+    assert "Point" in names and "calculate_distance" in names, f"Expected Point & calculate_distance, got {names}"
+    
+    # Check hierarchy: Point should have children (x, y, area)
+    point_sym = next(s for s in doc_syms["result"] if s["name"] == "Point")
+    assert "children" in point_sym and point_sym["children"] is not None
+    child_names = [c["name"] for c in point_sym["children"]]
+    assert "x" in child_names and "y" in child_names and "area" in child_names, f"Expected x, y, area in Point children, got {child_names}"
+
+    # Workspace symbols
+    ws_syms = client.call("workspace/symbol", {
+        "query": "calc"
+    })
+    assert ws_syms and "result" in ws_syms and isinstance(ws_syms["result"], list)
+    ws_names = [s["name"] for s in ws_syms["result"]]
+    assert "calculate_distance" in ws_names, f"Expected calculate_distance in workspace symbols, got {ws_names}"
+
+    print("Symbols OK")
+    client.close()
+
 if __name__ == "__main__":
     test_parameter_provenance()
     test_hover_depth()
     test_completion()
     test_signature_help()
     test_inlay_hints()
+    test_symbols()
     print("All LSP tests passed!")
     sys.exit(0)
