@@ -2997,6 +2997,297 @@ static void handle_folding_range(int id, const char *json, const char *uri) {
 }
 
 /* ────────────────────────────────────────────────
+ *  handle_inlay_hint
+ * ──────────────────────────────────────────────── */
+typedef struct {
+    char *buf;
+    size_t len;
+    size_t cap;
+    int count;
+} InlayHintList;
+
+static void inlay_hint_init(InlayHintList *hl) {
+    hl->cap = 1024;
+    hl->buf = malloc(hl->cap);
+    hl->buf[0] = '\0';
+    hl->len = 0;
+    hl->count = 0;
+}
+
+static void inlay_hint_add(InlayHintList *hl, int line, int col, const char *param_name) {
+    if (line < 0 || col < 0) return;
+    char label[128];
+    snprintf(label, sizeof(label), "%s:", param_name);
+    char *label_enc = encode_json_string(label);
+
+    char item[512];
+    snprintf(item, sizeof(item),
+             "%s{\"position\":{\"line\":%d,\"character\":%d},\"label\":%s,\"kind\":2,\"paddingRight\":true}",
+             hl->count > 0 ? "," : "", line, col, label_enc);
+    free(label_enc);
+
+    size_t ilen = strlen(item);
+    if (hl->len + ilen + 1 >= hl->cap) {
+        hl->cap = (hl->len + ilen + 1) * 2;
+        hl->buf = realloc(hl->buf, hl->cap);
+    }
+    strcat(hl->buf, item);
+    hl->len += ilen;
+    hl->count++;
+}
+
+static void inlay_hint_free(InlayHintList *hl) {
+    if (hl->buf) free(hl->buf);
+}
+
+static void visit_inlay_hints(AstNode *program, AstNode *node, InlayHintList *hl, int line_offset) {
+    if (!node) return;
+
+    if (node->kind == NODE_CALL) {
+        const char *callee_name = NULL;
+        const char *recv_name = NULL;
+
+        if (node->call.callee) {
+            if (node->call.callee->kind == NODE_IDENTIFIER) {
+                callee_name = node->call.callee->identifier.name;
+            } else if (node->call.callee->kind == NODE_MEMBER) {
+                callee_name = node->call.callee->member.member;
+                if (node->call.callee->member.object && node->call.callee->member.object->kind == NODE_IDENTIFIER) {
+                    recv_name = node->call.callee->member.object->identifier.name;
+                }
+            }
+        }
+
+        if (callee_name) {
+            AstNode *decl = NULL;
+            if (recv_name && program) {
+                AstNode *vnode = find_decl(program, recv_name);
+                const char *recv_type = vnode ? resolve_receiver_type(program, vnode) : recv_name;
+                if (recv_type) {
+                    decl = find_method_decl(program, recv_type, callee_name);
+                }
+            }
+            if (!decl && program) {
+                decl = find_decl(program, callee_name);
+            }
+
+            if (decl && decl->kind == NODE_FN_DECL) {
+                int pcount = decl->fn_decl.param_count;
+                for (int i = 0; i < node->call.arg_count && i < pcount; i++) {
+                    AstNode *arg = node->call.args[i];
+                    const char *pname = decl->fn_decl.param_names ? decl->fn_decl.param_names[i] : NULL;
+                    if (arg && pname) {
+                        if (arg->kind == NODE_IDENTIFIER && strcmp(arg->identifier.name, pname) == 0) {
+                            continue;
+                        }
+                        int line = arg->loc.line - line_offset - 1;
+                        int col = arg->loc.column - 1;
+                        inlay_hint_add(hl, line, col, pname);
+                    }
+                }
+            } else {
+                for (size_t i = 0; i < native_docs_count; i++) {
+                    const char *nd = native_docs[i].name;
+                    const char *dot = strchr(nd, '.');
+                    const char *mname = dot ? dot + 1 : nd;
+                    if (strcmp(mname, callee_name) == 0) {
+                        const char *sparen = strchr(native_docs[i].signature, '(');
+                        const char *eparen = strchr(native_docs[i].signature, ')');
+                        if (sparen && eparen && eparen > sparen + 1) {
+                            char raw[512] = {0};
+                            strncpy(raw, sparen + 1, eparen - sparen - 1);
+                            char *token = strtok(raw, ",");
+                            int pidx = 0;
+                            while (token && pidx < node->call.arg_count) {
+                                while (isspace((unsigned char)*token)) token++;
+                                char *colon = strchr(token, ':');
+                                if (colon) *colon = '\0';
+                                char *end = token + strlen(token) - 1;
+                                while (end > token && isspace((unsigned char)*end)) *end-- = '\0';
+
+                                if (token[0] && strcmp(token, "self") != 0) {
+                                    AstNode *arg = node->call.args[pidx];
+                                    if (arg) {
+                                        if (!(arg->kind == NODE_IDENTIFIER && strcmp(arg->identifier.name, token) == 0)) {
+                                            int line = arg->loc.line - line_offset - 1;
+                                            int col = arg->loc.column - 1;
+                                            inlay_hint_add(hl, line, col, token);
+                                        }
+                                    }
+                                    pidx++;
+                                }
+                                token = strtok(NULL, ",");
+                            }
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+    } else if (node->kind == NODE_DISPATCH_CALL) {
+        const char *callee_name = node->dispatch_call.method_name;
+        const char *recv_name = (node->dispatch_call.object && node->dispatch_call.object->kind == NODE_IDENTIFIER) ?
+                                node->dispatch_call.object->identifier.name : NULL;
+
+        if (callee_name) {
+            AstNode *decl = NULL;
+            if (recv_name && program) {
+                AstNode *vnode = find_decl(program, recv_name);
+                const char *recv_type = vnode ? resolve_receiver_type(program, vnode) : recv_name;
+                if (recv_type) {
+                    decl = find_method_decl(program, recv_type, callee_name);
+                }
+            }
+            if (decl && decl->kind == NODE_FN_DECL) {
+                int pcount = decl->fn_decl.param_count;
+                for (int i = 0; i < node->dispatch_call.arg_count && i < pcount; i++) {
+                    AstNode *arg = node->dispatch_call.args[i];
+                    const char *pname = decl->fn_decl.param_names ? decl->fn_decl.param_names[i] : NULL;
+                    if (arg && pname) {
+                        if (arg->kind == NODE_IDENTIFIER && strcmp(arg->identifier.name, pname) == 0) {
+                            continue;
+                        }
+                        int line = arg->loc.line - line_offset - 1;
+                        int col = arg->loc.column - 1;
+                        inlay_hint_add(hl, line, col, pname);
+                    }
+                }
+            }
+        }
+    }
+
+    switch (node->kind) {
+    case NODE_PROGRAM:
+        for (int i = 0; i < node->program.stmt_count; i++) {
+            visit_inlay_hints(program, node->program.stmts[i], hl, line_offset);
+        }
+        break;
+    case NODE_FN_DECL:
+        visit_inlay_hints(program, node->fn_decl.body, hl, line_offset);
+        break;
+    case NODE_BLOCK:
+        for (int i = 0; i < node->block.stmt_count; i++) {
+            visit_inlay_hints(program, node->block.stmts[i], hl, line_offset);
+        }
+        break;
+    case NODE_EXPR_STMT:
+        visit_inlay_hints(program, node->expr_stmt.expr, hl, line_offset);
+        break;
+    case NODE_IF:
+        visit_inlay_hints(program, node->if_stmt.condition, hl, line_offset);
+        visit_inlay_hints(program, node->if_stmt.then_branch, hl, line_offset);
+        visit_inlay_hints(program, node->if_stmt.else_branch, hl, line_offset);
+        break;
+    case NODE_WHILE:
+        visit_inlay_hints(program, node->while_stmt.condition, hl, line_offset);
+        visit_inlay_hints(program, node->while_stmt.body, hl, line_offset);
+        break;
+    case NODE_FOR:
+        visit_inlay_hints(program, node->for_stmt.iterable, hl, line_offset);
+        visit_inlay_hints(program, node->for_stmt.body, hl, line_offset);
+        break;
+    case NODE_LOOP:
+        visit_inlay_hints(program, node->loop_stmt.body, hl, line_offset);
+        break;
+    case NODE_RETURN:
+        for (int i = 0; i < node->return_stmt.value_count; i++) {
+            visit_inlay_hints(program, node->return_stmt.values[i], hl, line_offset);
+        }
+        break;
+    case NODE_LET_DECL:
+    case NODE_CONST_DECL:
+        visit_inlay_hints(program, node->let_decl.initializer, hl, line_offset);
+        break;
+    case NODE_ASSIGN:
+        visit_inlay_hints(program, node->assign.target, hl, line_offset);
+        visit_inlay_hints(program, node->assign.value, hl, line_offset);
+        break;
+    case NODE_BINARY:
+        visit_inlay_hints(program, node->binary.left, hl, line_offset);
+        visit_inlay_hints(program, node->binary.right, hl, line_offset);
+        break;
+    case NODE_UNARY:
+        visit_inlay_hints(program, node->unary.operand, hl, line_offset);
+        break;
+    case NODE_CALL:
+        visit_inlay_hints(program, node->call.callee, hl, line_offset);
+        for (int i = 0; i < node->call.arg_count; i++) {
+            visit_inlay_hints(program, node->call.args[i], hl, line_offset);
+        }
+        break;
+    case NODE_DISPATCH_CALL:
+        visit_inlay_hints(program, node->dispatch_call.object, hl, line_offset);
+        for (int i = 0; i < node->dispatch_call.arg_count; i++) {
+            visit_inlay_hints(program, node->dispatch_call.args[i], hl, line_offset);
+        }
+        break;
+    case NODE_STRUCT_LITERAL:
+        for (int i = 0; i < node->struct_literal.field_count; i++) {
+            visit_inlay_hints(program, node->struct_literal.field_values[i], hl, line_offset);
+        }
+        break;
+    case NODE_ARRAY_LITERAL:
+        for (int i = 0; i < node->array_literal.element_count; i++) {
+            visit_inlay_hints(program, node->array_literal.elements[i], hl, line_offset);
+        }
+        break;
+    case NODE_TUPLE_LITERAL:
+        for (int i = 0; i < node->tuple_literal.element_count; i++) {
+            visit_inlay_hints(program, node->tuple_literal.elements[i], hl, line_offset);
+        }
+        break;
+    case NODE_MATCH:
+        visit_inlay_hints(program, node->match_stmt.value, hl, line_offset);
+        for (int i = 0; i < node->match_stmt.arm_count; i++) {
+            visit_inlay_hints(program, node->match_stmt.arms[i], hl, line_offset);
+        }
+        break;
+    case NODE_TRY:
+        visit_inlay_hints(program, node->try_stmt.try_body, hl, line_offset);
+        visit_inlay_hints(program, node->try_stmt.catch_body, hl, line_offset);
+        break;
+    case NODE_ASSERT:
+        visit_inlay_hints(program, node->assert_stmt.condition, hl, line_offset);
+        break;
+    default:
+        break;
+    }
+}
+
+static void handle_inlay_hint(int id, const char *json, const char *uri) {
+    (void)json;
+    const char *text = get_doc(uri);
+    InlayHintList hl;
+    inlay_hint_init(&hl);
+
+    if (!text) {
+        char buf[256];
+        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[]}", id);
+        send_response(buf);
+        inlay_hint_free(&hl);
+        return;
+    }
+
+    int line_offset = 0;
+    Arena *arena = NULL;
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
+    if (program) {
+        visit_inlay_hints(program, program, &hl, line_offset);
+    }
+
+    size_t out_cap = hl.len + 256;
+    char *out_json = malloc(out_cap);
+    snprintf(out_json, out_cap,
+             "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[%s]}",
+             id, hl.buf);
+    send_response(out_json);
+
+    free(out_json);
+    inlay_hint_free(&hl);
+    if (arena) arena_destroy(arena);
+}
+
+/* ────────────────────────────────────────────────
  *  Initialize
  * ──────────────────────────────────────────────── */
 static void handle_initialize(int id) {
@@ -3010,6 +3301,7 @@ static void handle_initialize(int id) {
              "\"referencesProvider\":true,"
              "\"renameProvider\":true,"
              "\"signatureHelpProvider\":{\"triggerCharacters\":[\"(\",\",\"]},"
+             "\"inlayHintProvider\":true,"
              "\"codeActionProvider\":true,"
              "\"foldingRangeProvider\":true,"
              "\"documentFormattingProvider\":true,"
@@ -3143,6 +3435,12 @@ int lsp_main(void) {
                 char *uri = get_uri(json);
                 if (uri) {
                     handle_folding_range(id, json, uri);
+                    free(uri);
+                }
+            } else if (strcmp(method, "textDocument/inlayHint") == 0) {
+                char *uri = get_uri(json);
+                if (uri) {
+                    handle_inlay_hint(id, json, uri);
                     free(uri);
                 }
             }

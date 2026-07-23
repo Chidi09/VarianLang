@@ -279,10 +279,48 @@ def test_signature_help():
     print("Signature help OK")
     client.close()
 
+def test_inlay_hints():
+    print("Testing inlay hints...")
+    client = LspClient()
+    res = client.call("initialize", {"capabilities": {}})
+    assert res and "result" in res
+
+    doc_uri = "file:///test_inlay.vn"
+    code = (
+        "fn area(width: int, height: int) -> int { return width * height; }\n"
+        "fn main() {\n"
+        "    let w = 10;\n"
+        "    let h = 20;\n"
+        "    let a = area(w, h);\n"
+        "}\n"
+    )
+    client.notify("textDocument/didOpen", {
+        "textDocument": {
+            "uri": doc_uri,
+            "languageId": "varian",
+            "version": 1,
+            "text": code
+        }
+    })
+
+    hints = client.call("textDocument/inlayHint", {
+        "textDocument": {"uri": doc_uri},
+        "range": {
+            "start": {"line": 0, "character": 0},
+            "end": {"line": 10, "character": 0}
+        }
+    })
+    assert hints and "result" in hints and isinstance(hints["result"], list), f"Inlay hints failed: {hints}"
+    labels = [h["label"] for h in hints["result"]]
+    assert "width:" in labels and "height:" in labels, f"Expected width: and height:, got {labels}"
+    print("Inlay hints OK")
+    client.close()
+
 if __name__ == "__main__":
     test_parameter_provenance()
     test_hover_depth()
     test_completion()
     test_signature_help()
+    test_inlay_hints()
     print("All LSP tests passed!")
     sys.exit(0)
