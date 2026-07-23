@@ -747,17 +747,107 @@ static int type_to_str(Type *t, char *buf, int cap) {
     }
 }
 
+/* Renders a type annotation for display. Returns the number of bytes written.
+ * Anything not recognised renders as nothing at all rather than a guess — an
+ * absent annotation reads as untyped, which is honest, whereas a wrong one
+ * would be actively misleading in a language where annotations are not
+ * enforced anyway. */
+static int type_render(const Type *t, char *out, size_t cap) {
+    if (!t || cap == 0) return 0;
+    switch (t->kind) {
+    case TYPE_PRIMITIVE: {
+        const char *n = NULL;
+        switch (t->primitive) {
+        case PRIMITIVE_BOOL:   n = "bool";   break;
+        case PRIMITIVE_INT:    n = "int";    break;
+        case PRIMITIVE_FLOAT:  n = "float";  break;
+        case PRIMITIVE_STRING: n = "string"; break;
+        case PRIMITIVE_BYTE:   n = "byte";   break;
+        case PRIMITIVE_VOID:   n = "void";   break;
+        default: return 0;  /* FFI primitives: not part of surface syntax */
+        }
+        return snprintf(out, cap, "%s", n);
+    }
+    case TYPE_NAMED:
+        if (!t->named.name) return 0;
+        return snprintf(out, cap, "%s", t->named.name);
+    case TYPE_ARRAY: {
+        char inner[128] = {0};
+        if (!type_render(t->array.element_type, inner, sizeof(inner))) return 0;
+        return snprintf(out, cap, "[%s]", inner);
+    }
+    default:
+        /* TYPE_FUNCTION / TYPE_TUPLE nested inside a signature: omitted rather
+         * than rendered half-correctly. */
+        return 0;
+    }
+}
+
+/* Builds "name: type, other" for a function's parameter list. Falls back to
+ * bare names wherever an annotation is missing or unrenderable.
+ *
+ * KNOWN LIMITATION: parser.c:611 gives every UNANNOTATED parameter a synthetic
+ * `int` type, and that synthetic type is indistinguishable from a written one
+ * by the time it reaches the AST. So `fn plain(a, b)` renders as
+ * `fn plain(a: int, b: int)` — a type the author never wrote and which nothing
+ * enforces. Fixing this properly requires recording annotation provenance at
+ * parse time (a parallel `bool *param_type_explicit` on fn_decl); it cannot be
+ * recovered here. */
+static void params_render(AstNode *node, char *out, size_t cap) {
+    out[0] = '\0';
+    size_t used = 0;
+    const Type *fn_type = node->fn_decl.fn_type;
+    /* Only trust fn_type's parameter types if the arity actually agrees —
+     * a mismatch means the two came from different parses and pairing them
+     * positionally would mislabel every parameter. */
+    bool have_types = fn_type && fn_type->kind == TYPE_FUNCTION &&
+                      fn_type->function.param_count == node->fn_decl.param_count;
+
+    for (int i = 0; i < node->fn_decl.param_count; i++) {
+        const char *pname = node->fn_decl.param_names
+                                ? node->fn_decl.param_names[i] : NULL;
+        if (!pname) continue;
+
+        char tbuf[128] = {0};
+        if (have_types)
+            type_render(fn_type->function.param_types[i], tbuf, sizeof(tbuf));
+
+        int n = snprintf(out + used, cap - used, "%s%s%s%s",
+                         used ? ", " : "", pname,
+                         tbuf[0] ? ": " : "", tbuf);
+        if (n < 0 || (size_t)n >= cap - used) { out[used] = '\0'; break; }
+        used += (size_t)n;
+    }
+}
+
 static char *decl_signature(AstNode *node) {
     char buf[1024];
     switch (node->kind) {
     case NODE_FN_DECL: {
+        char params[512];
+        params_render(node, params, sizeof(params));
+
+        /* Return type. `void` is suppressed: the parser synthesises it for any
+         * function without an explicit `->`, so printing it would assert
+         * something the author never wrote. See the note on synthetic `int`
+         * parameter types in params_render. */
+        char ret[128] = {0};
+        const Type *fn_type = node->fn_decl.fn_type;
+        if (fn_type && fn_type->kind == TYPE_FUNCTION) {
+            const Type *rt = fn_type->function.return_type;
+            if (!(rt && rt->kind == TYPE_PRIMITIVE && rt->primitive == PRIMITIVE_VOID))
+                type_render(rt, ret, sizeof(ret));
+        }
+
         if (node->fn_decl.impl_type) {
-            snprintf(buf, sizeof(buf), "fn %s.%s(%s)",
-                     node->fn_decl.impl_type, node->fn_decl.name, "");
-        } else if (node->fn_decl.is_async) {
-            snprintf(buf, sizeof(buf), "async fn %s(...)", node->fn_decl.name);
+            snprintf(buf, sizeof(buf), "fn %s.%s(%s)%s%s",
+                     node->fn_decl.impl_type, node->fn_decl.name, params,
+                     ret[0] ? " -> " : "", ret);
         } else {
-            snprintf(buf, sizeof(buf), "fn %s(...)", node->fn_decl.name);
+            snprintf(buf, sizeof(buf), "%sfn %s(%s)%s%s",
+                     node->fn_decl.is_async ? "async " : "",
+                     node->fn_decl.name, params,
+                     ret[0] ? " -> " : "", ret);
         }
         return strdup(buf);
     }

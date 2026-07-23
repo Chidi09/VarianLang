@@ -70,43 +70,30 @@ To publish:
 3. Run their `./scripts/sort-extensions.sh`, commit, open a PR. Zed maintainers
    review + merge; then it's installable from Zed's Extensions panel.
 
-### `editors/zed-varian-lsp` (the `vn lsp` adapter) — needs Rust source first
-This extension currently ships only a prebuilt `extension.wasm`. Zed's registry
-**will not accept a checked-in wasm** — it compiles the adapter from Rust. Add a
-crate next to `extension.toml` (and drop the `wasm = { path = … }` line so Zed
-builds it):
+### The `vn lsp` adapter — now part of `editors/zed-varian`
+There is no longer a separate `zed-varian-lsp` extension. It was removed on
+2026-07-23: Zed loaded it (`Loaded language server: varian-lsp` appears in the
+remote-server log) but never once spawned `vn lsp` — no spawn attempt and no
+error, across every log on the box. A language server declared in one extension
+was not being matched to a language declared in another.
 
-```toml
-# Cargo.toml
-[package]
-name = "zed_varian_lsp"
-version = "0.1.0"
-edition = "2021"
-[lib]
-crate-type = ["cdylib"]
-[dependencies]
-zed_extension_api = "0.2"   # pin to the version current Zed expects
+The adapter now lives in `editors/zed-varian/src/lib.rs`, declared by the same
+`extension.toml` that declares the `Varian` and `Lumen` languages — the layout
+every working extension uses (zig/zls, nix/nil, lua). It also supplies the Rust
+source the old extension never had: it shipped a checked-in `extension.wasm`
+with no source anywhere in the repo, which the registry would have rejected and
+which nobody could rebuild or audit.
+
+Build check (Zed compiles this itself on install, but this catches breakage
+early):
+
+```sh
+rustup target add wasm32-wasip1
+cd editors/zed-varian && cargo build --release --target wasm32-wasip1
 ```
 
-```rust
-// src/lib.rs
-use zed_extension_api as zed;
-struct Varian;
-impl zed::Extension for Varian {
-    fn new() -> Self { Varian }
-    fn language_server_command(
-        &mut self, _id: &zed::LanguageServerId, _wt: &zed::Worktree,
-    ) -> zed::Result<zed::Command> {
-        Ok(zed::Command { command: "vn".into(), args: vec!["lsp".into()], env: vec![] })
-    }
-}
-zed::register_extension!(Varian);
-```
-
-Verify locally with the Zed toolchain (`zed: install dev extension`) before the
-registry PR, since `zed_extension_api` versions change. Until then, the LSP
-works as a one-time dev-extension install.
-
-> Until the registry PRs merge, both Zed extensions install via the command
-> palette → **`zed: install dev extension`** → pick `editors/zed-varian` then
-> `editors/zed-varian-lsp`.
+> Until the registry PR merges, the Zed extension installs via the command
+> palette → **`zed: install dev extension`** → pick `editors/zed-varian`.
+> There is only ONE extension to install now. If you previously installed
+> `varian-lsp`, **uninstall it first** — two extensions declaring the same
+> server name will conflict.
