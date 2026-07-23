@@ -119,6 +119,9 @@ AstNode *ast_fn_decl(Arena *arena, SourceLoc loc, const char *name,
     } else {
         node->fn_decl.param_names = NULL;
     }
+    /* Populated by the caller where it knows; NULL means "no information",
+     * which consumers must treat as unannotated rather than as annotated. */
+    node->fn_decl.param_type_explicit = NULL;
     node->fn_decl.type_param_count = type_param_count;
     node->fn_decl.type_params = NULL;
     (void)type_params;

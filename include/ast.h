@@ -177,6 +177,17 @@ struct AstNode {
             char *name;
             Type *fn_type;
             char **param_names;
+            /* Parallel to param_names, or NULL when unknown: whether the author
+             * actually WROTE `: type` for that parameter.
+             *
+             * Needed because the parser synthesises `int` for every unannotated
+             * parameter (see parser.c), and that synthetic type is load-bearing
+             * — it is what lets Kiln natively compile unannotated functions,
+             * guarded at runtime. So it cannot simply be left NULL. But it must
+             * not be *displayed* as if the author wrote it: rendering
+             * `fn f(x)` as `fn f(x: int)` asserts a contract that does not
+             * exist in a language where annotations are never enforced. */
+            bool *param_type_explicit;
             int param_count;
             char **type_params;
             int type_param_count;

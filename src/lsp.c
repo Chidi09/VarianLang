@@ -820,6 +820,35 @@ static void params_render(AstNode *node, char *out, size_t cap) {
     }
 }
 
+/* Renders `keyword Name { a, b, c }` across multiple lines, with types where
+ * the declaration actually retained them. Long member lists are truncated so a
+ * hover card stays readable instead of covering the editor. */
+static char *members_signature(const char *keyword, const char *name,
+                               bool generic, char **members, Type **types,
+                               int count) {
+    const int MAX_SHOWN = 24;
+    size_t cap = 256 + (size_t)count * 96;
+    char *out = malloc(cap);
+    int n = snprintf(out, cap, "%s %s%s", keyword, name ? name : "?",
+                     generic ? "<T>" : "");
+    if (count <= 0) return out;
+
+    n += snprintf(out + n, cap - (size_t)n, " {\n");
+    int shown = count < MAX_SHOWN ? count : MAX_SHOWN;
+    for (int i = 0; i < shown; i++) {
+        char tbuf[128] = {0};
+        if (types && types[i]) type_render(types[i], tbuf, sizeof(tbuf));
+        n += snprintf(out + n, cap - (size_t)n, "    %s%s%s%s\n",
+                      members[i] ? members[i] : "?",
+                      tbuf[0] ? ": " : "", tbuf,
+                      i + 1 < count ? "," : "");
+    }
+    if (count > shown)
+        n += snprintf(out + n, cap - (size_t)n, "    // ... %d more\n", count - shown);
+    snprintf(out + n, cap - (size_t)n, "}");
+    return out;
+}
+
 static char *decl_signature(AstNode *node) {
     char buf[1024];
     switch (node->kind) {
@@ -851,30 +880,29 @@ static char *decl_signature(AstNode *node) {
         }
         return strdup(buf);
     }
+    /* Structs, schemas and enums list their members. Previously these rendered
+     * as `struct Message { .. } (3 fields)`, which withheld the one thing the
+     * reader actually hovered to find out. */
     case NODE_STRUCT_DECL:
-        if (node->struct_decl.type_param_count > 0) {
-            snprintf(buf, sizeof(buf), "struct %s<T>(%d fields)",
-                     node->struct_decl.name, node->struct_decl.field_count);
-        } else if (node->struct_decl.field_count > 0) {
-            snprintf(buf, sizeof(buf), "struct %s { .. } (%d fields)",
-                     node->struct_decl.name, node->struct_decl.field_count);
-        } else {
-            snprintf(buf, sizeof(buf), "struct %s", node->struct_decl.name);
-        }
-        return strdup(buf);
+        return members_signature("struct", node->struct_decl.name,
+                                 node->struct_decl.type_param_count > 0,
+                                 node->struct_decl.field_names,
+                                 NULL,
+                                 node->struct_decl.field_count);
     case NODE_SCHEMA_DECL:
-        snprintf(buf, sizeof(buf), "schema %s { .. } (%d fields)",
-                 node->schema_decl.name, node->schema_decl.field_count);
-        return strdup(buf);
+        /* Only `schema` keeps its field type annotations; a plain `struct`
+         * parses and discards them, so there is nothing to show there. */
+        return members_signature("schema", node->schema_decl.name,
+                                 node->schema_decl.type_param_count > 0,
+                                 node->schema_decl.field_names,
+                                 node->schema_decl.field_types,
+                                 node->schema_decl.field_count);
     case NODE_ENUM_DECL:
-        if (node->enum_decl.type_param_count > 0) {
-            snprintf(buf, sizeof(buf), "enum %s<T> (%d variants)",
-                     node->enum_decl.name, node->enum_decl.variant_count);
-        } else {
-            snprintf(buf, sizeof(buf), "enum %s (%d variants)",
-                     node->enum_decl.name, node->enum_decl.variant_count);
-        }
-        return strdup(buf);
+        return members_signature("enum", node->enum_decl.name,
+                                 node->enum_decl.type_param_count > 0,
+                                 node->enum_decl.variant_names,
+                                 NULL,
+                                 node->enum_decl.variant_count);
     case NODE_ACTOR_DECL:
         snprintf(buf, sizeof(buf), "actor %s (%d fields)",
                  node->actor_decl.name, node->actor_decl.field_count);
@@ -979,7 +1007,16 @@ static AstNode *parse_doc(const char *source, const char *path, Arena **arena_ou
     parser_init(&parser, &lexer, *arena_out);
 
     AstNode *program = parser_parse(&parser);
-    if (parser.had_error || !program) {
+    /* Deliberately keep the tree when the parser reported errors, as long as it
+     * produced one. The parser recovers, so a single bad line still yields a
+     * usable AST for the rest of the file — and in an editor that is the normal
+     * state, not the exception: source is broken while you type it.
+     *
+     * Discarding it on `parser.had_error` meant one unresolved `use` (or any
+     * syntax error anywhere) silently disabled hover, go-to-definition and
+     * document symbols for the ENTIRE file, while diagnostics kept working —
+     * which reads as "hover is broken" rather than "line 1 has an error". */
+    if (!program) {
         arena_destroy(*arena_out);
         *arena_out = NULL;
         free(full_source);
@@ -1090,6 +1127,91 @@ static char *lookup_native_doc(const char *name) {
     return NULL;
 }
 
+#include "lsp_docs.h"
+
+/* Returns a malloc'd copy of the token under (line, col), both 0-based, taken
+ * straight from the document text rather than the AST.
+ *
+ * Needed because the things people point at most — keywords, type names,
+ * operators — are never AST nodes, so a node-only hover answers null for them.
+ * Works on the raw buffer, so it also still answers inside a region the parser
+ * failed on. */
+static char *word_at_position(const char *text, int line, int col, bool *is_op) {
+    const char *p = text;
+    for (int i = 0; i < line && *p; p++)
+        if (*p == '\n') i++;
+    if (!*p) return NULL;
+
+    const char *line_start = p;
+    const char *line_end = strchr(p, '\n');
+    int line_len = line_end ? (int)(line_end - line_start) : (int)strlen(line_start);
+    if (col < 0 || col > line_len) return NULL;
+
+    *is_op = false;
+    int c = col;
+    /* A cursor sitting just past the end of a word still refers to that word. */
+    if (c == line_len || !(isalnum((unsigned char)line_start[c]) || line_start[c] == '_')) {
+        if (c > 0 && (isalnum((unsigned char)line_start[c-1]) || line_start[c-1] == '_')) c--;
+    }
+
+    if (isalnum((unsigned char)line_start[c]) || line_start[c] == '_') {
+        int s = c, e = c;
+        while (s > 0 && (isalnum((unsigned char)line_start[s-1]) || line_start[s-1] == '_')) s--;
+        while (e < line_len && (isalnum((unsigned char)line_start[e]) || line_start[e] == '_')) e++;
+        if (isdigit((unsigned char)line_start[s])) return NULL;  /* a number, not a word */
+        char *w = malloc((size_t)(e - s) + 1);
+        memcpy(w, line_start + s, (size_t)(e - s));
+        w[e - s] = '\0';
+        return w;
+    }
+
+    /* Otherwise take the operator run, longest first so `?.` beats `?`. */
+    *is_op = true;
+    for (int len = 2; len >= 1; len--) {
+        int s = col;
+        if (s + len > line_len) { if (s > 0) s--; else continue; }
+        if (s + len > line_len) continue;
+        for (int i = 0; i < lsp_operator_docs_count; i++) {
+            const char *op = lsp_operator_docs[i].name;
+            if ((int)strlen(op) != len) continue;
+            if (strncmp(line_start + s, op, (size_t)len) == 0) return strdup(op);
+        }
+    }
+    return NULL;
+}
+
+/* Renders a docs table entry as hover markdown. */
+static char *doc_entry_markdown(const LspDocEntry *e) {
+    size_t n = strlen(e->signature) + strlen(e->description) + 64;
+    char *md = malloc(n);
+    snprintf(md, n, "```varian\n%s\n```\n\n%s", e->signature, e->description);
+    return md;
+}
+
+/* True when the token is being used as a member name rather than as a keyword.
+ * The reference is explicit that reserved words are accepted after `.`, so
+ * `regex.match(...)` and `resp.not_found` are ordinary property accesses and
+ * must not be documented as the `match`/`not` keywords. */
+static bool preceded_by_dot(const char *text, int line, int col) {
+    const char *p = text;
+    for (int i = 0; i < line && *p; p++)
+        if (*p == '\n') i++;
+    if (!*p) return false;
+    int c = col;
+    while (c > 0 && (isalnum((unsigned char)p[c-1]) || p[c-1] == '_')) c--;
+    while (c > 0 && (p[c-1] == ' ' || p[c-1] == '\t')) c--;
+    return c > 0 && p[c-1] == '.';
+}
+
+static char *lookup_language_doc(const char *word, bool is_op) {
+    if (!word) return NULL;
+    const LspDocEntry *tbl = is_op ? lsp_operator_docs : lsp_keyword_docs;
+    int count = is_op ? lsp_operator_docs_count : lsp_keyword_docs_count;
+    for (int i = 0; i < count; i++)
+        if (strcmp(tbl[i].name, word) == 0) return doc_entry_markdown(&tbl[i]);
+    return NULL;
+}
+
 /* ────────────────────────────────────────────────
  *  handle_hover
  * ──────────────────────────────────────────────── */
@@ -1105,14 +1227,58 @@ static void handle_hover(int id, const char *json, const char *uri) {
     int line_lsp = extract_json_int(json, "line");
     int char_lsp = extract_json_int(json, "character");
 
+    /* Resolved up front so it is available whether or not the file parses. */
+    bool word_is_op = false;
+    char *cursor_word = word_at_position(text, line_lsp, char_lsp, &word_is_op);
+
     int line_offset = 0;
     Arena *arena = NULL;
     AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
     if (!program) {
+        /* Unparseable file: still answer for keywords, types and operators
+         * rather than going silent, which is when hover is most useful. */
+        char *md = lookup_language_doc(cursor_word, word_is_op);
+        free(cursor_word);
+        if (md) {
+            char *esc = encode_json_string(md);
+            size_t n = strlen(esc) + 128;
+            char *buf = malloc(n);
+            snprintf(buf, n,
+                     "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"contents\":"
+                     "{\"kind\":\"markdown\",\"value\":%s}}}", id, esc);
+            send_response(buf);
+            free(buf); free(esc); free(md);
+            return;
+        }
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
         return;
+    }
+
+    /* A keyword, primitive type name or operator answers from the language
+     * reference immediately, ahead of the AST.
+     *
+     * It has to come first rather than act as a fallback: find_node_at returns
+     * the nearest ENCLOSING node, so a cursor on `while` or `use` resolves to
+     * whatever expression surrounds it and reports something confidently wrong
+     * ("bool literal" for the `true` in `while true`). These tokens are
+     * reserved, so no user symbol can share the name — the only exception is a
+     * reserved word used as a member name, which is excluded above. */
+    if (cursor_word && !preceded_by_dot(text, line_lsp, char_lsp)) {
+        char *doc = lookup_language_doc(cursor_word, word_is_op);
+        if (doc) {
+            char *esc = encode_json_string(doc);
+            size_t n = strlen(esc) + 128;
+            char *buf = malloc(n);
+            snprintf(buf, n,
+                     "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":{\"contents\":"
+                     "{\"kind\":\"markdown\",\"value\":%s}}}", id, esc);
+            send_response(buf);
+            free(buf); free(esc); free(doc); free(cursor_word);
+            arena_destroy(arena);
+            return;
+        }
     }
 
     /* Convert LSP 0‑indexed → Varian 1‑indexed, then offset by prelude */
@@ -1427,9 +1593,26 @@ static void handle_hover(int id, const char *json, const char *uri) {
     }
     #undef CURSOR_ON_NAME
 
-    if (!markdown) {
-        markdown = strdup("_(expression)_");
+    /* Language reference for keywords, primitive types and operators. Checked
+     * after the AST so a user's own symbol always wins over a same-named
+     * keyword, but before the generic fallback — these tokens either have no
+     * AST node at all, or resolve to one carrying nothing worth showing. */
+    if (!markdown || strcmp(markdown, "_(expression)_") == 0) {
+        char *doc = lookup_language_doc(cursor_word, word_is_op);
+        if (doc) { free(markdown); markdown = doc; }
     }
+
+    if (!markdown) {
+        /* Name the construct rather than saying "(expression)", which told the
+         * reader nothing and made working hovers look broken. */
+        markdown = cursor_word ? NULL : strdup("_(no symbol here)_");
+        if (!markdown) {
+            size_t n = strlen(cursor_word) + 32;
+            markdown = malloc(n);
+            snprintf(markdown, n, "`%s`", cursor_word);
+        }
+    }
+    free(cursor_word);
 
     char *md_enc = encode_json_string(markdown);
     size_t out_cap = strlen(md_enc) + 256;
