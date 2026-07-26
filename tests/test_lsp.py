@@ -91,7 +91,7 @@ def test_parameter_provenance():
     client = LspClient()
     res = client.call("initialize", {"capabilities": {}})
     assert res and "result" in res
-    
+
     doc_uri = "file:///test_params.vn"
     code = "fn foo(a, b: int) -> int { return a + b; }\nfn plain(x, y) { return x; }\n"
     client.notify("textDocument/didOpen", {
@@ -102,7 +102,7 @@ def test_parameter_provenance():
             "text": code
         }
     })
-    
+
     # Hover on foo
     hover_foo = client.call("textDocument/hover", {
         "textDocument": {"uri": doc_uri},
@@ -110,7 +110,7 @@ def test_parameter_provenance():
     })
     val_foo = hover_foo["result"]["contents"]["value"]
     assert "fn foo(a, b: int) -> int" in val_foo, f"Unexpected hover for foo: {val_foo}"
-    
+
     # Hover on plain
     hover_plain = client.call("textDocument/hover", {
         "textDocument": {"uri": doc_uri},
@@ -118,14 +118,14 @@ def test_parameter_provenance():
     })
     val_plain = hover_plain["result"]["contents"]["value"]
     assert "fn plain(x, y)" in val_plain, f"Unexpected hover for plain: {val_plain}"
-    
+
     client.close()
 
 def test_hover_depth():
     client = LspClient()
     res = client.call("initialize", {"capabilities": {}})
     assert res and "result" in res
-    
+
     doc_uri = "file:///test_hover.vn"
     code = (
         "/// Calculate area\n"
@@ -144,7 +144,7 @@ def test_hover_depth():
             "text": code
         }
     })
-    
+
     # 1. Docstring test on declaration
     hover_area = client.call("textDocument/hover", {
         "textDocument": {"uri": doc_uri},
@@ -152,7 +152,7 @@ def test_hover_depth():
     })
     val_area = hover_area["result"]["contents"]["value"]
     assert "Calculate area" in val_area, f"Docstring missing: {val_area}"
-    
+
     # 2. Call site hover
     hover_call = client.call("textDocument/hover", {
         "textDocument": {"uri": doc_uri},
@@ -160,7 +160,7 @@ def test_hover_depth():
     })
     val_call = hover_call["result"]["contents"]["value"]
     assert "fn area(w: int, h: int) -> int" in val_call, f"Call signature missing: {val_call}"
-    
+
     # 3. Struct literal hover lists fields
     hover_struct = client.call("textDocument/hover", {
         "textDocument": {"uri": doc_uri},
@@ -174,7 +174,7 @@ def test_completion():
     client = LspClient()
     res = client.call("initialize", {"capabilities": {}})
     assert res and "result" in res
-    
+
     doc_uri = "file:///test_comp.vn"
     code = (
         "use \"math\"\n"
@@ -192,7 +192,7 @@ def test_completion():
             "text": code
         }
     })
-    
+
     # 1. Module completion after use "
     print("Testing use completion...")
     comp_use = client.call("textDocument/completion", {
@@ -202,7 +202,7 @@ def test_completion():
     items_use = [item["label"] for item in comp_use["result"]["items"]]
     assert "math" in items_use or "json" in items_use, f"Module completion failed: {comp_use}"
     print("Use completion OK")
-    
+
     # 2. Dot completion on string
     print("Testing dot completion...")
     comp_dot = client.call("textDocument/completion", {
@@ -212,7 +212,7 @@ def test_completion():
     items_dot = [item["label"] for item in comp_dot["result"]["items"]]
     assert "len" in items_dot or "push" in items_dot, f"Dot completion failed: {comp_dot}"
     print("Dot completion OK")
-    
+
     # 3. Call parameter completion
     print("Testing call completion...")
     comp_call = client.call("textDocument/completion", {
@@ -222,7 +222,7 @@ def test_completion():
     items_call = [item["label"] for item in comp_call["result"]["items"]]
     assert "width" in items_call and "height" in items_call, f"Parameter completion failed: {comp_call}"
     print("Call completion OK")
-    
+
     # 4. Statement completion
     print("Testing stmt completion...")
     comp_stmt = client.call("textDocument/completion", {
@@ -232,7 +232,7 @@ def test_completion():
     items_stmt = {item["label"]: item for item in comp_stmt["result"]["items"]}
     assert "let" in items_stmt and "detail" in items_stmt["let"], f"Statement completion failed: {comp_stmt}"
     print("Stmt completion OK")
-    
+
     client.close()
 
 def test_signature_help():
@@ -328,7 +328,7 @@ def test_symbols():
         "    x: int,\n"
         "    y: int\n"
         "}\n"
-        "fn Point.area(self) -> int { return self.x * self.y; }\n"
+        "impl Point { fn area(self) -> int { return self.x * self.y; } }\n"
         "fn calculate_distance(p1, p2) { return 0; }\n"
     )
     client.notify("textDocument/didOpen", {
@@ -347,12 +347,15 @@ def test_symbols():
     assert doc_syms and "result" in doc_syms and isinstance(doc_syms["result"], list)
     names = [s["name"] for s in doc_syms["result"]]
     assert "Point" in names and "calculate_distance" in names, f"Expected Point & calculate_distance, got {names}"
-    
+
     # Check hierarchy: Point should have children (x, y, area)
     point_sym = next(s for s in doc_syms["result"] if s["name"] == "Point")
     assert "children" in point_sym and point_sym["children"] is not None
     child_names = [c["name"] for c in point_sym["children"]]
     assert "x" in child_names and "y" in child_names and "area" in child_names, f"Expected x, y, area in Point children, got {child_names}"
+    assert point_sym["selectionRange"]["end"]["character"] - point_sym["selectionRange"]["start"]["character"] == len("Point")
+    x_sym = next(s for s in point_sym["children"] if s["name"] == "x")
+    assert x_sym["selectionRange"]["start"] == {"line": 1, "character": 4}, x_sym
 
     # Workspace symbols
     ws_syms = client.call("workspace/symbol", {
@@ -365,6 +368,53 @@ def test_symbols():
     print("Symbols OK")
     client.close()
 
+def test_lsp_resilience():
+    print("Testing incomplete, multiline, UTF-16, and large LSP inputs...")
+    client = LspClient()
+    assert "result" in client.call("initialize", {"capabilities": {}})
+
+    incomplete_uri = "file:///incomplete.vn"
+    incomplete_code = (
+        "fn calculate(width: int, height: int) -> int { return width * height; }\n"
+        "fn broken() {\n"
+        "    let emoji = \"😀\"; calculate(\n"
+        "        other(1),\n"
+    )
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": incomplete_uri, "languageId": "varian", "version": 1, "text": incomplete_code
+    }})
+
+    completion = client.call("textDocument/completion", {
+        "textDocument": {"uri": incomplete_uri},
+        "position": {"line": 3, "character": 0},
+    })
+    labels = {item["label"] for item in completion["result"]["items"]}
+    assert {"width", "height"} <= labels, labels
+    uri = "file:///" + ("deep/" * 260) + "resilience.vn"
+    fields = "\n".join(f"    field_{i}: int," for i in range(60))
+    code = f"let emoji = \"😀\"; struct Large {{\n{fields}\n}}\nfn calculate() {{ return 1; }}\n"
+    client.notify("textDocument/didOpen", {"textDocument": {
+        "uri": uri, "languageId": "varian", "version": 1, "text": code
+    }})
+    symbols = client.call("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
+    large = next(item for item in symbols["result"] if item["name"] == "Large")
+    expected_col = len('let emoji = "😀"; struct '.encode("utf-16-le")) // 2
+    assert large["selectionRange"]["start"] == {"line": 0, "character": expected_col}, large
+    assert len(large["children"]) == 60
+    assert large["children"][-1]["name"] == "field_59"
+
+    workspace = client.call("workspace/symbol", {"query": "calculate"})
+    match = next(item for item in workspace["result"] if item["name"] == "calculate")
+    assert match["location"]["uri"] == uri
+
+    refused = client.call("textDocument/rename", {
+        "textDocument": {"uri": uri},
+        "position": {"line": 62, "character": 3},
+        "newName": "let",
+    })
+    assert refused.get("error", {}).get("code") == -32602, refused
+    client.close()
+
 if __name__ == "__main__":
     test_parameter_provenance()
     test_hover_depth()
@@ -372,5 +422,6 @@ if __name__ == "__main__":
     test_signature_help()
     test_inlay_hints()
     test_symbols()
+    test_lsp_resilience()
     print("All LSP tests passed!")
     sys.exit(0)

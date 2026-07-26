@@ -75,6 +75,24 @@ static const char *get_doc(const char *uri) {
     return NULL;
 }
 
+static int json_hex_digit(char c) {
+    if (c >= '0' && c <= '9') return c - '0';
+    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+    return -1;
+}
+
+static bool json_read_u16(const char *p, unsigned *value) {
+    unsigned result = 0;
+    for (int i = 0; i < 4; i++) {
+        int digit = json_hex_digit(p[i]);
+        if (digit < 0) return false;
+        result = (result << 4) | (unsigned)digit;
+    }
+    *value = result;
+    return true;
+}
+
 static char *decode_json_string(const char **p) {
     if (**p != '"') return NULL;
     (*p)++;
@@ -91,7 +109,37 @@ static char *decode_json_string(const char **p) {
             else if (c == 't') res[len++] = '\t';
             else if (c == '"') res[len++] = '"';
             else if (c == '\\') res[len++] = '\\';
-            else res[len++] = c;
+            else if (c == 'u') {
+                unsigned cp = 0;
+                if (!json_read_u16(*p + 1, &cp)) {
+                    free(res);
+                    return NULL;
+                }
+                *p += 5;
+                if (cp >= 0xd800 && cp <= 0xdbff && (*p)[0] == '\\' && (*p)[1] == 'u') {
+                    unsigned low = 0;
+                    if (json_read_u16(*p + 2, &low) && low >= 0xdc00 && low <= 0xdfff) {
+                        cp = 0x10000 + ((cp - 0xd800) << 10) + (low - 0xdc00);
+                        *p += 6;
+                    }
+                }
+                while (len + 5 >= cap) { cap *= 2; res = realloc(res, cap); }
+                if (cp <= 0x7f) res[len++] = (char)cp;
+                else if (cp <= 0x7ff) {
+                    res[len++] = (char)(0xc0 | (cp >> 6));
+                    res[len++] = (char)(0x80 | (cp & 0x3f));
+                } else if (cp <= 0xffff) {
+                    res[len++] = (char)(0xe0 | (cp >> 12));
+                    res[len++] = (char)(0x80 | ((cp >> 6) & 0x3f));
+                    res[len++] = (char)(0x80 | (cp & 0x3f));
+                } else {
+                    res[len++] = (char)(0xf0 | (cp >> 18));
+                    res[len++] = (char)(0x80 | ((cp >> 12) & 0x3f));
+                    res[len++] = (char)(0x80 | ((cp >> 6) & 0x3f));
+                    res[len++] = (char)(0x80 | (cp & 0x3f));
+                }
+                continue;
+            } else res[len++] = c;
             (*p)++;
         } else {
             res[len++] = **p;
@@ -783,10 +831,6 @@ static int type_render(const Type *t, char *out, size_t cap) {
     }
 }
 
-/* Builds "name: type, other" for a function's parameter list. Falls back to
- * bare names wherever an annotation is missing or unrenderable.
- *
- * KNOWN LIMITATION: parser.c:611 gives every UNANNOTATED parameter a synthetic
 /* Render parameters. Parameter types are only rendered if the author explicitly
  * wrote a type annotation (tracked via node->fn_decl.param_type_explicit).
  * Unannotated parameters render bare. */
@@ -1841,6 +1885,8 @@ typedef struct {
     int count;
 } CompletionList;
 
+static int utf8_codepoint_bytes(unsigned char c);
+
 static void completion_init(CompletionList *cl) {
     cl->cap = 8192;
     cl->len = 0;
@@ -1898,6 +1944,79 @@ static void completion_free(CompletionList *cl) {
     if (cl->buf) free(cl->buf);
 }
 
+/* Completion must keep working while the document is syntactically incomplete.
+ * Recover function parameter names directly from the lexer instead of relying
+ * exclusively on a complete AST. */
+static void completion_add_lexed_params(CompletionList *cl, const char *text,
+                                        const char *callee_name) {
+    if (!text || !callee_name || !callee_name[0]) return;
+    Lexer lexer;
+    lexer_init(&lexer, text, "<lsp-completion>");
+    bool after_fn = false;
+    bool wanted_fn = false;
+    bool expect_param = false;
+    int paren_depth = 0;
+
+    for (;;) {
+        Token token = lexer_next(&lexer);
+        if (token.type == TOKEN_EOF) {
+            token_free(&token);
+            break;
+        }
+        if (token.type == TOKEN_FN) {
+            after_fn = true;
+            wanted_fn = false;
+        } else if (after_fn && token.type == TOKEN_IDENTIFIER) {
+            wanted_fn = strlen(callee_name) == (size_t)token.length &&
+                        strncmp(token.start, callee_name, (size_t)token.length) == 0;
+            after_fn = false;
+        } else if (wanted_fn && token.type == TOKEN_LPAREN) {
+            paren_depth = 1;
+            expect_param = true;
+        } else if (paren_depth > 0) {
+            if (token.type == TOKEN_LPAREN) paren_depth++;
+            else if (token.type == TOKEN_RPAREN && --paren_depth == 0) {
+                token_free(&token);
+                return;
+            } else if (paren_depth == 1 && token.type == TOKEN_COMMA) {
+                expect_param = true;
+            } else if (paren_depth == 1 && expect_param && token.type == TOKEN_IDENTIFIER) {
+                char *name = strndup(token.start, (size_t)token.length);
+                completion_add(cl, name, 6, "parameter", "Function parameter");
+                free(name);
+                expect_param = false;
+            }
+        }
+        token_free(&token);
+    }
+}
+
+static bool find_open_call_callee(const char *text, size_t cursor_offset,
+                                  char *callee, size_t callee_cap) {
+    int depth = 0;
+    for (size_t i = cursor_offset; i > 0; i--) {
+        char c = text[i - 1];
+        if (c == ')') {
+            depth++;
+        } else if (c == '(') {
+            if (depth > 0) {
+                depth--;
+                continue;
+            }
+            size_t end = i - 1;
+            while (end > 0 && isspace((unsigned char)text[end - 1])) end--;
+            size_t start = end;
+            while (start > 0 && (isalnum((unsigned char)text[start - 1]) || text[start - 1] == '_')) start--;
+            size_t len = end - start;
+            if (len == 0 || len >= callee_cap) return false;
+            memcpy(callee, text + start, len);
+            callee[len] = '\0';
+            return true;
+        }
+    }
+    return false;
+}
+
 static void handle_completion(int id, const char *json, const char *uri) {
     const char *text = get_doc(uri);
     int line_lsp = extract_json_int(json, "line");
@@ -1926,7 +2045,16 @@ static void handle_completion(int id, const char *json, const char *uri) {
     const char *line_start = p;
     const char *line_end = strchr(p, '\n');
     int line_len = line_end ? (int)(line_end - line_start) : (int)strlen(line_start);
-    int cursor_col = char_lsp < line_len ? char_lsp : line_len;
+    int cursor_col = 0;
+    int utf16_col = 0;
+    while (cursor_col < line_len && utf16_col < char_lsp) {
+        int bytes = utf8_codepoint_bytes((unsigned char)line_start[cursor_col]);
+        if (cursor_col + bytes > line_len) bytes = 1;
+        int units = bytes == 4 ? 2 : 1;
+        if (utf16_col + units > char_lsp) break;
+        cursor_col += bytes;
+        utf16_col += units;
+    }
 
     char line_sub[512] = {0};
     if (cursor_col > 0 && cursor_col < (int)sizeof(line_sub)) {
@@ -2033,18 +2161,9 @@ static void handle_completion(int id, const char *json, const char *uri) {
             /* Context 3 & 4: Call parameter completion + Statement/Expression completion */
 
             /* Check if inside call parameters */
-            char *lparen = strrchr(line_sub, '(');
-            if (lparen) {
-                int lp_idx = lparen - line_sub;
-                int start_idx = lp_idx - 1;
-                while (start_idx >= 0 && (isalnum(line_sub[start_idx]) || line_sub[start_idx] == '_')) {
-                    start_idx--;
-                }
-                start_idx++;
-                char callee_name[128] = {0};
-                if (lp_idx - start_idx > 0 && lp_idx - start_idx < (int)sizeof(callee_name)) {
-                    strncpy(callee_name, line_sub + start_idx, lp_idx - start_idx);
-                }
+            char callee_name[128] = {0};
+            size_t cursor_offset = (size_t)(line_start - text) + (size_t)cursor_col;
+            if (find_open_call_callee(text, cursor_offset, callee_name, sizeof(callee_name))) {
                 if (callee_name[0] && program) {
                     AstNode *cdecl = find_decl(program, callee_name);
                     if (cdecl && cdecl->kind == NODE_FN_DECL) {
@@ -2054,6 +2173,9 @@ static void handle_completion(int id, const char *json, const char *uri) {
                             }
                         }
                     }
+                }
+                if (callee_name[0]) {
+                    completion_add_lexed_params(&cl, text, callee_name);
                 }
             }
 
@@ -2148,6 +2270,29 @@ static void handle_completion(int id, const char *json, const char *uri) {
 /* ────────────────────────────────────────────────
  *  handle_definition
  * ──────────────────────────────────────────────── */
+static bool is_reserved_keyword(const char *word) {
+    if (!word) return false;
+    static const char *keywords[] = {
+        "let", "const", "fn", "return", "if", "else", "while", "for", "in",
+        "loop", "match", "case", "struct", "schema", "enum", "actor", "impl", "trait",
+        "type", "use", "pub", "mut", "async", "await", "break", "continue",
+        "comptime", "try", "catch", "assert", "test", "true", "false", "null",
+        "bool", "int", "float", "string", "byte", "void", "self"
+    };
+    for (size_t i = 0; i < sizeof(keywords) / sizeof(keywords[0]); i++) {
+        if (strcmp(word, keywords[i]) == 0) return true;
+    }
+    return false;
+}
+
+static bool is_valid_identifier(const char *word) {
+    if (!word || (!isalpha((unsigned char)word[0]) && word[0] != '_')) return false;
+    for (const char *p = word + 1; *p; p++) {
+        if (!isalnum((unsigned char)*p) && *p != '_') return false;
+    }
+    return !is_reserved_keyword(word);
+}
+
 static void handle_definition(int id, const char *json, const char *uri) {
     const char *text = get_doc(uri);
     if (!text) {
@@ -2236,6 +2381,58 @@ typedef struct DocumentSymbol {
     int child_cap;
 } DocumentSymbol;
 
+static int utf8_codepoint_bytes(unsigned char c) {
+    if ((c & 0x80) == 0) return 1;
+    if ((c & 0xe0) == 0xc0) return 2;
+    if ((c & 0xf0) == 0xe0) return 3;
+    if ((c & 0xf8) == 0xf0) return 4;
+    return 1;
+}
+
+static int utf16_units_between(const char *start, const char *end) {
+    int units = 0;
+    while (start < end && *start) {
+        int bytes = utf8_codepoint_bytes((unsigned char)*start);
+        if (start + bytes > end) bytes = 1;
+        units += bytes == 4 ? 2 : 1;
+        start += bytes;
+    }
+    return units;
+}
+
+/* Locate a declaration name in user source and return protocol-correct UTF-16
+ * coordinates.  AST offsets include the injected prelude, hence user_offset. */
+static void symbol_name_range(const char *text, const char *name, int ast_offset,
+                              int user_offset, int fallback_line, int fallback_col,
+                              int *line, int *col, int *end_col) {
+    int hint = ast_offset - user_offset;
+    int text_len = (int)strlen(text);
+    if (hint < 0 || hint > text_len) hint = 0;
+    int search_offset = hint > 256 ? hint - 256 : 0;
+    const char *hit = text + search_offset;
+    size_t name_len = strlen(name);
+    while ((hit = strstr(hit, name)) != NULL) {
+        bool left_ok = hit == text || (!isalnum((unsigned char)hit[-1]) && hit[-1] != '_');
+        bool right_ok = hit + name_len >= text + text_len ||
+                        (!isalnum((unsigned char)hit[name_len]) && hit[name_len] != '_');
+        if (left_ok && right_ok) break;
+        hit++;
+    }
+    if (!hit) {
+        *line = fallback_line;
+        *col = fallback_col;
+        *end_col = fallback_col + utf16_units_between(name, name + strlen(name));
+        return;
+    }
+    const char *line_start = hit;
+    while (line_start > text && line_start[-1] != '\n') line_start--;
+    int found_line = 0;
+    for (const char *p = text; p < line_start; p++) if (*p == '\n') found_line++;
+    *line = found_line;
+    *col = utf16_units_between(line_start, hit);
+    *end_col = *col + utf16_units_between(name, name + strlen(name));
+}
+
 static DocumentSymbol *doc_symbol_create(const char *name, int kind, int line, int col, int end_line, int end_col) {
     DocumentSymbol *ds = calloc(1, sizeof(DocumentSymbol));
     if (name) strncpy(ds->name, name, sizeof(ds->name) - 1);
@@ -2267,7 +2464,7 @@ static void doc_symbol_free(DocumentSymbol *ds) {
 
 static char *doc_symbol_to_json(DocumentSymbol *ds) {
     char *name_enc = encode_json_string(ds->name);
-    char children_json[4096] = {0};
+    char *children_json = NULL;
 
     if (ds->child_count > 0) {
         size_t ccap = 4096;
@@ -2286,19 +2483,22 @@ static char *doc_symbol_to_json(DocumentSymbol *ds) {
             clen += strlen(cj) + (i > 0 ? 1 : 0);
             free(cj);
         }
-        snprintf(children_json, sizeof(children_json), ",\"children\":[%s]", cbuf);
+        size_t children_cap = strlen(cbuf) + 32;
+        children_json = malloc(children_cap);
+        snprintf(children_json, children_cap, ",\"children\":[%s]", cbuf);
         free(cbuf);
     }
 
-    size_t out_cap = strlen(name_enc) + strlen(children_json) + 512;
+    size_t out_cap = strlen(name_enc) + (children_json ? strlen(children_json) : 0) + 512;
     char *buf = malloc(out_cap);
     snprintf(buf, out_cap,
              "{\"name\":%s,\"kind\":%d,\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"selectionRange\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}%s}",
              name_enc, ds->kind,
              ds->line, ds->col, ds->end_line, ds->end_col,
              ds->line, ds->col, ds->end_line, ds->end_col,
-             children_json);
+             children_json ? children_json : "");
     free(name_enc);
+    free(children_json);
     return buf;
 }
 
@@ -2313,8 +2513,9 @@ static void handle_document_symbols(int id, const char *json, const char *uri) {
     }
 
     int line_offset = 0;
+    int user_offset = 0;
     Arena *arena = NULL;
-    AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
+    AstNode *program = parse_doc(text, uri, &arena, &line_offset, &user_offset);
     if (!program || program->kind != NODE_PROGRAM) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":[]}", id);
@@ -2340,39 +2541,55 @@ static void handle_document_symbols(int id, const char *json, const char *uri) {
         if (s->loc.line <= line_offset) continue;
         int line = s->loc.line - 1 - line_offset;
         int col = s->loc.column - 1;
+        int end_col = col + 1;
 
         if (s->kind == NODE_STRUCT_DECL) {
-            DocumentSymbol *ds = doc_symbol_create(s->struct_decl.name, 23, line, col, line, col + 1);
+            symbol_name_range(text, s->struct_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
+            DocumentSymbol *ds = doc_symbol_create(s->struct_decl.name, 23, line, col, line, end_col);
             for (int f = 0; f < s->struct_decl.field_count; f++) {
-                DocumentSymbol *field_ds = doc_symbol_create(s->struct_decl.field_names[f], 8, line, col, line, col + 1);
+                int fl = line, fc = col, fe = col + 1;
+                symbol_name_range(text, s->struct_decl.field_names[f], s->loc.offset, user_offset, fl, fc, &fl, &fc, &fe);
+                DocumentSymbol *field_ds = doc_symbol_create(s->struct_decl.field_names[f], 8, fl, fc, fl, fe);
                 doc_symbol_add_child(ds, field_ds);
             }
             ADD_TOP_SYMBOL(ds);
         } else if (s->kind == NODE_SCHEMA_DECL) {
-            DocumentSymbol *ds = doc_symbol_create(s->schema_decl.name, 23, line, col, line, col + 1);
+            symbol_name_range(text, s->schema_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
+            DocumentSymbol *ds = doc_symbol_create(s->schema_decl.name, 23, line, col, line, end_col);
             for (int f = 0; f < s->schema_decl.field_count; f++) {
-                DocumentSymbol *field_ds = doc_symbol_create(s->schema_decl.field_names[f], 8, line, col, line, col + 1);
+                int fl = line, fc = col, fe = col + 1;
+                symbol_name_range(text, s->schema_decl.field_names[f], s->loc.offset, user_offset, fl, fc, &fl, &fc, &fe);
+                DocumentSymbol *field_ds = doc_symbol_create(s->schema_decl.field_names[f], 8, fl, fc, fl, fe);
                 doc_symbol_add_child(ds, field_ds);
             }
             ADD_TOP_SYMBOL(ds);
         } else if (s->kind == NODE_ENUM_DECL) {
-            DocumentSymbol *ds = doc_symbol_create(s->enum_decl.name, 10, line, col, line, col + 1);
+            symbol_name_range(text, s->enum_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
+            DocumentSymbol *ds = doc_symbol_create(s->enum_decl.name, 10, line, col, line, end_col);
             for (int v = 0; v < s->enum_decl.variant_count; v++) {
-                DocumentSymbol *v_ds = doc_symbol_create(s->enum_decl.variant_names[v], 22, line, col, line, col + 1);
+                int vl = line, vc = col, ve = col + 1;
+                symbol_name_range(text, s->enum_decl.variant_names[v], s->loc.offset, user_offset, vl, vc, &vl, &vc, &ve);
+                DocumentSymbol *v_ds = doc_symbol_create(s->enum_decl.variant_names[v], 22, vl, vc, vl, ve);
                 doc_symbol_add_child(ds, v_ds);
             }
             ADD_TOP_SYMBOL(ds);
         } else if (s->kind == NODE_TRAIT_DECL) {
-            DocumentSymbol *ds = doc_symbol_create(s->trait_decl.name, 11, line, col, line, col + 1);
+            symbol_name_range(text, s->trait_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
+            DocumentSymbol *ds = doc_symbol_create(s->trait_decl.name, 11, line, col, line, end_col);
             for (int m = 0; m < s->trait_decl.method_count; m++) {
-                DocumentSymbol *m_ds = doc_symbol_create(s->trait_decl.method_names[m], 6, line, col, line, col + 1);
+                int ml = line, mc = col, me = col + 1;
+                symbol_name_range(text, s->trait_decl.method_names[m], s->loc.offset, user_offset, ml, mc, &ml, &mc, &me);
+                DocumentSymbol *m_ds = doc_symbol_create(s->trait_decl.method_names[m], 6, ml, mc, ml, me);
                 doc_symbol_add_child(ds, m_ds);
             }
             ADD_TOP_SYMBOL(ds);
         } else if (s->kind == NODE_ACTOR_DECL) {
-            DocumentSymbol *ds = doc_symbol_create(s->actor_decl.name, 5, line, col, line, col + 1);
+            symbol_name_range(text, s->actor_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
+            DocumentSymbol *ds = doc_symbol_create(s->actor_decl.name, 5, line, col, line, end_col);
             for (int f = 0; f < s->actor_decl.field_count; f++) {
-                DocumentSymbol *f_ds = doc_symbol_create(s->actor_decl.field_names[f], 8, line, col, line, col + 1);
+                int fl = line, fc = col, fe = col + 1;
+                symbol_name_range(text, s->actor_decl.field_names[f], s->loc.offset, user_offset, fl, fc, &fl, &fc, &fe);
+                DocumentSymbol *f_ds = doc_symbol_create(s->actor_decl.field_names[f], 8, fl, fc, fl, fe);
                 doc_symbol_add_child(ds, f_ds);
             }
             ADD_TOP_SYMBOL(ds);
@@ -2384,8 +2601,10 @@ static void handle_document_symbols(int id, const char *json, const char *uri) {
         if (s->loc.line <= line_offset) continue;
         int line = s->loc.line - 1 - line_offset;
         int col = s->loc.column - 1;
+        int end_col = col + 1;
 
         if (s->kind == NODE_FN_DECL) {
+            symbol_name_range(text, s->fn_decl.name, s->loc.offset, user_offset, line, col, &line, &col, &end_col);
             if (s->fn_decl.impl_type) {
                 DocumentSymbol *parent = NULL;
                 for (int t = 0; t < top_count; t++) {
@@ -2394,19 +2613,38 @@ static void handle_document_symbols(int id, const char *json, const char *uri) {
                         break;
                     }
                 }
-                DocumentSymbol *m_ds = doc_symbol_create(s->fn_decl.name, 6, line, col, line, col + 1);
+                DocumentSymbol *m_ds = doc_symbol_create(s->fn_decl.name, 6, line, col, line, end_col);
                 if (parent) {
                     doc_symbol_add_child(parent, m_ds);
                 } else {
                     ADD_TOP_SYMBOL(m_ds);
                 }
             } else {
-                DocumentSymbol *fn_ds = doc_symbol_create(s->fn_decl.name, 12, line, col, line, col + 1);
+                DocumentSymbol *fn_ds = doc_symbol_create(s->fn_decl.name, 12, line, col, line, end_col);
                 ADD_TOP_SYMBOL(fn_ds);
             }
         } else if (s->kind == NODE_TEST) {
             DocumentSymbol *t_ds = doc_symbol_create(s->test_decl.description, 12, line, col, line, col + 1);
             ADD_TOP_SYMBOL(t_ds);
+        } else if (s->kind == NODE_BLOCK) {
+            /* Parser representation for an `impl Type { ... }` declaration. */
+            for (int m = 0; m < s->block.stmt_count; m++) {
+                AstNode *method = s->block.stmts[m];
+                if (!method || method->kind != NODE_FN_DECL || !method->fn_decl.impl_type) continue;
+                int ml = line, mc = col, me = col + 1;
+                symbol_name_range(text, method->fn_decl.name, method->loc.offset,
+                                  user_offset, ml, mc, &ml, &mc, &me);
+                DocumentSymbol *m_ds = doc_symbol_create(method->fn_decl.name, 6, ml, mc, ml, me);
+                DocumentSymbol *parent = NULL;
+                for (int t = 0; t < top_count; t++) {
+                    if (strcmp(top_symbols[t]->name, method->fn_decl.impl_type) == 0) {
+                        parent = top_symbols[t];
+                        break;
+                    }
+                }
+                if (parent) doc_symbol_add_child(parent, m_ds);
+                else ADD_TOP_SYMBOL(m_ds);
+            }
         }
     }
 
@@ -2456,8 +2694,9 @@ static void handle_workspace_symbols(int id, const char *json) {
         if (!text) continue;
 
         int line_offset = 0;
+        int user_offset = 0;
         Arena *arena = NULL;
-        AstNode *program = parse_doc(text, uri, &arena, &line_offset, NULL);
+        AstNode *program = parse_doc(text, uri, &arena, &line_offset, &user_offset);
         if (!program || program->kind != NODE_PROGRAM) {
             if (arena) arena_destroy(arena);
             continue;
@@ -2524,13 +2763,17 @@ static void handle_workspace_symbols(int id, const char *json) {
                 if (match) {
                     int line = s->loc.line - 1 - line_offset;
                     int col = s->loc.column - 1;
+                    int end_col = col + 1;
+                    symbol_name_range(text, name, s->loc.offset, user_offset,
+                                      line, col, &line, &col, &end_col);
                     char *name_enc = encode_json_string(name);
                     char *uri_enc = encode_json_string(uri);
 
-                    char item[1024];
-                    snprintf(item, sizeof(item),
+                    size_t item_cap = strlen(name_enc) + strlen(uri_enc) + 256;
+                    char *item = malloc(item_cap);
+                    snprintf(item, item_cap,
                              "%s{\"name\":%s,\"kind\":%d,\"location\":{\"uri\":%s,\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}}}}",
-                             count > 0 ? "," : "", name_enc, kind_lsp, uri_enc, line, col, line, col + 1);
+                             count > 0 ? "," : "", name_enc, kind_lsp, uri_enc, line, col, line, end_col);
                     free(name_enc);
                     free(uri_enc);
 
@@ -2540,6 +2783,7 @@ static void handle_workspace_symbols(int id, const char *json) {
                         buf = realloc(buf, cap);
                     }
                     strcat(buf, item);
+                    free(item);
                     len += ilen;
                     count++;
                 }
@@ -2820,15 +3064,28 @@ static void handle_rename(int id, const char *json, const char *uri) {
     }
 
     char *new_name = extract_json_string(json, "newName");
-    if (!new_name) {
-        char buf[256];
-        snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
+    if (!is_valid_identifier(new_name)) {
+        char buf[384];
+        snprintf(buf, sizeof(buf),
+                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"New name must be a non-keyword Varian identifier.\"}}", id);
         send_response(buf);
+        free(new_name);
         return;
     }
 
     int line_lsp = extract_json_int(json, "line");
     int char_lsp = extract_json_int(json, "character");
+    bool word_is_op = false;
+    char *cursor_word = word_at_position(text, line_lsp, char_lsp, &word_is_op);
+    if (!cursor_word || word_is_op || is_reserved_keyword(cursor_word) || lookup_native_doc(cursor_word)) {
+        char buf[384];
+        snprintf(buf, sizeof(buf),
+                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Cannot rename a keyword, operator, or native builtin.\"}}", id);
+        send_response(buf);
+        free(cursor_word);
+        free(new_name);
+        return;
+    }
 
     int line_offset = 0;
     Arena *arena = NULL;
@@ -2838,6 +3095,7 @@ static void handle_rename(int id, const char *json, const char *uri) {
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
         free(new_name);
+        free(cursor_word);
         return;
     }
 
@@ -2851,12 +3109,26 @@ static void handle_rename(int id, const char *json, const char *uri) {
     if (found && found->kind == NODE_IDENTIFIER) {
         target_name = found->identifier.name;
     }
+    if (!target_name) target_name = cursor_word;
 
     if (!target_name) {
         char buf[256];
         snprintf(buf, sizeof(buf), "{\"jsonrpc\":\"2.0\",\"id\":%d,\"result\":null}", id);
         send_response(buf);
         free(new_name);
+        free(cursor_word);
+        arena_destroy(arena);
+        return;
+    }
+
+    AstNode *collision = find_decl(program, new_name);
+    if (collision && strcmp(new_name, target_name) != 0) {
+        char buf[512];
+        snprintf(buf, sizeof(buf),
+                 "{\"jsonrpc\":\"2.0\",\"id\":%d,\"error\":{\"code\":-32602,\"message\":\"Target name collides with an existing symbol.\"}}", id);
+        send_response(buf);
+        free(new_name);
+        free(cursor_word);
         arena_destroy(arena);
         return;
     }
@@ -2920,6 +3192,7 @@ static void handle_rename(int id, const char *json, const char *uri) {
     free(edits);
     free(out_json);
     free(new_name);
+    free(cursor_word);
     arena_destroy(arena);
 }
 
