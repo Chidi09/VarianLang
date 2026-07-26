@@ -186,7 +186,9 @@ for:
           Write-Host "Installing libffi from MSYS2..."
           $msys = "C:\msys64"
           $pacman = "$msys\usr\bin\pacman.exe"
-          & $pacman -Sy --needed --noconfirm mingw-w64-ucrt-x86_64-libffi
+          # 2>&1 | Write-Host keeps pacman's harmless stderr notices (e.g. "creating
+          # cache dir") from being converted into a terminating error under Stop.
+          & $pacman -Sy --needed --noconfirm mingw-w64-ucrt-x86_64-libffi 2>&1 | Write-Host
           if ($LASTEXITCODE -ne 0) { throw "pacman failed to install libffi (exit $LASTEXITCODE)" }
           md "$deps\libffi\include" -Force | Out-Null
           md "$deps\libffi\lib" -Force | Out-Null
