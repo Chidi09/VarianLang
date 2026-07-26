@@ -18,7 +18,7 @@
             <span class="material-symbols-outlined text-[#3b82f6]" style="font-variation-settings: 'FILL' 1;">add_box</span>
             <h2 class="font-bold text-lg text-white">New Agent Configuration</h2>
           </div>
-          
+
           <form class="flex flex-col gap-4" onsubmit="createScraper(event)">
             <div class="flex flex-col gap-2">
               <label class="text-[11px] font-bold text-[#b9cacb] uppercase tracking-wider">Agent Name</label>
@@ -92,19 +92,19 @@ window.createScraper = async function(event) {
     event.preventDefault();
     let name = document.getElementById("agent-name").value;
     let prompt = document.getElementById("agent-prompt").value;
-    
+
     let btn = event.target.querySelector("button");
     let originalText = btn.innerHTML;
     btn.innerHTML = "Saving... <span class='material-symbols-outlined animate-spin text-[16px]'>sync</span>";
     btn.disabled = true;
-    
+
     try {
         let res = await fetch("/api/scrapers", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name: name, prompt: prompt })
         });
-        
+
         if (res.ok) {
             window.location.reload();
         } else {

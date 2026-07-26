@@ -11,7 +11,7 @@
     <Header />
 
     <main class="flex-grow pt-24 px-10 max-w-[1440px] mx-auto w-full grid grid-cols-1 lg:grid-cols-12 gap-6">
-      
+
       <!-- API Keys Manager (Left column - 6 cols) -->
       <section class="lg:col-span-6 flex flex-col gap-6">
         <div class="glass-panel rounded-xl p-6 flex flex-col gap-6">
@@ -21,7 +21,7 @@
               API Authorization Keys
             </h3>
           </div>
-          
+
           <!-- Key Generation Form -->
           <form class="bg-[#122131]/30 p-4 rounded-lg border border-[#3b494b]/20 flex gap-4" onsubmit="createApiKey(event)">
             <input id="key-name" class="flex-grow bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2 text-white text-xs input-glow" placeholder="e.g. Production Key" type="text" required />
@@ -114,7 +114,7 @@ window.createApiKey = async function(event) {
     let name = document.getElementById("key-name").value;
     let btn = event.target.querySelector("button");
     btn.disabled = true;
-    
+
     try {
         let res = await fetch("/api/keys", {
             method: "POST",
@@ -136,7 +136,7 @@ window.createWebhook = async function(event) {
     let events = document.getElementById("webhook-events").value;
     let btn = event.target.querySelector("button");
     btn.disabled = true;
-    
+
     try {
         let res = await fetch("/api/webhooks", {
             method: "POST",

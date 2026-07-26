@@ -80,7 +80,7 @@ window.saveSettings = async function() {
     let model = document.getElementById("gemini-model").value;
     let timeout = document.getElementById("crawler-timeout").value;
     let threads = document.getElementById("crawler-threads").value;
-    
+
     try {
         let res = await fetch("/api/settings", {
             method: "PUT",
@@ -91,7 +91,7 @@ window.saveSettings = async function() {
                 crawler_threads: threads
             })
         });
-        
+
         if (res.ok) {
             // Toast logic
             alert("Settings saved successfully!");

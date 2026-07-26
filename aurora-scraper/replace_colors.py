@@ -10,12 +10,12 @@ replacements = {
 def process_file(filepath):
     with open(filepath, 'r') as f:
         content = f.read()
-    
+
     new_content = content
     for old, new in replacements.items():
         new_content = new_content.replace(old, new)
         new_content = new_content.replace(old.upper(), new)
-        
+
     if new_content != content:
         with open(filepath, 'w') as f:
             f.write(new_content)

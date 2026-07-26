@@ -16,37 +16,37 @@
       <span class="material-symbols-outlined">dashboard</span>
       <span>Dashboard</span>
     </a>
-    
+
     <!-- Scrapers Library -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_library}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/library">
       <span class="material-symbols-outlined">list_alt</span>
       <span>Scrapers</span>
     </a>
-    
+
     <!-- Jobs History -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_jobs}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/jobs">
       <span class="material-symbols-outlined">history</span>
       <span>Jobs</span>
     </a>
-    
+
     <!-- Dataset Explorer -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_datasets}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/datasets">
       <span class="material-symbols-outlined">dataset</span>
       <span>Datasets</span>
     </a>
-    
+
     <!-- Workflow Builder -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_workflow}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/workflow">
       <span class="material-symbols-outlined">hub</span>
       <span>Workflow Builder</span>
     </a>
-    
+
     <!-- API & Webhooks -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_api}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/api">
       <span class="material-symbols-outlined">vpn_key</span>
       <span>API & Webhooks</span>
     </a>
-    
+
     <!-- AI Chat -->
     <a class="flex items-center gap-3 px-4 py-3 rounded-lg text-sm font-medium transition-all {{#if active_ai}}text-[#3b82f6] bg-[#3b82f6]/10{{else}}text-[#b9cacb] hover:bg-[#273647]/30 hover:text-white{{/if}}" href="/ai">
       <span class="material-symbols-outlined">chat</span>

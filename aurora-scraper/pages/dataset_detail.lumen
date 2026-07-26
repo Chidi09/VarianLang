@@ -27,7 +27,7 @@
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         <!-- Metadata Sidebar -->
         <aside class="lg:col-span-4 flex flex-col gap-6">
           <div class="glass-panel rounded-xl p-6 flex flex-col gap-4">
@@ -35,12 +35,12 @@
               <span class="material-symbols-outlined text-[#3b82f6] text-[18px]">info</span>
               Extraction Metadata
             </h3>
-            
+
             <div class="flex flex-col gap-1">
               <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Page Title</span>
               <span class="text-sm font-semibold text-white">{{ dataset.title }}</span>
             </div>
-            
+
             <div class="flex flex-col gap-1">
               <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Status</span>
               {{#if dataset.status == 'success'}}
@@ -49,12 +49,12 @@
                 <span class="inline-flex w-fit items-center gap-1.5 px-2 py-0.5 rounded bg-red-500/10 text-red-400 border border-red-500/20 text-[10px] font-semibold">FAILED</span>
               {{/if}}
             </div>
-            
+
             <div class="flex flex-col gap-1">
               <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Job ID Reference</span>
               <a href="/jobs" class="text-sm font-mono text-[#3b82f6] hover:underline">#JOB-{{ dataset.job_id }}</a>
             </div>
-            
+
             <div class="flex flex-col gap-1">
               <span class="text-[10px] font-bold text-[#b9cacb] uppercase">Scraped At</span>
               <span class="text-xs text-[#b9cacb] font-mono">{{ dataset.created }}</span>
@@ -74,7 +74,7 @@
                 <span class="material-symbols-outlined text-[14px]">content_copy</span> Copy
               </button>
             </div>
-            
+
             <div class="flex-grow bg-[#020617] p-6 overflow-auto">
               <pre id="json-content" class="font-mono text-sm text-[#dcb8ff] leading-relaxed whitespace-pre-wrap">{{ dataset.extracted_json }}</pre>
             </div>

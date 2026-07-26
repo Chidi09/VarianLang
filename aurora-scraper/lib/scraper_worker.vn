@@ -3,14 +3,14 @@
 
 fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini_key) {
     sqlite.query(conn, "UPDATE jobs SET status = 'running', started_at = datetime('now') WHERE id = ?", [job_id])
-    
+
     // We will keep track of visited URLs to avoid infinite loops
     let visited = http.create_struct([], [])
     let queue = [http.create_struct(["url", "depth"], [target_url, 1])]
-    
+
     let total_pages_discovered = 0
     let total_pages_analyzed = 0
-    
+
     // Initialize Gemini AI Client
     let ai = null
     if gemini_key != null and gemini_key != "" {
@@ -19,7 +19,7 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
             ["gemini", gemini_key, "gemini-2.5-flash"]
         ))
     }
-    
+
     while queue.len() > 0 {
         // Pop first URL from queue
         let current = queue[0]
@@ -29,15 +29,15 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
             next_queue = next_queue.push(queue[qi])
         }
         queue = next_queue
-        
+
         let url = current.url
         let depth = current.depth
-        
+
         // Skip if already visited
         if _validate.get_field(visited, url) != null {
             continue
         }
-        
+
         // Mark as visited
         let visited_keys = _validate.get_keys(visited).push(url)
         let visited_vals = []
@@ -46,10 +46,10 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
         }
         visited_vals = visited_vals.push(true)
         visited = http.create_struct(visited_keys, visited_vals)
-        
+
         // Update Discovered Pages
         total_pages_discovered = total_pages_discovered + 1
-        
+
         // Fetch page HTML
         let html = ""
         let title = "Webpage"
@@ -60,7 +60,7 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
             status_code = "failed"
             print("Failed to fetch: " + url + " - " + e)
         }
-        
+
         // Extract Page Title
         if html != "" {
             let title_match = regex.match("<title>([^<]+)</title>", html)
@@ -68,37 +68,37 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
                 title = title_match
             }
         }
-        
+
         // Extract new links if depth is less than max_depth
         if html != "" and depth < max_depth {
             let matches = regex.find_all("href=\"https?://[^\"]+\"", html)
             for li in 0..matches.len() {
                 let match_str = matches[li]
                 let found_url = match_str.substring(6, match_str.len() - 1)
-                
+
                 // Only enqueue if not visited yet
                 if _validate.get_field(visited, found_url) == null {
                     queue = queue.push(http.create_struct(["url", "depth"], [found_url, depth + 1]))
                 }
             }
         }
-        
+
         // Send page content to Gemini AI if client exists
         let extracted_json = "{}"
         if html != "" and ai != null {
             let clean_text = _sanitize.strip_html(html)
             clean_text = _sanitize.trim(clean_text)
-            
+
             // Limit text length to avoid token issues
             if clean_text.len() > 10000 {
                 clean_text = clean_text.substring(0, 10000)
             }
-            
+
             let system_prompt = "You are an expert web scraping assistant. Extract target data from the provided clean page text based on this instruction: " + scraper_prompt + "\n\nFormat the output strictly as a single JSON object. Do not include markdown code block formatting. Return only raw valid JSON."
-            
+
             let conv = ai_conversation(system_prompt)
             conv.add("user", clean_text)
-            
+
             try {
                 let resp = ai.chat(conv, null)
                 if resp != null and resp.message != null {
@@ -119,28 +119,28 @@ fn start_scraper_job(conn, job_id, scraper_prompt, target_url, max_depth, gemini
             }
             total_pages_analyzed = total_pages_analyzed + 1
         }
-        
+
         // Store dataset row in SQLite
         sqlite.query(conn, "INSERT INTO datasets (job_id, url, title, status, extracted_json) VALUES (?, ?, ?, ?, ?)", [job_id, url, title, status_code, extracted_json])
-        
+
         // Update Job progress details
         let progress_percent = (total_pages_analyzed * 100) / total_pages_discovered
         if progress_percent > 100 { progress_percent = 100 }
-        
+
         sqlite.query(conn, "UPDATE jobs SET progress = ? WHERE id = ?", [progress_percent, job_id])
-        
+
         // Publish real-time UI updates
         lumen_publish("job-updates", "progress", http.create_struct(
             ["job_id", "progress", "discovered", "analyzed"],
             [job_id, progress_percent, total_pages_discovered, total_pages_analyzed]
         ))
-        
+
         // Yield execution to allow other tasks to run
         task.yield()
     }
-    
+
     // Mark Job as Completed
     sqlite.query(conn, "UPDATE jobs SET status = 'completed', progress = 100, finished_at = datetime('now') WHERE id = ?", [job_id])
-    
+
     lumen_publish("job-updates", "completed", http.create_struct(["job_id"], [job_id]))
 }

@@ -126,12 +126,12 @@ fn state() {
 window.saveWorkflow = async function() {
     let name = prompt("Enter workflow name:");
     if (!name) return;
-    
+
     let btn = document.querySelector("button.btn-gradient");
     let originalText = btn.innerHTML;
     btn.innerHTML = "Saving...";
     btn.disabled = true;
-    
+
     try {
         let res = await fetch("/api/workflows", {
             method: "POST",
@@ -142,7 +142,7 @@ window.saveWorkflow = async function() {
                 schedule: "0 0 * * *"
             })
         });
-        
+
         if (res.ok) {
             alert("Workflow saved successfully!");
         } else {

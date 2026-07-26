@@ -98,12 +98,12 @@ function connectWS() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = protocol + '//' + window.location.host + '/ws/chat';
   ws = new WebSocket(wsUrl);
-  
+
   ws.onopen = () => {
     console.log("WebSocket connected.");
     fallbackMode = false;
   };
-  
+
   ws.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
@@ -112,12 +112,12 @@ function connectWS() {
       appendAssistantMessage(event.data, []);
     }
   };
-  
+
   ws.onerror = () => {
     console.error("WebSocket error. Falling back to HTTP POST.");
     fallbackMode = true;
   };
-  
+
   ws.onclose = () => {
     fallbackMode = true;
   };
@@ -138,9 +138,9 @@ function appendAssistantMessage(text, products) {
   const container = document.getElementById('chat-messages');
   const wrapper = document.createElement('div');
   wrapper.className = 'chat-bubble assistant';
-  
+
   let html = `<div class="bubble-content">${escapeHtml(text)}`;
-  
+
   if (products && products.length > 0) {
     html += `<div class="chat-product-list">`;
     for (let p of products) {
@@ -159,7 +159,7 @@ function appendAssistantMessage(text, products) {
     }
     html += `</div>`;
   }
-  
+
   html += `</div>`;
   wrapper.innerHTML = html;
   container.appendChild(wrapper);
@@ -187,10 +187,10 @@ window.submitChat = async function(event) {
   const input = document.getElementById('chat-input');
   const text = input.value.trim();
   if (!text) return;
-  
+
   input.value = '';
   appendUserMessage(text);
-  
+
   if (!fallbackMode && ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ message: text }));
   } else {

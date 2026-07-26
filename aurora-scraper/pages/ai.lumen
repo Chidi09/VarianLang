@@ -12,7 +12,7 @@
 
     <!-- Chat Interface Container -->
     <main class="flex-grow pt-24 px-10 max-w-[1000px] mx-auto w-full flex flex-col h-[calc(100vh-64px)] pb-6 gap-6">
-      
+
       <!-- Top Title -->
       <div class="border-b border-[#3b494b]/20 pb-4 shrink-0">
         <h2 class="font-bold text-2xl text-white">Synthetic Intelligence Interface</h2>
@@ -64,9 +64,9 @@ window.queryAi = async function(event) {
     let messageInput = document.getElementById("ai-message");
     let message = messageInput.value;
     messageInput.value = "";
-    
+
     let chatBox = document.getElementById("ai-chat-box");
-    
+
     // Append User Message
     let userMsg = document.createElement("div");
     userMsg.className = "flex gap-4 justify-end";
@@ -80,7 +80,7 @@ window.queryAi = async function(event) {
     `;
     chatBox.appendChild(userMsg);
     chatBox.scrollTop = chatBox.scrollHeight;
-    
+
     // Append Loading Indicator
     let loader = document.createElement("div");
     loader.className = "flex gap-4";
@@ -94,16 +94,16 @@ window.queryAi = async function(event) {
     `;
     chatBox.appendChild(loader);
     chatBox.scrollTop = chatBox.scrollHeight;
-    
+
     try {
         let res = await fetch("/api/ai/query", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ message: message })
         });
-        
+
         loader.remove();
-        
+
         if (res.ok) {
             let data = await res.json();
             let aiMsg = document.createElement("div");
@@ -135,7 +135,7 @@ window.queryAi = async function(event) {
         loader.remove();
         alert("Failed to query AI: " + e);
     }
-    
+
     chatBox.scrollTop = chatBox.scrollHeight;
 };
 </client>

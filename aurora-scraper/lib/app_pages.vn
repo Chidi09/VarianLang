@@ -26,7 +26,7 @@ fn mount_app_pages(app, conn, cfg) {
                     [s.id, s.name, s.prompt, s.created]
                 ))
             }
-            
+
             // Fetch Jobs
             let job_rows = sqlite.query(conn, "SELECT j.*, s.name as scraper_name FROM jobs j LEFT JOIN scrapers s ON j.scraper_id = s.id ORDER BY j.id DESC LIMIT 10")
             let jobs = []
@@ -43,23 +43,23 @@ fn mount_app_pages(app, conn, cfg) {
                     [j.id, scraper_name, j.target_url, j.depth, j.status, j.progress, j.started_at]
                 ))
             }
-            
+
             // Fetch stats
             let discovered_rows = sqlite.query(conn, "SELECT COUNT(*) as c FROM datasets")
             let discovered = 0
             if discovered_rows.len() > 0 { discovered = discovered_rows[0].c }
-            
+
             let analyzed_rows = sqlite.query(conn, "SELECT COUNT(*) as c FROM datasets WHERE extracted_json != '{}' and extracted_json != ''")
             let analyzed = 0
             if analyzed_rows.len() > 0 { analyzed = analyzed_rows[0].c }
-            
+
             return http.create_struct(
                 ["scrapers", "jobs", "active_jobs_count", "pages_discovered", "pages_analyzed", "active_threads"],
                 [scrapers, jobs, active_count, discovered, analyzed, active_count * 2]
             )
         })
     }
-    
+
     // 2. Scrapers Library Page
     let library_comp = _lumen_get_component("Library")
     if library_comp != null {
@@ -76,7 +76,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct(["scrapers"], [scrapers])
         })
     }
-    
+
     // 3. Dataset Explorer Page
     let datasets_comp = _lumen_get_component("Datasets")
     if datasets_comp != null {
@@ -93,7 +93,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct(["datasets"], [datasets])
         })
     }
-    
+
     // 4. API & Webhooks Page
     let api_comp = _lumen_get_component("Api")
     if api_comp != null {
@@ -107,7 +107,7 @@ fn mount_app_pages(app, conn, cfg) {
                     [k.id, k.name, k.token, k.created]
                 ))
             }
-            
+
             let webhook_rows = sqlite.query(conn, "SELECT * FROM webhooks ORDER BY id DESC")
             let webhooks_list = []
             for i in 0..webhook_rows.len() {
@@ -117,11 +117,11 @@ fn mount_app_pages(app, conn, cfg) {
                     [w.id, w.name, w.url, w.events, w.created]
                 ))
             }
-            
+
             return http.create_struct(["api_keys", "webhooks"], [keys_list, webhooks_list])
         })
     }
-    
+
     // 5. Workflow Builder Page
     let workflow_comp = _lumen_get_component("Workflow")
     if workflow_comp != null {
@@ -138,7 +138,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct(["scrapers"], [scrapers])
         })
     }
-    
+
     // 6. Synthetic Intelligence Interface Page
     let ai_comp = _lumen_get_component("Ai")
     if ai_comp != null {
@@ -155,7 +155,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct(["datasets"], [datasets])
         })
     }
-    
+
     // 7. Settings Page
     let settings_comp = _lumen_get_component("Settings")
     if settings_comp != null {
@@ -163,21 +163,21 @@ fn mount_app_pages(app, conn, cfg) {
             let model = "gemini-2.5-flash"
             let timeout = "5000"
             let threads = "8"
-            
+
             let s_rows = sqlite.query(conn, "SELECT key, value FROM settings")
             for i in 0..s_rows.len() {
                 if s_rows[i].key == "gemini_model" { model = s_rows[i].value }
                 if s_rows[i].key == "crawler_timeout" { timeout = s_rows[i].value }
                 if s_rows[i].key == "crawler_threads" { threads = s_rows[i].value }
             }
-            
+
             return http.create_struct(
                 ["gemini_model", "crawler_timeout", "crawler_threads"],
                 [model, timeout, threads]
             )
         })
     }
-    
+
     // 8. Login Page
     let login_comp = _lumen_get_component("Login")
     if login_comp != null {
@@ -185,7 +185,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct([], [])
         })
     }
-    
+
     // 9. Register Page
     let register_comp = _lumen_get_component("Register")
     if register_comp != null {
@@ -193,7 +193,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct([], [])
         })
     }
-    
+
     // 10. Jobs History Page
     let jobs_comp = _lumen_get_component("Jobs")
     if jobs_comp != null {
@@ -212,7 +212,7 @@ fn mount_app_pages(app, conn, cfg) {
             return http.create_struct(["jobs"], [jobs])
         })
     }
-    
+
     // 11. Dataset Detail Page
     let dataset_comp = _lumen_get_component("Dataset_detail")
     if dataset_comp != null {
