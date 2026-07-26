@@ -8,6 +8,22 @@ test "validate.num exists" {
     assert_ne(v, null)
 }
 
+test "validate.num rejects strings and booleans" {
+    let v = validate.num()
+    assert_eq(v.parse(1).success, true)
+    assert_eq(v.parse(1.5).success, true)
+    assert_eq(v.parse("1").success, false)
+    assert_eq(v.parse(true).success, false)
+}
+
+test "validate.bool accepts only booleans" {
+    let v = validate.bool()
+    assert_eq(v.parse(true).success, true)
+    assert_eq(v.parse(false).success, true)
+    assert_eq(v.parse("false").success, false)
+    assert_eq(v.parse(0).success, false)
+}
+
 test "validate.object exists" {
     let v = validate.object({})
     assert_ne(v, null)

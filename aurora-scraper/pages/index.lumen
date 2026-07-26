@@ -1,0 +1,629 @@
+<template>
+<link rel="stylesheet" href="/public/styles/tailwind.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" />
+
+<style>
+  * { box-sizing: border-box; }
+  html, body { background: #030d1a !important; color: #f0f6ff !important; min-height: 100vh; }
+  section, footer, nav, header, main, div { color: inherit; }
+
+  /* ── Navbar states ── */
+  #navbar {
+    transition: background 0.3s ease, border-color 0.3s ease, padding 0.3s ease, backdrop-filter 0.3s ease;
+  }
+  #navbar.scrolled {
+    background: rgba(3, 13, 26, 0.88) !important;
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border-bottom: 1px solid rgba(0, 219, 233, 0.12);
+  }
+  #navbar:not(.scrolled) {
+    background: transparent !important;
+    border-bottom: 1px solid transparent;
+  }
+
+  /* ── Scroll-triggered animations ── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(24px);
+    transition: opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1), transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+  }
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .reveal-delay-1 { transition-delay: 0.1s; }
+  .reveal-delay-2 { transition-delay: 0.2s; }
+  .reveal-delay-3 { transition-delay: 0.3s; }
+  .reveal-delay-4 { transition-delay: 0.4s; }
+  .reveal-delay-5 { transition-delay: 0.5s; }
+
+  /* ── Hero blur reveal ── */
+  @keyframes blurReveal {
+    0% { opacity: 0; filter: blur(14px); transform: scale(1.03); }
+    100% { opacity: 1; filter: blur(0); transform: scale(1); }
+  }
+  .hero-line-1 { animation: blurReveal 1.2s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both; }
+  .hero-line-2 { animation: blurReveal 1.2s cubic-bezier(0.22, 1, 0.36, 1) 0.7s both; }
+  .hero-sub { animation: blurReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 1.2s both; }
+  .hero-cta { animation: blurReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 1.4s both; }
+  .hero-stats { animation: blurReveal 0.8s cubic-bezier(0.22, 1, 0.36, 1) 1.6s both; }
+
+  /* ── Gradient text utility ── */
+  .gradient-text {
+    background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  /* ── Card hover lift ── */
+  .card-lift {
+    transition: transform 0.4s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.3s ease, box-shadow 0.4s ease;
+  }
+  .card-lift:hover {
+    transform: translateY(-4px);
+    border-color: rgba(0, 219, 233, 0.25);
+    box-shadow: 0 12px 40px rgba(0, 219, 233, 0.08);
+  }
+
+  /* ── Feature alternating rows ── */
+  .feature-icon-glow {
+    box-shadow: 0 0 20px rgba(0, 219, 233, 0.15);
+  }
+
+  /* ── Pill hover ── */
+  .pill-hover {
+    transition: all 0.3s ease;
+  }
+  .pill-hover:hover {
+    border-color: rgba(0, 219, 233, 0.3);
+    background: rgba(0, 219, 233, 0.06);
+  }
+
+  /* ── Scroll indicator bounce ── */
+  @keyframes softBounce {
+    0%, 100% { transform: translateY(0); opacity: 0.4; }
+    50% { transform: translateY(8px); opacity: 0.7; }
+  }
+  .scroll-indicator {
+    animation: softBounce 2.5s ease-in-out infinite;
+  }
+
+  /* ── Mobile menu ── */
+  #mobile-menu {
+    transition: all 0.3s cubic-bezier(0.22, 1, 0.36, 1);
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+  #mobile-menu.open {
+    max-height: 400px;
+    opacity: 1;
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+  }
+</style>
+
+<div id="landing-root" style="background:#030d1a;min-height:100vh;overflow-x:hidden;">
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- NAVBAR                                          -->
+  <!-- ════════════════════════════════════════════════ -->
+  <nav id="navbar" class="fixed top-0 left-0 right-0 z-50 py-4 lg:py-5">
+    <div class="max-w-7xl mx-auto px-6 lg:px-8">
+      <div class="flex items-center justify-between">
+
+        <!-- Logo -->
+        <a href="/" class="flex items-center gap-2.5 group shrink-0">
+          <svg width="28" height="28" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="transition-transform duration-300 group-hover:scale-110">
+            <path d="M18 2L8 18H14L12 30L24 14H18L20 2H18Z" fill="url(#nav-gradient)" />
+            <defs>
+              <linearGradient id="nav-gradient" x1="8" y1="2" x2="24" y2="30" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#1d4ed8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <span class="text-xl font-extrabold gradient-text tracking-[-0.03em]" style="font-family: 'Outfit', sans-serif;">Aurora</span>
+        </a>
+
+        <!-- Desktop nav links -->
+        <div class="hidden md:flex items-center gap-8">
+          <a href="#features" class="text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Features</a>
+          <a href="#pricing" class="text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Pricing</a>
+          <a href="/docs" class="text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Docs</a>
+          <a href="/api" class="text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">API</a>
+        </div>
+
+        <!-- Right actions -->
+        <div class="flex items-center gap-3">
+          <a href="/login" class="hidden sm:inline-flex h-9 px-4 text-sm font-semibold text-[#94a3b8] hover:text-white items-center justify-center transition-colors duration-200">
+            Sign In
+          </a>
+          <a href="/register" class="hidden sm:inline-flex items-center gap-1.5 h-9 px-4 rounded-lg bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] text-white text-sm font-bold shadow-lg shadow-[#3b82f6]/15 hover:shadow-[#3b82f6]/30 hover:scale-105 active:scale-95 transition-all duration-300">
+            Get Started
+            <span class="material-symbols-outlined text-[14px]" style="font-variation-settings: 'FILL' 1;">arrow_forward</span>
+          </a>
+          <button id="mobile-menu-btn" class="md:hidden w-9 h-9 flex items-center justify-center rounded-lg text-[#94a3b8] hover:text-white hover:bg-white/5 transition-colors" onclick="toggleMobileMenu()">
+            <span class="material-symbols-outlined text-[24px]">menu</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Mobile menu -->
+    <div id="mobile-menu" class="md:hidden bg-[#051424]/95 backdrop-blur-xl border-t border-white/5 px-6">
+      <div class="flex flex-col gap-1">
+        <a href="#features" class="block py-3 text-sm text-[#94a3b8] hover:text-white border-b border-white/5 transition-colors" onclick="closeMobileMenu()">Features</a>
+        <a href="#pricing" class="block py-3 text-sm text-[#94a3b8] hover:text-white border-b border-white/5 transition-colors" onclick="closeMobileMenu()">Pricing</a>
+        <a href="/docs" class="block py-3 text-sm text-[#94a3b8] hover:text-white border-b border-white/5 transition-colors" onclick="closeMobileMenu()">Docs</a>
+        <a href="/api" class="block py-3 text-sm text-[#94a3b8] hover:text-white border-b border-white/5 transition-colors" onclick="closeMobileMenu()">API</a>
+        <div class="flex flex-col gap-2 pt-3 pb-2">
+          <a href="/login" class="h-11 rounded-lg bg-white/5 border border-white/10 text-white text-sm font-semibold flex items-center justify-center hover:bg-white/10 transition-colors" onclick="closeMobileMenu()">Sign In</a>
+          <a href="/register" class="h-11 rounded-lg bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] text-white text-sm font-bold flex items-center justify-center shadow-lg shadow-[#3b82f6]/15" onclick="closeMobileMenu()">Get Started</a>
+        </div>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- HERO                                            -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section class="relative min-h-screen flex items-center overflow-hidden pt-24">
+    <!-- Background -->
+    <div class="absolute inset-0 pointer-events-none">
+      <img src="/public/hero-landing.jpg" alt="" class="w-full h-full object-cover opacity-[0.12]" style="filter: grayscale(30%);" />
+      <div class="absolute inset-0 bg-gradient-to-b from-[#030d1a] via-[#030d1a]/60 to-[#030d1a]"></div>
+      <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] bg-[#3b82f6]/8 rounded-full blur-[300px]"></div>
+    </div>
+
+    <div class="relative z-10 max-w-7xl mx-auto px-6 lg:px-8 w-full py-20 lg:py-28">
+      <div class="text-center max-w-4xl mx-auto">
+
+        <!-- Eyebrow badge -->
+        <div class="hero-line-1 inline-flex items-center gap-2 rounded-full border border-white/8 bg-white/[0.03] px-4 py-1.5 mb-8 opacity-0">
+          <div class="w-1.5 h-1.5 rounded-full bg-[#3b82f6] shadow-[0_0_8px_#3b82f6]"></div>
+          <span class="text-[11px] font-bold uppercase tracking-[0.18em] text-[#64748b]">AI-Powered Web Extraction</span>
+        </div>
+
+        <!-- Headline (split across 2 lines, gradient on second) -->
+        <h1 class="hero-line-2 opacity-0 mb-4" style="font-family: 'Outfit', sans-serif;">
+          <span class="block text-4xl sm:text-5xl lg:text-7xl font-extrabold text-white tracking-[-0.04em] leading-[1.05]">
+            Extract Any Data.
+          </span>
+          <span class="block text-4xl sm:text-5xl lg:text-7xl font-extrabold tracking-[-0.04em] leading-[1.05] mt-1">
+            From <span class="gradient-text">Any Website.</span>
+          </span>
+        </h1>
+
+        <!-- Subheading -->
+        <p class="hero-sub opacity-0 text-base sm:text-lg text-[#94a3b8] max-w-lg mx-auto leading-relaxed mb-10">
+          AI-driven extraction that turns any webpage into structured data. No config, no coding, no limits.
+        </p>
+
+        <!-- CTA row -->
+        <div class="hero-cta opacity-0 flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
+          <a href="/register" class="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] text-white font-bold px-8 py-3.5 rounded-2xl shadow-lg shadow-[#3b82f6]/20 hover:shadow-[#3b82f6]/35 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 text-sm tracking-wide">
+            Start Scraping Free
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">arrow_forward</span>
+          </a>
+          <a href="/docs" class="w-full sm:w-auto inline-flex items-center justify-center gap-1.5 bg-white/[0.04] border border-white/10 text-white font-semibold px-8 py-3.5 rounded-2xl hover:bg-white/[0.08] hover:border-white/20 transition-all duration-300 text-sm backdrop-blur-sm">
+            View Demo
+            <span class="material-symbols-outlined text-[15px]">play_circle</span>
+          </a>
+        </div>
+
+        <!-- Stats row -->
+        <div class="hero-stats opacity-0 flex flex-wrap items-center justify-center gap-x-10 gap-y-3">
+          <div class="text-center">
+            <div class="text-2xl lg:text-3xl font-extrabold text-white tracking-tight" style="font-family: 'Outfit', sans-serif;">10M+</div>
+            <div class="text-xs text-[#64748b] font-medium mt-0.5 tracking-[0.02em]">URLs scraped</div>
+          </div>
+          <div class="w-px h-8 bg-white/8 hidden sm:block"></div>
+          <div class="text-center">
+            <div class="text-2xl lg:text-3xl font-extrabold text-white tracking-tight" style="font-family: 'Outfit', sans-serif;">99.9%</div>
+            <div class="text-xs text-[#64748b] font-medium mt-0.5 tracking-[0.02em]">Uptime</div>
+          </div>
+          <div class="w-px h-8 bg-white/8 hidden sm:block"></div>
+          <div class="text-center">
+            <div class="text-2xl lg:text-3xl font-extrabold text-white tracking-tight" style="font-family: 'Outfit', sans-serif;">2s</div>
+            <div class="text-xs text-[#64748b] font-medium mt-0.5 tracking-[0.02em]">Avg latency</div>
+          </div>
+          <div class="w-px h-8 bg-white/8 hidden sm:block"></div>
+          <div class="text-center">
+            <div class="text-2xl lg:text-3xl font-extrabold text-white tracking-tight" style="font-family: 'Outfit', sans-serif;">50K+</div>
+            <div class="text-xs text-[#64748b] font-medium mt-0.5 tracking-[0.02em]">Developers</div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Scroll indicator -->
+    <div class="absolute bottom-8 left-1/2 -translate-x-1/2 scroll-indicator pointer-events-none">
+      <span class="material-symbols-outlined text-[#64748b] text-[24px]">expand_more</span>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- PROBLEM / WHY SECTION                          -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section style="background:#030d1a;" class="relative py-28 lg:py-36 px-6 overflow-hidden border-t border-white/[0.04]">
+    <div class="absolute inset-0 pointer-events-none">
+      <div class="absolute bottom-0 left-0 w-[400px] h-[400px] bg-[#1d4ed8]/8 rounded-full blur-[200px]"></div>
+    </div>
+    <div class="relative z-10 max-w-6xl mx-auto">
+      <div class="grid lg:grid-cols-2 gap-14 lg:gap-20 items-start">
+
+        <!-- Left: headline -->
+        <div>
+          <span class="text-[11px] font-bold uppercase tracking-[0.2em] text-[#64748b] mb-4 block">The Problem</span>
+          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-[-0.03em] leading-[1.1] mb-6" style="font-family: 'Outfit', sans-serif;">
+            The web has the data.<br>Getting it is the hard part.
+          </h2>
+          <p class="text-[#94a3b8] leading-relaxed">
+            Most scraping tools are brittle — one selector change and your pipeline breaks. Aurora uses AI that understands pages like a human, not a regex.
+          </p>
+        </div>
+
+        <!-- Right: pain points -->
+        <div class="space-y-8">
+          <div class="flex gap-5">
+            <div class="w-9 h-9 rounded-xl bg-[#3b82f6]/10 border border-[#3b82f6]/15 flex items-center justify-center shrink-0 mt-0.5">
+              <span class="material-symbols-outlined text-[#3b82f6] text-[18px]" style="font-variation-settings: 'FILL' 1;">brick</span>
+            </div>
+            <div>
+              <p class="text-sm font-bold text-white mb-1 tracking-[-0.01em]">Brittle selectors break constantly</p>
+              <p class="text-sm text-[#94a3b8] leading-relaxed">CSS selectors and XPaths fail the moment a site redesigns. Aurora adapts automatically.</p>
+            </div>
+          </div>
+
+          <div class="flex gap-5">
+            <div class="w-9 h-9 rounded-xl bg-[#1d4ed8]/10 border border-[#1d4ed8]/15 flex items-center justify-center shrink-0 mt-0.5">
+              <span class="material-symbols-outlined text-[#1d4ed8] text-[18px]" style="font-variation-settings: 'FILL' 1;">scatter_plot</span>
+            </div>
+            <div>
+              <p class="text-sm font-bold text-white mb-1 tracking-[-0.01em]">Unstructured data is useless</p>
+              <p class="text-sm text-[#94a3b8] leading-relaxed">Raw HTML dumps require hours of cleaning. Aurora delivers structured JSON, CSV, or API-ready output.</p>
+            </div>
+          </div>
+
+          <div class="flex gap-5">
+            <div class="w-9 h-9 rounded-xl bg-[#3b82f6]/10 border border-[#3b82f6]/15 flex items-center justify-center shrink-0 mt-0.5">
+              <span class="material-symbols-outlined text-[#3b82f6] text-[18px]" style="font-variation-settings: 'FILL' 1;">timer_off</span>
+            </div>
+            <div>
+              <p class="text-sm font-bold text-white mb-1 tracking-[-0.01em]">Manual scraping doesn't scale</p>
+              <p class="text-sm text-[#94a3b8] leading-relaxed">Copy-pasting from hundreds of pages wastes thousands of hours. Aurora crawls at machine speed.</p>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- FEATURE SHOWCASE (Alternating L/R)              -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section style="background:#030d1a;" id="features" class="py-28 lg:py-36 px-6 border-t border-white/[0.04]">
+    <div class="max-w-6xl mx-auto">
+
+      <!-- Section header -->
+      <div class="text-center max-w-2xl mx-auto mb-20 lg:mb-24">
+        <span class="text-[11px] font-bold uppercase tracking-[0.2em] text-[#64748b]">Features</span>
+        <h2 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-[-0.03em] mt-4 mb-4" style="font-family: 'Outfit', sans-serif;">
+          Intelligence built into every scrape
+        </h2>
+        <p class="text-[#94a3b8] text-base leading-relaxed">
+          Three capabilities that make Aurora the most adaptable scraper for modern data teams.
+        </p>
+      </div>
+
+      <!-- Feature 1: AI Extraction (L/R: text left, visual right) -->
+      <div class="reveal grid lg:grid-cols-2 gap-12 lg:gap-16 items-center mb-28 lg:mb-36">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#3b82f6]/20 to-[#3b82f6]/5 border border-[#3b82f6]/15 flex items-center justify-center mb-6 feature-icon-glow">
+            <span class="material-symbols-outlined text-[#3b82f6] text-[22px]" style="font-variation-settings: 'FILL' 1;">psychology</span>
+          </div>
+          <h3 class="text-2xl lg:text-3xl font-extrabold text-white tracking-[-0.02em] mb-3" style="font-family: 'Outfit', sans-serif;">AI-Powered Extraction</h3>
+          <p class="text-[#94a3b8] leading-relaxed mb-4 max-w-md">
+            Gemini AI interprets page structure semantically — it finds prices, descriptions, reviews, and tables without fragile selectors. Point it at any page and get clean data back.
+          </p>
+          <a href="/docs" class="inline-flex items-center gap-1 text-sm font-semibold text-[#3b82f6] hover:text-white transition-colors duration-200">
+            Learn more
+            <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </a>
+        </div>
+        <div class="relative">
+          <div class="aspect-[4/3] rounded-2xl border border-white/8 bg-gradient-to-br from-[#3b82f6]/8 to-[#1d4ed8]/8 overflow-hidden">
+            <img src="/public/hero-auth.jpg" alt="" class="w-full h-full object-cover opacity-30 mix-blend-luminosity" />
+            <div class="absolute inset-0 bg-gradient-to-t from-[#030d1a] via-transparent to-transparent"></div>
+            <div class="absolute bottom-0 left-0 right-0 p-6">
+              <div class="flex items-center gap-2 text-[11px] text-[#64748b] font-mono">
+                <span class="w-2 h-2 rounded-full bg-[#3b82f6]"></span>
+                <span>gemini.analyze("extract pricing data")</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature 2: Smart Crawling (L/R: visual left, text right) -->
+      <div class="reveal grid lg:grid-cols-2 gap-12 lg:gap-16 items-center mb-28 lg:mb-36">
+        <div class="relative lg:order-2">
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#1d4ed8]/20 to-[#1d4ed8]/5 border border-[#1d4ed8]/15 flex items-center justify-center mb-6 feature-icon-glow">
+            <span class="material-symbols-outlined text-[#1d4ed8] text-[22px]" style="font-variation-settings: 'FILL' 1;">lan</span>
+          </div>
+          <h3 class="text-2xl lg:text-3xl font-extrabold text-white tracking-[-0.02em] mb-3" style="font-family: 'Outfit', sans-serif;">Intelligent Crawling</h3>
+          <p class="text-[#94a3b8] leading-relaxed mb-4 max-w-md">
+            Multi-page crawls that understand site structure. Set depth limits, follow pagination, and aggregate results across thousands of pages — all from one job definition.
+          </p>
+          <a href="/docs" class="inline-flex items-center gap-1 text-sm font-semibold text-[#3b82f6] hover:text-white transition-colors duration-200">
+            Learn more
+            <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </a>
+        </div>
+        <div class="relative lg:order-1">
+          <div class="aspect-[4/3] rounded-2xl border border-white/8 bg-gradient-to-br from-[#1d4ed8]/8 to-[#3b82f6]/8 overflow-hidden">
+            <img src="/public/hero-auth.jpg" alt="" class="w-full h-full object-cover opacity-30 mix-blend-luminosity" />
+            <div class="absolute inset-0 bg-gradient-to-t from-[#030d1a] via-transparent to-transparent"></div>
+            <div class="absolute bottom-0 left-0 right-0 p-6">
+              <div class="flex items-center gap-2 text-[11px] text-[#64748b] font-mono">
+                <span class="w-2 h-2 rounded-full bg-[#1d4ed8]"></span>
+                <span>crawl.depth(3).follow("pagination").run()</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Feature 3: Structured Output (L/R: text left, visual right) -->
+      <div class="reveal grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
+        <div>
+          <div class="w-12 h-12 rounded-2xl bg-gradient-to-br from-[#3b82f6]/20 to-[#3b82f6]/5 border border-[#3b82f6]/15 flex items-center justify-center mb-6 feature-icon-glow">
+            <span class="material-symbols-outlined text-[#3b82f6] text-[22px]" style="font-variation-settings: 'FILL' 1;">table_rows</span>
+          </div>
+          <h3 class="text-2xl lg:text-3xl font-extrabold text-white tracking-[-0.02em] mb-3" style="font-family: 'Outfit', sans-serif;">Structured Output</h3>
+          <p class="text-[#94a3b8] leading-relaxed mb-4 max-w-md">
+            Clean, typed data delivered as JSON, CSV, or pushed directly to your API endpoint. Schema detection, nested objects, and arrays — all handled automatically.
+          </p>
+          <a href="/docs" class="inline-flex items-center gap-1 text-sm font-semibold text-[#3b82f6] hover:text-white transition-colors duration-200">
+            Learn more
+            <span class="material-symbols-outlined text-[14px]">arrow_forward</span>
+          </a>
+        </div>
+        <div class="relative">
+          <div class="aspect-[4/3] rounded-2xl border border-white/8 bg-gradient-to-br from-[#3b82f6]/8 to-[#1d4ed8]/8 overflow-hidden">
+            <img src="/public/hero-auth.jpg" alt="" class="w-full h-full object-cover opacity-30 mix-blend-luminosity" />
+            <div class="absolute inset-0 bg-gradient-to-t from-[#030d1a] via-transparent to-transparent"></div>
+            <div class="absolute bottom-0 left-0 right-0 p-6">
+              <div class="flex items-center gap-2 text-[11px] text-[#64748b] font-mono">
+                <span class="w-2 h-2 rounded-full bg-[#3b82f6]"></span>
+                <span>output.format("json").deliver("webhook")</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- INTEGRATIONS STRIP                              -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section style="background:#030d1a;" class="py-24 lg:py-28 px-6 border-t border-white/[0.04] bg-gradient-to-b from-transparent via-white/[0.01] to-transparent">
+    <div class="max-w-5xl mx-auto text-center">
+      <span class="text-[11px] font-bold uppercase tracking-[0.2em] text-[#64748b]">Integrations</span>
+      <h2 class="text-3xl sm:text-4xl font-extrabold text-white tracking-[-0.03em] mt-4 mb-5" style="font-family: 'Outfit', sans-serif;">
+        Works with your stack
+      </h2>
+      <p class="text-[#94a3b8] text-sm max-w-lg mx-auto mb-12">
+        Aurora plugs into your existing workflow. No new tools, no context switching.
+      </p>
+
+      <div class="flex flex-wrap items-center justify-center gap-3">
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="w-4 h-4 rounded bg-[#3776AB]/20 flex items-center justify-center text-[10px] font-bold text-[#3776AB]">Py</span>
+          Python
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="w-4 h-4 rounded bg-[#539E43]/20 flex items-center justify-center text-[10px] font-bold text-[#539E43]">Nj</span>
+          Node.js
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="material-symbols-outlined text-[#3b82f6] text-[14px]">api</span>
+          REST API
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="material-symbols-outlined text-[#1d4ed8] text-[14px]" style="font-variation-settings: 'FILL' 1;">sync</span>
+          Webhooks
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="material-symbols-outlined text-[#3b82f6] text-[14px]" style="font-variation-settings: 'FILL' 1;">data_object</span>
+          JSON
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="material-symbols-outlined text-[#1d4ed8] text-[14px]" style="font-variation-settings: 'FILL' 1;">table</span>
+          CSV
+        </span>
+        <span class="inline-flex items-center gap-1.5 px-4 py-2 rounded-full border border-white/8 bg-white/[0.03] text-sm text-[#cbd5e1] font-medium pill-hover">
+          <span class="material-symbols-outlined text-[#3b82f6] text-[14px]" style="font-variation-settings: 'FILL' 1;">database</span>
+          PostgreSQL
+        </span>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- CTA SECTION                                     -->
+  <!-- ════════════════════════════════════════════════ -->
+  <section style="background:#030d1a;" class="py-28 lg:py-36 px-6">
+    <div class="max-w-5xl mx-auto">
+      <div class="relative rounded-3xl overflow-hidden border border-white/[0.06] bg-gradient-to-br from-[#3b82f6]/10 via-[#1d4ed8]/8 to-[#3b82f6]/5 p-10 lg:p-16 text-center">
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-[#3b82f6]/10 rounded-full blur-[200px] pointer-events-none"></div>
+        <div class="relative z-10 max-w-2xl mx-auto">
+          <h2 class="text-3xl sm:text-4xl lg:text-5xl font-extrabold text-white tracking-[-0.03em] leading-tight mb-4" style="font-family: 'Outfit', sans-serif;">
+            Ready to scrape smarter?
+          </h2>
+          <p class="text-[#94a3b8] text-base lg:text-lg mb-10 leading-relaxed max-w-md mx-auto">
+            Join thousands of developers and data teams who use Aurora to power their data pipelines.
+          </p>
+          <a href="/register" class="inline-flex items-center gap-2 bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] text-white font-bold px-9 py-4 rounded-2xl shadow-lg shadow-[#3b82f6]/20 hover:shadow-[#3b82f6]/35 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 text-sm tracking-wide">
+            Get Started Free
+            <span class="material-symbols-outlined text-[16px]" style="font-variation-settings: 'FILL' 1;">arrow_forward</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ════════════════════════════════════════════════ -->
+  <!-- FOOTER                                          -->
+  <!-- ════════════════════════════════════════════════ -->
+  <footer style="background:#030d1a;" class="border-t border-white/[0.05] pt-16 pb-8 px-6">
+    <div class="max-w-6xl mx-auto">
+
+      <!-- 4 columns -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-10 lg:gap-16 mb-12">
+
+        <!-- Col 1: Logo + tagline -->
+        <div class="col-span-2 md:col-span-1">
+          <a href="/" class="flex items-center gap-2 mb-3">
+            <svg width="22" height="22" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M18 2L8 18H14L12 30L24 14H18L20 2H18Z" fill="url(#footer-logo)" />
+              <defs>
+                <linearGradient id="footer-logo" x1="8" y1="2" x2="24" y2="30" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#3b82f6"/>
+                  <stop offset="1" stop-color="#1d4ed8"/>
+                </linearGradient>
+              </defs>
+            </svg>
+            <span class="text-base font-extrabold gradient-text tracking-[-0.02em]" style="font-family: 'Outfit', sans-serif;">Aurora</span>
+          </a>
+          <p class="text-xs text-[#64748b] leading-relaxed max-w-xs">
+            AI-powered web scraping that turns any webpage into structured data at scale.
+          </p>
+        </div>
+
+        <!-- Col 2: Product -->
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-[0.15em] text-[#64748b] mb-4">Product</p>
+          <div class="space-y-3">
+            <a href="#features" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Features</a>
+            <a href="#pricing" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Pricing</a>
+            <a href="/api" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">API</a>
+            <a href="/docs" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Documentation</a>
+          </div>
+        </div>
+
+        <!-- Col 3: Developers -->
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-[0.15em] text-[#64748b] mb-4">Developers</p>
+          <div class="space-y-3">
+            <a href="/docs" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Quickstart</a>
+            <a href="/docs" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Integration Guide</a>
+            <a href="/api" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">API Reference</a>
+            <a href="/docs" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">SDKs & Libraries</a>
+          </div>
+        </div>
+
+        <!-- Col 4: Company -->
+        <div>
+          <p class="text-[11px] font-bold uppercase tracking-[0.15em] text-[#64748b] mb-4">Company</p>
+          <div class="space-y-3">
+            <a href="/about" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">About</a>
+            <a href="/blog" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Blog</a>
+            <a href="/privacy" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Privacy</a>
+            <a href="/terms" class="block text-sm text-[#94a3b8] hover:text-white transition-colors duration-200">Terms</a>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Bottom bar -->
+      <div class="pt-8 border-t border-white/[0.04] flex flex-col sm:flex-row items-center justify-between gap-4">
+        <p class="text-xs text-[#475569]">
+          &copy; 2026 Aurora Scraper. All rights reserved.
+        </p>
+        <div class="flex items-center gap-5">
+          <a href="/docs" class="text-xs text-[#475569] hover:text-[#94a3b8] transition-colors duration-200">Docs</a>
+          <a href="/api" class="text-xs text-[#475569] hover:text-[#94a3b8] transition-colors duration-200">API</a>
+          <a href="/login" class="text-xs text-[#475569] hover:text-[#94a3b8] transition-colors duration-200">Sign In</a>
+        </div>
+      </div>
+    </div>
+  </footer>
+
+</div>
+</template>
+
+<script>
+fn state() {
+  return {}
+}
+</script>
+
+<client>
+(function() {
+  // ── Navbar scroll behaviour ──
+  var navbar = document.getElementById("navbar");
+  var scrollThreshold = 20;
+
+  function handleScroll() {
+    if (window.scrollY > scrollThreshold) {
+      navbar.classList.add("scrolled");
+    } else {
+      navbar.classList.remove("scrolled");
+    }
+  }
+
+  window.addEventListener("scroll", handleScroll, { passive: true });
+  handleScroll();
+
+  // ── Mobile menu toggle ──
+  var mobileMenu = document.getElementById("mobile-menu");
+  var mobileBtn = document.getElementById("mobile-menu-btn");
+
+  window.toggleMobileMenu = function() {
+    mobileMenu.classList.toggle("open");
+    var icon = mobileBtn.querySelector(".material-symbols-outlined");
+    if (mobileMenu.classList.contains("open")) {
+      icon.textContent = "close";
+    } else {
+      icon.textContent = "menu";
+    }
+  };
+
+  window.closeMobileMenu = function() {
+    mobileMenu.classList.remove("open");
+    var icon = mobileBtn.querySelector(".material-symbols-outlined");
+    if (icon) icon.textContent = "menu";
+  };
+
+  // ── Intersection Observer for reveal animations ──
+  var revealElements = document.querySelectorAll(".reveal");
+  if (revealElements.length > 0) {
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          entry.target.classList.add("visible");
+          observer.unobserve(entry.target);
+        }
+      });
+    }, { threshold: 0.15, rootMargin: "0px 0px -60px 0px" });
+
+    revealElements.forEach(function(el) {
+      observer.observe(el);
+    });
+  }
+})();
+</client>

@@ -1,0 +1,15 @@
+test "Zenith guard and job feature leaves remain ambient" {
+    assert_eq(_zenith_guard_matches("/teams/:team", "/teams/acme/settings"), true)
+    assert_eq(_zenith_guard_matches("/teams/:team", "/users/acme"), false)
+    assert_eq(type_of(_admin_jobs_handler), "function")
+}
+
+test "Zenith facade delegates guard and job internals to package leaves" {
+    let facade = io.read_text("vn_modules/zenith.vn")
+    let guards = io.read_text("vn_modules/zenith/guards.vn")
+    let jobs = io.read_text("vn_modules/zenith/jobs.vn")
+    assert_ne(guards.index_of("fn _zenith_guard_matches"), -1)
+    assert_ne(jobs.index_of("fn _admin_jobs_handler"), -1)
+    assert_eq(facade.index_of("fn _zenith_guard_matches"), -1)
+    assert_eq(facade.index_of("fn _admin_jobs_handler"), -1)
+}

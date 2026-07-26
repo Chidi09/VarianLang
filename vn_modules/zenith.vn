@@ -30,6 +30,82 @@ fn _get_req_field(req, field, default_val) {
     return result
 }
 
+fn _zenith_accepts_gzip(value) {
+    if value == null { return false }
+    let encodings = value.lower().split(",")
+    let gzip_seen = false
+    let gzip_enabled = false
+    let wildcard_enabled = false
+    for i in 0..encodings.len() {
+        let parts = encodings[i].trim().split(";")
+        let name = parts[0].trim()
+        if name == "gzip" or name == "*" {
+            let enabled = true
+            for j in 1..parts.len() {
+                let parameter = parts[j].trim().replace(" ", "")
+                if parameter.starts_with("q=") {
+                    let quality = parameter.substring(2)
+                    enabled = quality == "1" or quality.starts_with("1.")
+                    if quality.starts_with("0.") {
+                        enabled = false
+                        for k in 2..quality.len() {
+                            if quality.code_at(k) != 48 { enabled = true }
+                        }
+                    }
+                }
+            }
+            if name == "gzip" {
+                gzip_seen = true
+                gzip_enabled = enabled
+            } else {
+                wildcard_enabled = enabled
+            }
+        }
+    }
+    if gzip_seen { return gzip_enabled }
+    return wildcard_enabled
+}
+
+fn _zenith_compressible_type(content_type) {
+    if content_type == null { return false }
+    let kind = content_type.lower()
+    return kind.starts_with("text/") or
+        kind.index_of("json") >= 0 or
+        kind.index_of("javascript") >= 0 or
+        kind.index_of("xml") >= 0 or
+        kind.index_of("svg") >= 0
+}
+
+fn _zenith_gzip_response(resp) {
+    let compressed = http.gzip(_get_req_field(resp, "body", ""))
+    if compressed == null { return resp }
+    let source_headers = _get_req_field(resp, "headers", null)
+    let header_keys = []
+    let header_values = []
+    let vary = ""
+    if source_headers != null {
+        let keys = _validate.get_keys(source_headers)
+        for i in 0..keys.len() {
+            if keys[i] != "Content_Length" {
+                header_keys = header_keys.push(keys[i])
+                header_values = header_values.push(_validate.get_field(source_headers, keys[i]))
+            }
+            if keys[i] == "Vary" { vary = _validate.get_field(source_headers, keys[i]) }
+        }
+    }
+    let result = Response {
+        status: _get_req_field(resp, "status", 200),
+        body: compressed,
+        content_type: _get_req_field(resp, "content_type", "text/plain"),
+        _keep_open: _get_req_field(resp, "_keep_open", false),
+        headers: http.create_struct(header_keys, header_values)
+    }
+    result = with_header(result, "Content-Encoding", "gzip")
+    if vary == null or vary == "" { vary = "Accept-Encoding" }
+    else if vary.index_of("Accept-Encoding") < 0 { vary = vary + ", Accept-Encoding" }
+    return with_header(result, "Vary", vary)
+}
+
 struct WebSocket {
     socket_fd: int,
     _buffer: string
@@ -37,7 +113,7 @@ struct WebSocket {
 
 impl WebSocket {
     fn read(self) {
-        let incoming = http.read_socket(self.socket_fd, 4096)
+        let incoming = http.connection_read(4096)
         if incoming != null {
             self._buffer = self._buffer + incoming
         }
@@ -148,15 +224,14 @@ impl WebSocket {
         }
 
         let frame = "".from_codes(frame_codes)
-        http.write_socket(self.socket_fd, frame)
+        http.connection_write(frame)
     }
 
     fn close(self) {
         let close_frame = "".from_codes([136, 0])
         try {
-            http.write_socket(self.socket_fd, close_frame)
+            http.connection_write(close_frame)
         } catch e {}
-        http.close_socket(self.socket_fd)
     }
 }
 
@@ -167,18 +242,60 @@ struct SseSender {
 impl SseSender {
     fn send(self, data) {
         let chunk = "data: " + data + "\n\n"
-        http.write_socket(self.socket_fd, chunk)
+        http.connection_write(chunk)
     }
 
     fn close(self) {
-        http.close_socket(self.socket_fd)
+        // The active handler task owns and closes both plain and TLS sockets.
+        // Return from the handler after close() to finish the connection.
+        return null
     }
 }
 
-// CAVEAT: Not TLS-aware — writes handshake directly to the raw socket FD via
-// http.write_socket(), bypassing any TLS layer. wss:// is unsupported; deploy
-// behind a reverse proxy (nginx/Caddy) that terminates TLS and speaks plain
-// ws:// to Zenith. See listen_tls for the same caveat.
+// TLS-aware HTTP chunk writer. Unlike WebSocket/SSE raw socket helpers this
+// delegates to the native server transport, so the same API works under
+// listen() and listen_tls().
+struct StreamWriter { ended: bool }
+
+impl StreamWriter {
+    fn write(self, chunk) {
+        if self.ended { throw("Zenith stream is already closed") }
+        if type_of(chunk) != "string" { chunk = "" + chunk }
+        http.stream_write(chunk)
+        return self
+    }
+
+    fn end(self) {
+        if self.ended == false { http.stream_end() }
+        return StreamWriter { ended: true }
+    }
+}
+
+// Sends headers immediately and each producer write as a real HTTP/1.1
+// chunk. Once headers are committed, failures cannot become a second HTTP
+// response; the stream is terminated cleanly and the connection closes.
+fn stream_response(status, content_type, headers, producer) {
+    if headers == null { headers = http.create_struct([], []) }
+    if type_of(headers) != "struct" { throw("Zenith stream headers must be a struct") }
+    let producer_kind = type_of(producer)
+    if producer_kind != "function" and producer_kind != "closure" { throw("Zenith stream producer must be a function") }
+    http.stream_start(status, content_type, headers)
+    let writer = StreamWriter { ended: false }
+    try {
+        let returned = producer(writer)
+        if type_of(returned) == "struct" and _get_req_field(returned, "ended", false) == true {
+            writer = returned
+        }
+    } catch stream_error {}
+    writer = writer.end()
+    return http.create_struct(
+        ["status", "body", "content_type", "headers", "_keep_open", "_already_sent"],
+        [status, "", content_type, headers, false, true]
+    )
+}
+
+// The task-scoped connection transport preserves TLS, so the same upgrade is
+// used for ws:// under listen() and wss:// under listen_tls().
 fn upgrade_websocket(req) {
     let headers = req.headers
     if headers == null {
@@ -196,7 +313,7 @@ fn upgrade_websocket(req) {
                    "Connection: Upgrade\r\n" +
                    "Sec-WebSocket-Accept: " + accept + "\r\n\r\n"
 
-    http.write_socket(req.socket_fd, response)
+    http.connection_write(response)
 
     return WebSocket {
         socket_fd: req.socket_fd,
@@ -204,13 +321,12 @@ fn upgrade_websocket(req) {
     }
 }
 
-// CAVEAT: Same TLS limitation as upgrade_websocket — writes to raw socket FD.
 fn sse_handshake(req) {
     let response = "HTTP/1.1 200 OK\r\n" +
                    "Content-Type: text/event-stream\r\n" +
                    "Cache-Control: no-cache\r\n" +
                    "Connection: keep-alive\r\n\r\n"
-    http.write_socket(req.socket_fd, response)
+    http.connection_write(response)
     return SseSender { socket_fd: req.socket_fd }
 }
 
@@ -319,11 +435,81 @@ fn radix_lookup(root, route_key) {
     )
 }
 
+fn request_with(req, key, value) {
+    return req.set(key, value)
+}
+
+fn request_context(req, key, default_value) {
+    let context = _get_req_field(req, "context", null)
+    if context == null { return default_value }
+    return _get_req_field(context, key, default_value)
+}
+
+fn request_with_context(req, key, value) {
+    let context = _get_req_field(req, "context", null)
+    if context == null { context = http.create_struct([], []) }
+    context = context.set(key, value)
+    return req.set("context", context)
+}
+
+fn _zenith_allowed_methods(app, path) {
+    let candidates = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"]
+    let allowed = []
+    for i in 0..candidates.len() {
+        if radix_lookup(app.root, candidates[i] + path) != null { allowed = allowed.push(candidates[i]) }
+    }
+    let has_get = false
+    let has_head = false
+    for i in 0..allowed.len() {
+        if allowed[i] == "GET" { has_get = true }
+        if allowed[i] == "HEAD" { has_head = true }
+    }
+    if has_get and has_head == false { allowed = allowed.push("HEAD") }
+    return allowed
+}
+
+fn _zenith_normalize_response(value) {
+    let value_type = type_of(value)
+    if value == null {
+        return Response { status: 204, body: "", content_type: "text/plain", _keep_open: false }
+    }
+    if value_type == "string" {
+        return Response { status: 200, body: value, content_type: "text/plain", _keep_open: false }
+    }
+    if value_type == "struct" and _get_req_field(value, "status", null) != null { return value }
+    if value_type == "struct" or value_type == "array" or value_type == "tuple" {
+        return json_response(value, 200)
+    }
+    return Response { status: 200, body: "" + value, content_type: "text/plain", _keep_open: false }
+}
+
+fn _zenith_head_response(resp) {
+    return Response {
+        status: _get_req_field(resp, "status", 200),
+        body: "",
+        content_type: _get_req_field(resp, "content_type", "text/plain"),
+        _keep_open: false,
+        headers: _get_req_field(resp, "headers", null)
+    }
+}
+
+fn _zenith_error_response(app, error, req) {
+    let info = errors.make(errors.kind(error), "" + error, "")
+    if app.error_handler != null {
+        try { return app.error_handler(info, req) } catch handler_error {}
+    }
+    return http.create_struct(
+        ["status", "body", "content_type"],
+        [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
+    )
+}
+
 // ─── App ───
 
 struct ZenithApp {
     root: RadixNode,
     middlewares: array,
+    guards: array,
     route_list: array,
     docs_enabled: bool,
     docs_endpoint: string,
@@ -347,6 +533,7 @@ fn new_app() {
     let app = ZenithApp {
         root: new_radix_node(),
         middlewares: [],
+        guards: [],
         route_list: [],
         docs_enabled: false,
         docs_endpoint: "/docs",
@@ -365,8 +552,6 @@ fn new_app() {
         _compress_enabled: false,
         _compress_threshold: 1024
     }
-    radix_insert(app.root, "GET/admin/jobs", _admin_jobs_handler, "LiveDashboard GET")
-    radix_insert(app.root, "POST/admin/jobs", _admin_jobs_handler, "LiveDashboard POST")
     // Auto-register SEO routes
     app.get("/sitemap.xml", |req| {
         if app._sitemap_instance == null {
@@ -409,18 +594,13 @@ fn _ends_with(s, suffix) {
     return s.substring(s_len - suf_len, s_len) == suffix
 }
 
-fn _ts_strip(code) {
-    code = regex.replace("interface[[:space:]]+[^{]+\\{[^}]*\\}", code, "")
-    code = regex.replace("type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[^;]+;", code, "")
-    code = regex.replace(":[[:space:]]*(string|number|boolean|any|void|unknown)", code, "")
-    code = regex.replace("[[:space:]]+as[[:space:]]+[A-Za-z0-9_]+", code, "")
-    return code
-}
-
 fn _mime_type_for_path(path) {
     if _ends_with(path, ".html") { return "text/html" }
     if _ends_with(path, ".css") { return "text/css" }
-    if _ends_with(path, ".ts") { return "application/javascript" }
+    if (_ends_with(path, ".js") or _ends_with(path, ".mjs")) { return "application/javascript" }
+    // Zenith is a static server, not a TypeScript compiler. Serving source as
+    // text avoids telling browsers that a lossy regex rewrite is executable JS.
+    if _ends_with(path, ".ts") { return "text/plain" }
     if _ends_with(path, ".json") { return "application/json" }
     if _ends_with(path, ".png") { return "image/png" }
     if _ends_with(path, ".jpg") { return "image/jpeg" }
@@ -465,15 +645,6 @@ fn _static_handler_for(app, path) {
             }
             let full_path = mount.directory + "/" + rel
             return | req | {
-                if _ends_with(full_path, ".ts") {
-                    let ts_text = io.read_text(full_path)
-                    if ts_text == null {
-                        return Response { status: 404, body: "Not Found", content_type: "text/plain" }
-                    }
-                    let js_code = _ts_strip(ts_text)
-                    return Response { status: 200, body: js_code, content_type: "application/javascript" }
-                }
-
                 let bytes = io.read_bytes(full_path)
                 if bytes == null {
                     return Response { status: 404, body: "Not Found", content_type: "text/plain" }
@@ -532,12 +703,41 @@ impl ZenithApp {
         self.middlewares = self.middlewares.push(handler)
     }
 
+    // Route guards are compiled application code, not source evaluated during
+    // a request. A null result allows the request to continue; any response
+    // short-circuits the endpoint. Rules run in registration order.
+    fn add_guard(self, route_prefix, handler) {
+        if type_of(route_prefix) != "string" or !route_prefix.starts_with("/") {
+            throw("route guard prefix must start with /")
+        }
+        let handler_type = type_of(handler)
+        if handler_type != "function" and handler_type != "closure" {
+            throw("route guard handler must be callable")
+        }
+        self.guards = self.guards.push(http.create_struct(
+            ["prefix", "handler"], [route_prefix, handler]
+        ))
+        return self
+    }
+
     // Serves files under `directory` for any GET request whose path starts
     // with `prefix`. Runs through the normal middleware chain like any
     // other route (so CORS/logging/auth middleware still applies to static
     // assets) -- it's just a fallback when no explicit route matches.
     fn serve_static(self, prefix, directory) {
         self.static_mounts = self.static_mounts.push(StaticMount { prefix: prefix, directory: directory })
+    }
+
+    // The queue dashboard can mutate durable job state, so it must never be
+    // exposed by every app implicitly. Applications opt in after installing
+    // their authentication/authorization middleware.
+    fn enable_job_dashboard(self, endpoint) {
+        if type_of(endpoint) != "string" or !endpoint.starts_with("/") {
+            throw("job dashboard endpoint must start with /")
+        }
+        self.get(endpoint, _admin_jobs_handler, "Background job dashboard", null)
+        self.post(endpoint, _admin_jobs_handler, "Background job controls", null)
+        return self
     }
 
     fn seo_register(self, sitemap_instance) {
@@ -613,8 +813,10 @@ impl ZenithApp {
     // Synchronous request handling — usable directly in tests without a
     // running socket: app.handle(fake_req).
     fn handle(self, req) {
+        let method = _get_req_field(req, "method", "GET").upper()
+        let path = _get_req_field(req, "path", "/")
         // CORS preflight
-        if self._cors_enabled and req.method == "OPTIONS" {
+        if self._cors_enabled and method == "OPTIONS" {
             let cors_resp = Response {
                 status: 204,
                 body: "",
@@ -628,16 +830,21 @@ impl ZenithApp {
             return cors_resp
         }
 
-        let m = radix_lookup(self.root, req.method + req.path)
+        let m = radix_lookup(self.root, method + path)
+        if m == null and method == "HEAD" {
+            m = radix_lookup(self.root, "GET" + path)
+        }
         let handler = null
         let params = null
         let dir_segs = []
         if m != null {
             handler = m.handler
-            params = http.create_struct(m.param_names, m.param_values)
+            let decoded_values = []
+            for i in 0..m.param_values.len() { decoded_values = decoded_values.push(url_decode(m.param_values[i])) }
+            params = http.create_struct(m.param_names, decoded_values)
             dir_segs = m.dir_segs
-        } else if req.method == "GET" {
-            handler = _static_handler_for(self, req.path)
+        } else if method == "GET" or method == "HEAD" {
+            handler = _static_handler_for(self, path)
         }
         let body = _get_req_field(req, "body", "")
         let json = _get_req_field(req, "json", null)
@@ -646,49 +853,61 @@ impl ZenithApp {
         let socket_fd = _get_req_field(req, "socket_fd", -1)
         let query = _get_req_field(req, "query", "")
         let _multipart = _get_req_field(req, "_multipart", null)
+        let scheme = _get_req_field(req, "scheme", "http")
+        let host = _get_req_field(req, "host", "localhost")
+        let context = _get_req_field(req, "context", null)
+        if context == null { context = http.create_struct([], []) }
+
+        let allowed = []
+        if handler == null { allowed = _zenith_allowed_methods(self, path) }
+        if handler == null and method == "OPTIONS" and allowed.len() > 0 {
+            allowed = allowed.push("OPTIONS")
+            let method_response = with_header(Response { status: 204, body: "", content_type: "text/plain", _keep_open: false }, "Allow", allowed.join(", "))
+            handler = |r| { return method_response }
+        } else if handler == null and allowed.len() > 0 {
+            let method_response = with_header(Response { status: 405, body: "Method Not Allowed", content_type: "text/plain", _keep_open: false }, "Allow", allowed.join(", "))
+            handler = |r| { return method_response }
+        }
 
         let req2 = http.create_struct(
-            ["method", "path", "query", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
-            [req.method, req.path, query, body, json, params, 0, handler, headers, ip, socket_fd, dir_segs, _multipart]
+            ["method", "path", "query", "body", "json", "params", "context", "scheme", "host", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
+            [method, path, query, body, json, params, context, scheme, host, 0, handler, headers, ip, socket_fd, dir_segs, _multipart]
         )
         let result = null
         try {
             result = _run_middleware(self, req2)
         } catch e {
-            print("CRASHED:", e)
-            let info = errors.make(errors.kind(e), "" + e, "")
-            if self.error_handler != null {
-                result = self.error_handler(info, req)
-            } else {
-                // default: clean JSON 500, never leak internals to the client
-                result = http.create_struct(
-                    ["status", "body", "content_type"],
-                    [500, json_encode({ error: "Internal Server Error", kind: info.kind }), "application/json"]
-                )
-            }
+            result = _zenith_error_response(self, e, req2)
         }
+
+        result = _zenith_normalize_response(result)
+        if method == "HEAD" { result = _zenith_head_response(result) }
 
         // Inject CORS response headers for non-preflight responses
         if self._cors_enabled and result != null {
             result = with_header(result, "Access-Control-Allow-Origin", self._cors_origins)
         }
 
-        // Compression middleware placeholder — will be a native middleware
-        // once a native gzip/compress function is available. The middleware
-        // checks Accept-Encoding: gzip and would compress the body.
         if self._compress_enabled and result != null {
             let resp_body = _get_req_field(result, "body", "")
-            if resp_body != null and resp_body.len() > self._compress_threshold {
-                // Check Accept-Encoding header for gzip support
+            let resp_status = _get_req_field(result, "status", 200)
+            let resp_type = _get_req_field(result, "content_type", "text/plain")
+            let resp_headers = _get_req_field(result, "headers", null)
+            let already_encoded = null
+            if resp_headers != null {
+                already_encoded = _validate.get_field(resp_headers, "Content_Encoding")
+            }
+            if method != "HEAD" and resp_status != 204 and resp_status != 304 and
+                already_encoded == null and resp_body != null and
+                resp_body.len() >= self._compress_threshold and
+                _zenith_compressible_type(resp_type) {
                 let req_headers = _get_req_field(req, "headers", null)
                 let accept_enc = ""
                 if req_headers != null {
                     accept_enc = _validate.get_field(req_headers, "accept_encoding")
                 }
-                if accept_enc != null and accept_enc.index_of("gzip") >= 0 {
-                    // Future: result = with_header(result, "Content-Encoding", "gzip")
-                    // For now, compression requires a native C binding (zlib).
-                    // The response is passed through uncompressed.
+                if _zenith_accepts_gzip(accept_enc) {
+                    result = _zenith_gzip_response(result)
                 }
             }
         }
@@ -722,12 +941,8 @@ impl ZenithApp {
     // certbot, or a self-signed cert for local dev -- see
     // examples/tls_test.vn for how to generate one with openssl).
     //
-    // CAVEAT: WebSocket/SSE upgrades (upgrade_websocket/sse_handshake)
-    // write directly to the raw socket via http.write_socket(), which is
-    // not TLS-aware — wss:// is unsupported. Lumen reactivity (lumen_mount)
-    // silently breaks behind listen_tls because the browser tries wss://
-    // and the server can't upgrade it. Production workaround: terminate TLS
-    // at a reverse proxy (nginx/Caddy) that proxies plain ws:// to Zenith.
+    // WebSocket and SSE transports share the active server connection, so
+    // upgrades remain encrypted under listen_tls() without a reverse proxy.
     fn listen_tls(self, port, cert_path, key_path) {
         self.port = port
         print("Zenith running on https://localhost:", port)
@@ -746,15 +961,14 @@ impl ZenithApp {
     }
 
     fn compress(self, threshold) {
-        self._compress_enabled = true
-        if threshold != null and threshold > 0 {
-            self._compress_threshold = threshold
+        if threshold != null and type_of(threshold) != "int" {
+            throw("Compression threshold must be an integer number of bytes")
         }
-        // NOTE: gzip compression requires a native C zlib binding which is a
-        // future feature. For now, this enables the compression middleware that
-        // checks Accept-Encoding and will delegate to the native compressor.
-        // Responses > threshold bytes will be compressed when the native
-        // function is available.
+        if threshold != null and threshold <= 0 {
+            throw("Compression threshold must be greater than zero")
+        }
+        self._compress_enabled = true
+        if threshold != null { self._compress_threshold = threshold }
         return self
     }
 
@@ -771,38 +985,33 @@ fn _run_middleware(app, req) {
     let idx = req._middleware_idx
     if idx < app.middlewares.len() {
         let mw = app.middlewares[idx]
-        let next_req = http.create_struct(
-            ["method", "path", "body", "json", "params", "_middleware_idx", "_route_handler", "headers", "ip", "socket_fd", "dir_segs", "_multipart"],
-            [req.method, req.path, req.body, req.json, req.params, idx + 1, req._route_handler, req.headers, req.ip, req.socket_fd, req.dir_segs, req._multipart]
-        )
-        return mw(next_req, |r| {
-            return _run_middleware(app, r)
-        })
+        let next_req = request_with(req, "_middleware_idx", idx + 1)
+        try {
+            return mw(next_req, |r| {
+                if _get_req_field(r, "_middleware_idx", null) == null {
+                    r = request_with(r, "_middleware_idx", idx + 1)
+                }
+                return _run_middleware(app, r)
+            })
+        } catch e {
+            return _zenith_error_response(app, e, next_req)
+        }
     } else {
         let handler = req._route_handler
         if handler == null {
             return Response { status: 404, body: "Not Found", content_type: "text/plain" }
         }
-        let dir_segs = req.dir_segs
-        if dir_segs != null {
-            let current_dir = "pages"
-            let guard_paths = [current_dir + "/+guard.vn"]
-            for s in 0..dir_segs.len() {
-                current_dir = current_dir + "/" + dir_segs[s]
-                guard_paths = guard_paths.push(current_dir + "/+guard.vn")
-            }
-            for gp in 0..guard_paths.len() {
-                let guard_file = guard_paths[gp]
-                let guard_code = io.read_text(guard_file)
-                if guard_code != null {
-                    let guard_res = _execute_guard_file(guard_file, guard_code, req)
-                    if guard_res != null {
-                        return guard_res
-                    }
+        for gi in 0..app.guards.len() {
+            let rule = app.guards[gi]
+            if _zenith_guard_matches(rule.prefix, req.path) {
+                let guard_result = null
+                try { guard_result = rule.handler(req) } catch guard_error {
+                    return _zenith_normalize_response(_zenith_error_response(app, guard_error, req))
                 }
+                if guard_result != null { return _zenith_normalize_response(guard_result) }
             }
         }
-        return handler(req)
+        try { return _zenith_normalize_response(handler(req)) } catch e { return _zenith_normalize_response(_zenith_error_response(app, e, req)) }
     }
 }
 
@@ -1059,343 +1268,6 @@ fn _swagger_handler(app, req) {
     return Response { status: 200, body: html, content_type: "text/html" }
 }
 
-// ============================================================================
-//  Request helpers — query strings, form bodies, cookies
-//
-//  Collections here are plain structs built with http.create_struct(): read a
-//  field with _validate.get_field(s, key) (returns null when absent) and list
-//  keys with _validate.get_keys(s). The query()/form()/cookie() accessors wrap
-//  that so handler code never touches _validate directly.
-// ============================================================================
-
-fn _hex_nibble(c) {
-    if c >= 48 and c <= 57 { return c - 48 }      // '0'..'9'
-    if c >= 97 and c <= 102 { return c - 87 }     // 'a'..'f'
-    if c >= 65 and c <= 70 { return c - 55 }      // 'A'..'F'
-    return -1
-}
-
-// Percent-decode a URL-encoded component ("%20" -> space, "+" -> space).
-// Invalid/short escapes are passed through literally rather than dropped.
-fn url_decode(s) {
-    if s == null { return "" }
-    let out = []
-    let n = s.len()
-    let i = 0
-    while i < n {
-        let c = s.code_at(i)
-        if c == 37 and i + 2 < n {                 // '%'
-            let hi = _hex_nibble(s.code_at(i + 1))
-            let lo = _hex_nibble(s.code_at(i + 2))
-            if hi >= 0 and lo >= 0 {
-                out = out.push(hi * 16 + lo)
-                i = i + 3
-            } else {
-                out = out.push(c)
-                i = i + 1
-            }
-        } else if c == 43 {                        // '+'
-            out = out.push(32)
-            i = i + 1
-        } else {
-            out = out.push(c)
-            i = i + 1
-        }
-    }
-    return "".from_codes(out)
-}
-
-// Parse "a=1&b=two&flag" into a struct {a:"1", b:"two", flag:""}, decoding
-// both keys and values. Empty segments (e.g. trailing "&") are skipped.
-fn parse_pairs(s) {
-    let keys = []
-    let vals = []
-    if s == null or s == "" {
-        return http.create_struct(keys, vals)
-    }
-    let pairs = s.split("&")
-    for i in 0..pairs.len() {
-        let p = pairs[i]
-        if p == "" { continue }
-        let eq = p.index_of("=")
-        if eq < 0 {
-            keys = keys.push(url_decode(p))
-            vals = vals.push("")
-        } else {
-            keys = keys.push(url_decode(p.substring(0, eq)))
-            vals = vals.push(url_decode(p.substring(eq + 1, p.len())))
-        }
-    }
-    return http.create_struct(keys, vals)
-}
-
-// All query-string parameters as a struct.
-fn query_params(req) {
-    return parse_pairs(_get_req_field(req, "query", ""))
-}
-
-// A single query parameter, or `default` when absent.
-fn query(req, key, default) {
-    let v = _validate.get_field(query_params(req), key)
-    if v == null { return default }
-    return v
-}
-
-// All application/x-www-form-urlencoded body fields as a struct.
-fn form_params(req) {
-    return parse_pairs(_get_req_field(req, "body", ""))
-}
-
-// A single form field, or `default` when absent.
-fn form(req, key, default) {
-    let v = _validate.get_field(form_params(req), key)
-    if v == null { return default }
-    return v
-}
-
-// ── Cookies ────────────────────────────────────────────────────────────────
-
-// Parse the inbound Cookie header ("a=1; b=2") into a struct.
-fn cookies(req) {
-    let keys = []
-    let vals = []
-    let headers = _get_req_field(req, "headers", null)
-    let raw = null
-    if headers != null {
-        raw = _validate.get_field(headers, "cookie")
-    }
-    if raw == null or raw == "" {
-        return http.create_struct(keys, vals)
-    }
-    let parts = raw.split(";")
-    for i in 0..parts.len() {
-        let p = _sanitize.trim(parts[i])
-        if p == "" { continue }
-        let eq = p.index_of("=")
-        if eq < 0 { continue }
-        keys = keys.push(p.substring(0, eq))
-        vals = vals.push(url_decode(p.substring(eq + 1, p.len())))
-    }
-    return http.create_struct(keys, vals)
-}
-
-// A single inbound cookie value, or `default` when absent.
-fn cookie(req, name, default) {
-    let v = _validate.get_field(cookies(req), name)
-    if v == null { return default }
-    return v
-}
-
-// ============================================================================
-//  File upload helpers — multipart/form-data accessors
-//
-//  These functions read the _multipart field that the HTTP parser populates
-//  when Content-Type is multipart/form-data. The field is a struct with:
-//    .fields  — struct of regular form field name → value
-//    .files   — array of { fieldname, filename, content_type, data }
-// ============================================================================
-
-fn _get_multipart(req) {
-    let mp = _get_req_field(req, "_multipart", null)
-    if mp == null { return null }
-    return mp
-}
-
-// Returns the files array from a multipart request, or null if none.
-fn uploaded_files(req) {
-    let mp = _get_multipart(req)
-    if mp == null { return null }
-    let files = _validate.get_field(mp, "files")
-    return files
-}
-
-// Returns a single file struct by fieldname, or null if not found.
-fn uploaded_file(req, fieldname) {
-    let mp = _get_multipart(req)
-    if mp == null { return null }
-    let files = _validate.get_field(mp, "files")
-    if files == null { return null }
-    for i in 0..files.len() {
-        let f = files[i]
-        let fn_field = _validate.get_field(f, "fieldname")
-        if fn_field == fieldname {
-            return f
-        }
-    }
-    return null
-}
-
-// Returns a form field value from a multipart request, or default if absent.
-// This is for fields that were part of a multipart form (not urlencoded).
-fn form_field(req, name, default) {
-    let mp = _get_multipart(req)
-    if mp == null { return default }
-    let fields = _validate.get_field(mp, "fields")
-    if fields == null { return default }
-    let v = _validate.get_field(fields, name)
-    if v == null { return default }
-    return v
-}
-
-// Saves an uploaded file struct to disk. `file` is a struct returned from
-// uploaded_files() or uploaded_file() with { fieldname, filename, content_type, data }.
-// Returns the full path to the saved file, or null on failure.
-fn save_upload(file, directory) {
-    let filename = _validate.get_field(file, "filename")
-    let data = _validate.get_field(file, "data")
-    if filename == null or data == null { return null }
-    // Sanitize filename — strip directory separators for safety
-    let safe_name = filename.replace("/", "_").replace("\\", "_")
-    let full_path = directory + "/" + safe_name
-    let result = io.write_bytes(full_path, data)
-    if result == null { return null }
-    return full_path
-}
-
-// ============================================================================
-//  Response helpers — headers, cookies, redirects
-//
-//  A Response carries an optional `headers` struct; the C response writer turns
-//  each field "X_Foo" into the header "X-Foo". Field names are unique, so at
-//  most one value per header name (one Set-Cookie per response).
-// ============================================================================
-
-// Return a copy of `resp` with header `name: value` set. `name` may use either
-// dashes or underscores ("X-Frame-Options" / "X_Frame_Options").
-fn with_header(resp, name, value) {
-    let field = name.replace("-", "_")
-    let keys = [field]
-    let vals = [value]
-    let existing = _get_req_field(resp, "headers", null)
-    if existing != null {
-        let ekeys = _validate.get_keys(existing)
-        let nk = []
-        let nv = []
-        for i in 0..ekeys.len() {
-            if ekeys[i] != field {
-                nk = nk.push(ekeys[i])
-                nv = nv.push(_validate.get_field(existing, ekeys[i]))
-            }
-        }
-        nk = nk.push(field)
-        nv = nv.push(value)
-        keys = nk
-        vals = nv
-    }
-    let hdrs = http.create_struct(keys, vals)
-    return Response {
-        status: _get_req_field(resp, "status", 200),
-        body: _get_req_field(resp, "body", ""),
-        content_type: _get_req_field(resp, "content_type", "text/plain"),
-        _keep_open: false,
-        headers: hdrs
-    }
-}
-
-// Build a "Set-Cookie" header value. `opts` is an optional struct understanding
-// max_age (int seconds), path, domain, http_only (bool), secure (bool) and
-// same_site ("Strict"/"Lax"/"None"). Sensible secure defaults: when no opts are
-// given the cookie is HttpOnly + SameSite=Lax + Path=/.
-fn build_cookie(name, value, opts) {
-    let s = name + "=" + value
-    let path = "/"
-    let http_only = true
-    let secure = false
-    let same_site = "Lax"
-    let max_age = -1
-    let domain = null
-    if opts != null {
-        let p = _validate.get_field(opts, "path")
-        if p != null { path = p }
-        let h = _validate.get_field(opts, "http_only")
-        if h != null { http_only = h }
-        let sc = _validate.get_field(opts, "secure")
-        if sc != null { secure = sc }
-        let ss = _validate.get_field(opts, "same_site")
-        if ss != null { same_site = ss }
-        let ma = _validate.get_field(opts, "max_age")
-        if ma != null { max_age = ma }
-        let dm = _validate.get_field(opts, "domain")
-        if dm != null { domain = dm }
-    }
-    s = s + "; Path=" + path
-    if domain != null { s = s + "; Domain=" + domain }
-    if max_age >= 0 { s = s + "; Max-Age=" + max_age }
-    if same_site != null { s = s + "; SameSite=" + same_site }
-    if http_only { s = s + "; HttpOnly" }
-    if secure { s = s + "; Secure" }
-    return s
-}
-
-// Return a copy of `resp` with a Set-Cookie header for (name, value, opts).
-fn set_cookie(resp, name, value, opts) {
-    return with_header(resp, "Set-Cookie", build_cookie(name, value, opts))
-}
-
-// Expire a cookie immediately on the client.
-fn clear_cookie(resp, name) {
-    return with_header(resp, "Set-Cookie", name + "=; Path=/; Max-Age=0")
-}
-
-// 302 redirect to `url`.
-fn redirect(url) {
-    return redirect_with(url, 302)
-}
-
-// Redirect to `url` with an explicit status (301/302/303/307/308).
-fn redirect_with(url, status) {
-    return Response {
-        status: status,
-        body: "",
-        content_type: "text/html",
-        _keep_open: false,
-        headers: http.create_struct(["Location"], [url])
-    }
-}
-
-// JSON response helper: serialize `value` and set the JSON content type.
-fn json_response(value, status) {
-    return Response {
-        status: status,
-        body: json_encode(value),
-        content_type: "application/json",
-        _keep_open: false
-    }
-}
-
-// ============================================================================
-//  Sessions — stateless, signed with JWT (HMAC-SHA256)
-//
-//  The whole session payload lives in a signed cookie, so there is no
-//  server-side store to keep in sync across cluster workers. Keep payloads
-//  small and never put secrets in them: the value is signed (tamper-proof) but
-//  NOT encrypted, so it is readable by the client. `secret` must be the same
-//  across restarts/workers or existing sessions stop verifying.
-// ============================================================================
-
-// Sign `data` (a struct) into a session token.
-fn session_sign(data, secret) {
-    return auth.sign_jwt(data, secret)
-}
-
-// Read and verify the session from the "session" cookie. Returns the decoded
-// payload struct, or null when missing/invalid/tampered.
-fn session_get(req, secret) {
-    let token = cookie(req, "session", null)
-    if token == null { return null }
-    return auth.verify_jwt(token, secret)
-}
-
-// Return a copy of `resp` that sets a signed session cookie carrying `data`.
-fn session_set(resp, data, secret, opts) {
-    let token = session_sign(data, secret)
-    return set_cookie(resp, "session", token, opts)
-}
-
-// Log out: clear the session cookie.
-fn session_clear(resp) {
-    return clear_cookie(resp, "session")
-}
 
 // ============================================================================
 //  Templating — render(template, ctx)
@@ -1414,294 +1286,9 @@ fn session_clear(resp) {
 //  template literal as well as one read from a file.
 // ============================================================================
 
-// Resolve a dotted path like "user.name" against a context struct.
-fn _tpl_lookup(ctx, path) {
-    if ctx == null { return null }
-    let segs = path.split(".")
-    let cur = ctx
-    for i in 0..segs.len() {
-        if cur == null { return null }
-        cur = _validate.get_field(cur, segs[i])
-    }
-    return cur
-}
-
-fn _tpl_truthy(v) {
-    if v == null { return false }
-    if v == false { return false }
-    if v == "" { return false }
-    if v == 0 { return false }
-    return true
-}
-
-// Shallow-copy `ctx` and override/add a single key — used to bind loop vars.
-fn _tpl_bind(ctx, key, value) {
-    let keys = [key]
-    let vals = [value]
-    if ctx != null {
-        let ck = _validate.get_keys(ctx)
-        for i in 0..ck.len() {
-            if ck[i] != key {
-                keys = keys.push(ck[i])
-                vals = vals.push(_validate.get_field(ctx, ck[i]))
-            }
-        }
-    }
-    return http.create_struct(keys, vals)
-}
-
-// index_of starting at `from` (the builtin index_of always searches from 0).
-fn _substr_index(s, needle, from) {
-    if from >= s.len() { return -1 }
-    let sub = s.substring(from, s.len())
-    let idx = sub.index_of(needle)
-    if idx < 0 { return -1 }
-    return from + idx
-}
-
-// Find the next "<%" tag opener at or after `from`; returns its index or -1.
-// (Brace-free delimiters are deliberate: Varian string literals use {expr}
-//  interpolation, so any "{" inside an inline template literal would be eaten
-//  by the lexer before render() ever ran. "<%" survives in both inline string
-//  literals and templates loaded from files.)
-fn _tpl_next_tag(tpl, from) {
-    let i = from
-    let n = tpl.len()
-    while i < n - 1 {
-        if tpl.code_at(i) == 60 and tpl.code_at(i + 1) == 37 {  // '<' '%'
-            return i
-        }
-        i = i + 1
-    }
-    return -1
-}
-
-// Render the template region tpl[pos..stop) against ctx, returning a struct
-// {out, pos, tag}. Recurses for nested if/for blocks. When `stop_tags` is
-// non-null, rendering halts at the first "<% <kw> %>" whose keyword is in the
-// list and reports that keyword back via "tag" so the caller (if/for) knows
-// whether it hit else/endif/endfor.
-//   <%= expr %>   interpolate, HTML-escaped
-//   <%- expr %>   interpolate, raw
-//   <% if/for/else/endif/endfor %>   control flow
-fn _tpl_render_region(tpl, pos, stop, ctx, stop_tags) {
-    let out = ""
-    let i = pos
-    while i < stop {
-        let tag = _tpl_next_tag(tpl, i)
-        if tag < 0 or tag >= stop {
-            out = out + tpl.substring(i, stop)
-            i = stop
-        } else {
-            out = out + tpl.substring(i, tag)
-            let close = _substr_index(tpl, "%>", tag + 2)
-            let marker = tpl.code_at(tag + 2)
-            if marker == 61 or marker == 45 {       // '=' escaped, '-' raw
-                let expr = _sanitize.trim(tpl.substring(tag + 3, close))
-                let looked = _tpl_lookup(ctx, expr)
-                let val = ""
-                if looked != null { val = "" + looked }
-                if marker == 45 {
-                    out = out + val
-                } else {
-                    out = out + _sanitize.escape_html(val)
-                }
-                i = close + 2
-            } else {                                // control-flow statement
-                let directive = _sanitize.trim(tpl.substring(tag + 2, close))
-                let after = close + 2
-                if _tpl_is_stop(directive, stop_tags) {
-                    return http.create_struct(["out", "pos", "tag"], [out, after, _tpl_keyword(directive)])
-                }
-                if directive.starts_with("if ") {
-                    let res = _tpl_do_if(tpl, after, stop, ctx, _sanitize.trim(directive.substring(3, directive.len())))
-                    out = out + _validate.get_field(res, "out")
-                    i = _validate.get_field(res, "pos")
-                } else if directive.starts_with("for ") {
-                    let res = _tpl_do_for(tpl, after, stop, ctx, _sanitize.trim(directive.substring(4, directive.len())))
-                    out = out + _validate.get_field(res, "out")
-                    i = _validate.get_field(res, "pos")
-                } else {
-                    // Unknown directive: emit nothing, skip it.
-                    i = after
-                }
-            }
-        }
-    }
-    return http.create_struct(["out", "pos", "tag"], [out, i, ""])
-}
-
-fn _tpl_keyword(directive) {
-    let sp = directive.index_of(" ")
-    if sp < 0 { return directive }
-    return directive.substring(0, sp)
-}
-
-fn _tpl_is_stop(directive, stop_tags) {
-    if stop_tags == null { return false }
-    let kw = _tpl_keyword(directive)
-    for i in 0..stop_tags.len() {
-        if stop_tags[i] == kw { return true }
-    }
-    return false
-}
-
-// Handle {% if expr %} body [{% else %} body] {% endif %}
-fn _tpl_do_if(tpl, pos, stop, ctx, expr) {
-    let truthy = _tpl_truthy(_tpl_lookup(ctx, expr))
-    let first = _tpl_render_region(tpl, pos, stop, ctx, ["else", "endif"])
-    let stopped = _validate.get_field(first, "tag")
-    let out = ""
-    if truthy {
-        out = _validate.get_field(first, "out")
-    }
-    let cur = _validate.get_field(first, "pos")
-    if stopped == "else" {
-        let second = _tpl_render_region(tpl, cur, stop, ctx, ["endif"])
-        if truthy == false {
-            out = _validate.get_field(second, "out")
-        }
-        cur = _validate.get_field(second, "pos")
-    }
-    return http.create_struct(["out", "pos"], [out, cur])
-}
-
-// Handle {% for x in items %} body {% endfor %}
-fn _tpl_do_for(tpl, pos, stop, ctx, header) {
-    // header is "x in items"
-    let inpos = header.index_of(" in ")
-    let var_name = _sanitize.trim(header.substring(0, inpos))
-    let list_expr = _sanitize.trim(header.substring(inpos + 4, header.len()))
-    let items = _tpl_lookup(ctx, list_expr)
-    let out = ""
-    let body_end = pos
-    if items != null {
-        for j in 0..items.len() {
-            let child = _tpl_bind(ctx, var_name, items[j])
-            let res = _tpl_render_region(tpl, pos, stop, child, ["endfor"])
-            out = out + _validate.get_field(res, "out")
-            body_end = _validate.get_field(res, "pos")
-        }
-    }
-    if body_end == pos {
-        // Empty list: still consume the body up to {% endfor %} once.
-        let res = _tpl_render_region(tpl, pos, stop, ctx, ["endfor"])
-        body_end = _validate.get_field(res, "pos")
-    }
-    return http.create_struct(["out", "pos"], [out, body_end])
-}
-
-// Render a template string against a context struct.
-fn render(template, ctx) {
-    let res = _tpl_render_region(template, 0, template.len(), ctx, null)
-    return _validate.get_field(res, "out")
-}
-
-// Convenience: a 200 text/html response from a rendered template.
-fn render_response(template, ctx) {
-    return Response {
-        status: 200,
-        body: render(template, ctx),
-        content_type: "text/html",
-        _keep_open: false
-    }
-}
-
-fn _execute_guard_file(file_path, guard_code, req) {
-    let rand = crypto.random_string(8)
-    if rand == null { rand = "xyz" }
-    let req_file = "temp_req_" + rand + ".json"
-    let guard_vn_file = "temp_guard_" + rand + ".vn"
-    let req_data = http.create_struct(
-        ["method", "path", "query", "body", "json", "params", "headers", "ip"],
-        [req.method, req.path, req.query, req.body, req.json, req.params, req.headers, req.ip]
-    )
-    io.write_text(req_file, json_encode(req_data))
-    let runner_code = guard_code + "\n\n" +
-        "fn _run_guard_bootstrap() {\n" +
-        "    let req_str = io.read_text(\"" + req_file + "\")\n" +
-        "    if req_str == null or req_str == \"\" { return }\n" +
-        "    let req = json_decode(req_str)\n" +
-        "    let res = guard(req)\n" +
-        "    if res != null {\n" +
-        "        print(json_encode(res))\n" +
-        "    }\n" +
-        "}\n" +
-        "_run_guard_bootstrap()\n"
-    io.write_text(guard_vn_file, runner_code)
-    let out = null
-    try {
-        let cmd = "vn " + guard_vn_file
-        let result_str = python.run("subprocess", "getoutput", [cmd])
-        if result_str != null and result_str != "" {
-            out = json_decode(result_str)
-        }
-    } catch e {
-        print("Guard execution error on " + file_path + ":", e)
-    }
-    io.delete(req_file)
-    io.delete(guard_vn_file)
-    return out
-}
-
-fn _admin_jobs_handler(req) {
-    let conn = sqlite.connect("aurora.db")
-    let action = _get_req_field(req.query, "action", "")
-    if req.method == "POST" {
-        let body_action = _get_req_field(req.json, "action", "")
-        if body_action == "" { body_action = action }
-        if body_action == "retry_all" {
-            sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE status = 'failed'")
-        } else if body_action == "clear_all" {
-            sqlite.query(conn, "DELETE FROM vn_jobs")
-        } else if body_action == "retry_one" {
-            let jid = _get_req_field(req.json, "id", "")
-            if jid != "" {
-                sqlite.query(conn, "UPDATE vn_jobs SET status = 'pending', error = NULL WHERE id = ?", [jid])
-            }
-        }
-    }
-    let total = 0
-    let pending = 0
-    let running = 0
-    let completed = 0
-    let failed = 0
-    try {
-        let total_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs")
-        if total_res != null and total_res.len() > 0 { total = total_res[0].count }
-        let pending_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'pending'")
-        if pending_res != null and pending_res.len() > 0 { pending = pending_res[0].count }
-        let running_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'running'")
-        if running_res != null and running_res.len() > 0 { running = running_res[0].count }
-        let completed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'completed'")
-        if completed_res != null and completed_res.len() > 0 { completed = completed_res[0].count }
-        let failed_res = sqlite.query(conn, "SELECT COUNT(*) as count FROM vn_jobs WHERE status = 'failed'")
-        if failed_res != null and failed_res.len() > 0 { failed = failed_res[0].count }
-    } catch e {
-        sqlite.query(conn, "CREATE TABLE IF NOT EXISTS vn_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT, attempts INTEGER DEFAULT 0, created_at DATETIME DEFAULT CURRENT_TIMESTAMP, updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)")
-    }
-    let jobs = []
-    try {
-        jobs = sqlite.query(conn, "SELECT id, name, status, attempts, error, created_at FROM vn_jobs ORDER BY id DESC LIMIT 20")
-    } catch e {}
-    if jobs == null { jobs = [] }
-    let rows_html = ""
-    for i in 0..jobs.len() {
-        let job = jobs[i]
-        let err_str = ""
-        if job.error != null { err_str = job.error }
-        let badge_color = "bg-yellow-500/10 text-yellow-500 border-yellow-500/20"
-        if job.status == "running" { badge_color = "bg-blue-500/10 text-blue-500 border-blue-500/20 animate-pulse" }
-        else if job.status == "completed" { badge_color = "bg-green-500/10 text-green-500 border-green-500/20" }
-        else if job.status == "failed" { badge_color = "bg-red-500/10 text-red-500 border-red-500/20" }
-        let action_btn = ""
-        if job.status == "failed" {
-            action_btn = "<button onclick=\"retryJob(" + job.id + ")\" class=\"px-2 py-1 text-xs bg-indigo-600 hover:bg-indigo-700 text-white rounded transition\">Retry</button>"
-        }
-        rows_html = rows_html + "<tr class=\"border-b border-slate-800 hover:bg-slate-900/50 transition-colors\"><td class=\"py-3 px-4 text-slate-400 font-mono text-xs\">#" + job.id + "</td><td class=\"py-3 px-4 font-semibold text-slate-200\">" + job.name + "</td><td class=\"py-3 px-4\"><span class=\"px-2.5 py-1 text-xs font-medium rounded-full border " + badge_color + "\">" + job.status + "</span></td><td class=\"py-3 px-4 text-slate-400 text-sm\">" + job.attempts + "</td><td class=\"py-3 px-4 text-red-400 text-xs font-mono max-w-xs truncate\" title=\"" + err_str + "\">" + err_str + "</td><td class=\"py-3 px-4 text-slate-500 text-xs\">" + job.created_at + "</td><td class=\"py-3 px-4 text-right\">" + action_btn + "</td></tr>"
-    }
-    let rows_cell = rows_html
-    if rows_cell == "" { rows_cell = "<tr><td colspan=\"7\" class=\"text-center py-8 text-slate-500\">No tasks in pipeline.</td></tr>" }
-    let html = "<!DOCTYPE html><html lang=\"en\" class=\"dark\"><head><meta charset=\"UTF-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"><title>vn_jobs LiveDashboard</title><script src=\"https://cdn.tailwindcss.com\"></script><style>@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono&display=swap'); body { font-family: 'Outfit', sans-serif; } pre, code { font-family: 'JetBrains Mono', monospace; }</style></head><body class=\"bg-[#0B1020] text-slate-200 min-h-screen\"><div class=\"max-w-7xl mx-auto px-4 py-8\"><div class=\"flex justify-between items-center mb-8 border-b border-slate-800 pb-6\"><div><h1 class=\"text-3xl font-bold tracking-tight text-white flex items-center gap-3\"><span class=\"h-3 w-3 rounded-full bg-indigo-500 shadow-[0_0_12px_rgba(99,102,241,0.5)]\"></span>vn_jobs LiveDashboard</h1><p class=\"text-slate-400 text-sm mt-1\">Stateful, SQLite-backed background task pipeline metrics</p></div><div class=\"flex gap-3\"><button onclick=\"postAction('retry_all')\" class=\"px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-medium rounded-lg transition shadow-lg shadow-indigo-600/20\">Retry All Failed</button><button onclick=\"postAction('clear_all')\" class=\"px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium rounded-lg border border-slate-700 transition\">Clear Queue</button></div></div><div class=\"grid grid-cols-2 md:grid-cols-5 gap-4 mb-8\"><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Total Tasks</p><p class=\"text-3xl font-bold text-white mt-1\">" + total + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Pending</p><p class=\"text-3xl font-bold text-yellow-500 mt-1\">" + pending + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Running</p><p class=\"text-3xl font-bold text-blue-500 mt-1\">" + running + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Completed</p><p class=\"text-3xl font-bold text-green-500 mt-1\">" + completed + "</p></div><div class=\"bg-slate-900/40 border border-slate-800/80 rounded-xl p-5 backdrop-blur-sm\"><p class=\"text-xs font-semibold text-slate-500 uppercase tracking-wider\">Failed</p><p class=\"text-3xl font-bold text-red-500 mt-1\">" + failed + "</p></div></div><div class=\"bg-slate-900/20 border border-slate-800/80 rounded-xl overflow-hidden backdrop-blur-sm\"><div class=\"px-6 py-4 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/40\"><h2 class=\"font-semibold text-lg text-white\">Active Job Queue (Last 20)</h2><span class=\"text-xs text-slate-500 animate-pulse flex items-center gap-1.5\"><span class=\"h-2 w-2 rounded-full bg-green-500\"></span>Live updating</span></div><div class=\"overflow-x-auto\"><table class=\"w-full text-left border-collapse\"><thead><tr class=\"border-b border-slate-800 text-slate-400 text-xs font-semibold uppercase bg-slate-900/10\"><th class=\"py-3 px-4\">ID</th><th class=\"py-3 px-4\">Job Type</th><th class=\"py-3 px-4\">Status</th><th class=\"py-3 px-4\">Attempts</th><th class=\"py-3 px-4\">Error Logs</th><th class=\"py-3 px-4\">Created At</th><th class=\"py-3 px-4 text-right\">Actions</th></tr></thead><tbody>" + rows_cell +"</tbody></table></div></div></div><script>function postAction(act) { fetch('/admin/jobs?action=' + act, { method: 'POST' }).then(() => location.reload()); } function retryJob(id) { fetch('/admin/jobs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'retry_one', id: id }) }).then(() => location.reload()); } setTimeout(() => location.reload(), 3000);</script></body></html>"
-    return http.create_struct(["status", "body", "content_type"], [200, html, "text/html"])
-}
+// The engine (_tpl_lookup, _tpl_render_region, render, render_response, ...)
+// lives in vn_modules/zenith/template.vn — a Constellation-style package
+// subdirectory, explicitly loaded here so it stays out of the ambient
+// top-level prelude (see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
+// It needs the `Response` struct above, so this `use` must come after it.
+use "zenith"

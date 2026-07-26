@@ -179,6 +179,37 @@ fn rate_limit_redis(redis_conn, max_reqs, window_seconds) {
 // match every existing caller -- the cookie is issued without the Secure
 // attribute. Serving exclusively over HTTPS in production and want it?
 // Add "; Secure" to cookie_attrs below directly, or fork this function.
+fn _csrf_inject_forms(body, token) {
+    if body == null or body == "" { return body }
+    let out = ""
+    let cursor = 0
+    let marker = "<form"
+    let lower_body = body.lower()
+    while cursor < body.len() {
+        let at = lower_body.index_of(marker, cursor)
+        if at < 0 { out = out + body.substring(cursor, body.len()); break }
+        out = out + body.substring(cursor, at)
+        let close = body.index_of(">", at)
+        if close < 0 { out = out + body.substring(at, body.len()); break }
+        let tag = body.substring(at, close + 1)
+        let lower = tag.lower()
+        let form_end = lower_body.index_of("</form", close + 1)
+        let form_body = ""
+        if form_end >= 0 { form_body = lower_body.substring(close + 1, form_end) }
+        out = out + tag
+        if (lower.index_of("method=\"post\"") >= 0 or lower.index_of("method='post'") >= 0 or lower.index_of("method=post") >= 0) and
+           lower.index_of("action=\"http:") < 0 and lower.index_of("action=\"https:") < 0 and
+           lower.index_of("action='http:") < 0 and lower.index_of("action='https:") < 0 and
+           lower.index_of("action=\"//") < 0 and lower.index_of("action='//") < 0 and
+           lower.index_of("name=\"_csrf\"") < 0 and lower.index_of("name='_csrf'") < 0 and
+           form_body.index_of("name=\"_csrf\"") < 0 and form_body.index_of("name='_csrf'") < 0 {
+            out = out + "<input type=\"hidden\" name=\"_csrf\" value=\"" + token + "\">"
+        }
+        cursor = close + 1
+    }
+    return out
+}
+
 fn csrf() {
     let cookie_attrs = "Path=/; SameSite=Lax"
 
@@ -194,45 +225,49 @@ fn csrf() {
         let existing_token = _extract_cookie(cookie_header, "csrf_token")
 
         if req.method == "GET" || req.method == "HEAD" || req.method == "OPTIONS" {
+            let response_token = existing_token
+            if response_token == null { response_token = auth.generate_token(32) }
             let resp = next(req)
-            if existing_token != null {
-                return resp
+            let response_body = _validate.get_field(resp, "body")
+            let response_type = _validate.get_field(resp, "content_type")
+            if response_type != null and response_type.index_of("text/html") == 0 {
+                response_body = _csrf_inject_forms(response_body, response_token)
             }
-            // Issue a fresh token for this client; merge onto whatever
-            // headers the handler itself already set. resp may be a plain
-            // Response{...} literal with no "headers" field at all -- a
-            // bare `resp.headers` would throw ("Struct has no field
-            // 'headers'") rather than return nil, so this has to go
-            // through the same nil-tolerant accessor session_middleware
-            // and friends already use elsewhere in this codebase.
-            let new_token = auth.generate_token(32)
-            let set_cookie_val = "csrf_token=" + new_token + "; " + cookie_attrs
             let resp_headers = _validate.get_field(resp, "headers")
-            if resp_headers == null {
-                resp_headers = http.create_struct(["set_cookie"], [set_cookie_val])
-            } else {
-                let keys = _validate.get_keys(resp_headers).push("set_cookie")
-                let vals = []
-                for i in 0..(keys.len() - 1) {
-                    vals = vals.push(_validate.get_field(resp_headers, keys[i]))
+            if existing_token == null {
+                let set_cookie_val = "csrf_token=" + response_token + "; " + cookie_attrs
+                if resp_headers == null {
+                    resp_headers = http.create_struct(["set_cookie"], [set_cookie_val])
+                } else {
+                    let keys = _validate.get_keys(resp_headers).push("set_cookie")
+                    let vals = []
+                    for i in 0..(keys.len() - 1) {
+                        vals = vals.push(_validate.get_field(resp_headers, keys[i]))
+                    }
+                    vals = vals.push(set_cookie_val)
+                    resp_headers = http.create_struct(keys, vals)
                 }
-                vals = vals.push(set_cookie_val)
-                resp_headers = http.create_struct(keys, vals)
             }
-            return http.create_struct(
-                ["status", "body", "content_type", "headers"],
-                [resp.status, resp.body, resp.content_type, resp_headers]
-            )
+            let updated = _tpl_bind(resp, "body", response_body)
+            if existing_token == null { updated = _tpl_bind(updated, "headers", resp_headers) }
+            return updated
         }
 
         let header_token = _validate.get_field(req.headers, "x_csrf_token")
-        if existing_token == null || header_token == null || header_token == "" {
+        let submitted_token = header_token
+        if submitted_token == null or submitted_token == "" {
+            let body_type = _validate.get_field(req, "body")
+            if body_type != null and body_type != "" {
+                submitted_token = _validate.get_field(parse_pairs(body_type), "_csrf")
+            }
+        }
+        if existing_token == null || submitted_token == null || submitted_token == "" {
             return http.create_struct(
                 ["status", "body", "content_type"],
                 [403, "Forbidden: Missing CSRF Token", "text/plain"]
             )
         }
-        if !auth.constant_time_eq(existing_token, header_token) {
+        if !auth.constant_time_eq(existing_token, submitted_token) {
             return http.create_struct(
                 ["status", "body", "content_type"],
                 [403, "Forbidden: Invalid CSRF Token", "text/plain"]

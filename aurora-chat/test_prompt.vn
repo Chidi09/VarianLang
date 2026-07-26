@@ -1,0 +1,2 @@
+use "lib/app_chat.vn"
+print(_build_system_prompt())

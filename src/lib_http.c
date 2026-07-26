@@ -1,4 +1,5 @@
 #include "lib_http.h"
+#include <zlib.h>
 #include "json.h"
 #include "picohttpparser.h"
 #include "lexer.h"
@@ -426,7 +427,7 @@ static int conn_buffer_recv_more(int fd, SSL *ssl, ConnBuffer *cb, int max_total
  * response-sending through the same multi-tick state machine as the
  * connection read path) is a lot of added complexity for a case that, in
  * practice, essentially never blocks for long. */
-static void conn_io_send_all(int fd, SSL *ssl, const char *buf, int len) {
+static bool conn_io_send_all(int fd, SSL *ssl, const char *buf, int len) {
     int sent = 0;
     int stall_guard = 0;
     while (sent < len && stall_guard < 100000) {
@@ -439,7 +440,7 @@ static void conn_io_send_all(int fd, SSL *ssl, const char *buf, int len) {
                     stall_guard++;
                     continue;
                 }
-                return;
+                return false;
             }
         } else {
             n = (int)send(fd, buf + sent, (size_t)(len - sent), 0);
@@ -452,11 +453,12 @@ static void conn_io_send_all(int fd, SSL *ssl, const char *buf, int len) {
                     stall_guard++;
                     continue;
                 }
-                return;
+                return false;
             }
         }
         sent += n;
     }
+    return sent == len;
 }
 
 typedef enum {
@@ -509,6 +511,15 @@ static Value make_status_body_response(VM *vm, int status, ObjString *body) {
     struct_attach_shape(vm, rs, "Response", (char *const *)names, 2);
     rs->fields[0] = val_int(status);
     rs->fields[1] = val_string(body);
+    return val_struct(rs);
+}
+
+static Value make_already_sent_response(VM *vm) {
+    ObjStruct *rs = new_struct(vm, 1, false);
+    if (rs->field_names) free(rs->field_names);
+    static const char *names[] = { "_already_sent" };
+    struct_attach_shape(vm, rs, "SentResponse", (char *const *)names, 1);
+    rs->fields[0] = val_bool(true);
     return val_struct(rs);
 }
 
@@ -718,6 +729,18 @@ static bool response_wants_keep_open(Value result) {
     return false;
 }
 
+static bool response_was_already_sent(Value result) {
+    if (result.type != VAL_STRUCT) return false;
+    ObjStruct *rs = result.as.structure;
+    for (int i = 0; i < rs->field_count; i++) {
+        if (strcmp(rs->field_names[i], "_already_sent") == 0 &&
+            rs->fields[i].type == VAL_BOOL && rs->fields[i].as.boolean) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /* Most handlers finish in a single tick and call_handler() can just return
  * the result synchronously. A handler managing a long-lived connection
  * (WebSocket/SSE) calls task.yield() while waiting for more socket data --
@@ -751,6 +774,11 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
     tmp->frame_count = 1;
 
     Task *prev = vm->current_task;
+    /* Make the connection available while the handler is running. Native
+     * chunked-response primitives use this pair, including the SSL object,
+     * so streaming never bypasses TLS with a raw send(). */
+    tmp->http_response_fd = client_fd;
+    tmp->http_response_ssl = (void *)ssl;
     vm->current_task = tmp;
     bool ok = task_run(vm, tmp);
     vm->current_task = prev;
@@ -775,14 +803,20 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
          * that: this Task's stack is the only GC root keeping the request
          * struct's fields alive, and the result struct built below could
          * still be in use when the next GC cycle runs. */
-        tmp->dead = true;
-        return make_status_body_response(vm, 500,
+        Value failure = make_status_body_response(vm, 500,
             allocate_string(vm, "Internal Server Error", 22));
+        if (tmp->http_stream_started) {
+            if (!tmp->http_stream_ended)
+                conn_io_send_all(client_fd, ssl, "0\r\n\r\n", 5);
+            failure = make_already_sent_response(vm);
+        }
+        tmp->dead = true;
+        tmp->http_response_fd = -1;
+        tmp->http_response_ssl = NULL;
+        return failure;
     }
 
     if (!tmp->dead) {
-        tmp->http_response_fd = client_fd;
-        tmp->http_response_ssl = (void *)ssl;
         *deferred = true;
         return val_nil();
     }
@@ -790,11 +824,18 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
     Value result = val_nil();
     if (tmp->stack_top > 0)
         result = tmp->stack[tmp->stack_top - 1];
+    if (tmp->http_stream_started) {
+        if (!tmp->http_stream_ended)
+            conn_io_send_all(client_fd, ssl, "0\r\n\r\n", 5);
+        result = make_already_sent_response(vm);
+    }
     /* tmp stays registered (just dead) until the round-robin scheduler's
      * end-of-pass reap, the same reasoning as the error path above: result
      * is still only reachable via tmp's stack until handle_connection()
      * finishes using it. */
     tmp->dead = true;
+    tmp->http_response_fd = -1;
+    tmp->http_response_ssl = NULL;
     return result;
 }
 
@@ -806,13 +847,18 @@ static Value call_handler(VM *vm, Value handler_val, Value req_val, int client_f
 void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
     int fd = t->http_response_fd;
     SSL *ssl = (SSL *)t->http_response_ssl;
+    bool streamed = t->http_stream_started;
+    if (streamed && !t->http_stream_ended)
+        conn_io_send_all(fd, ssl, "0\r\n\r\n", 5);
     t->http_response_fd = -1;
     t->http_response_ssl = NULL;
     if (had_error) {
         fprintf(stderr, "Unhandled error in long-lived request handler\n");
-        Value rv = make_status_body_response(vm, 500,
-            copy_string("Internal Server Error", 22));
-        send_http_response(fd, ssl, rv, false);
+        if (!streamed) {
+            Value rv = make_status_body_response(vm, 500,
+                copy_string("Internal Server Error", 22));
+            send_http_response(fd, ssl, rv, false);
+        }
         if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
         close_socket(fd);
         return;
@@ -820,7 +866,7 @@ void http_finalize_deferred_response(VM *vm, Task *t, bool had_error) {
     Value result = val_nil();
     if (t->stack_top > 0)
         result = t->stack[t->stack_top - 1];
-    if (!response_wants_keep_open(result)) {
+    if (!streamed && !response_was_already_sent(result) && !response_wants_keep_open(result)) {
         send_http_response(fd, ssl, result, false);
     }
     if (ssl) { SSL_shutdown(ssl); SSL_free(ssl); }
@@ -1380,6 +1426,9 @@ static bool handle_connection(VM *vm, int client_fd, SSL *ssl, const char *ip_st
         return false;
     }
 
+    if (response_was_already_sent(result)) {
+        return false;
+    }
     if (response_wants_keep_open(result)) {
         *out_transferred = true;
         return false;
@@ -2384,6 +2433,219 @@ static Value lib_http_write_socket(VM *vm, int arg_count, Value *args) {
     return val_int(sent);
 }
 
+/* ─── TLS-aware HTTP/1.1 chunked response primitives ───
+ * These operate only inside an active http.serve handler. The handler must
+ * return a struct containing `_already_sent: true` after stream_end(), which
+ * tells handle_connection() not to emit a second buffered response. */
+static const char *http_status_text(int status) {
+    if (status == 200) return "OK";
+    if (status == 201) return "Created";
+    if (status == 202) return "Accepted";
+    if (status == 204) return "No Content";
+    if (status == 400) return "Bad Request";
+    if (status == 401) return "Unauthorized";
+    if (status == 403) return "Forbidden";
+    if (status == 404) return "Not Found";
+    if (status == 405) return "Method Not Allowed";
+    if (status == 429) return "Too Many Requests";
+    if (status == 500) return "Internal Server Error";
+    if (status == 503) return "Service Unavailable";
+    return "Status";
+}
+
+static bool http_stream_task(VM *vm, Task **out, SSL **ssl) {
+    Task *t = vm->current_task;
+    if (!t || t->http_response_fd < 0) {
+        runtime_error(vm, "HTTP streaming is only available inside an active server handler");
+        return false;
+    }
+    *out = t;
+    *ssl = (SSL *)t->http_response_ssl;
+    return true;
+}
+
+/* Raw protocol access to the active server connection. Unlike write_socket /
+ * read_socket these preserve the connection's TLS layer, so upgrades such as
+ * WebSocket work identically under serve() and serve_tls(). The server task
+ * remains the sole owner of the fd and SSL object and closes both when the
+ * handler finishes. */
+static Value lib_http_connection_write(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_STRING) {
+        runtime_error(vm, "http.connection_write(data) requires a string");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    ObjString *data = args[base].as.string;
+    if (data->length == 0) return val_int(0);
+    if (!conn_io_send_all(t->http_response_fd, ssl, data->chars, data->length)) {
+        runtime_error(vm, "http.connection_write failed");
+        return val_nil();
+    }
+    return val_int(data->length);
+}
+
+static Value lib_http_connection_read(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_INT) {
+        runtime_error(vm, "http.connection_read(max_bytes) requires an int");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    int max_bytes = (int)args[base].as.integer;
+    if (max_bytes <= 0) return val_string(allocate_string(vm, "", 0));
+    if (max_bytes > 16 * 1024 * 1024) {
+        runtime_error(vm, "http.connection_read max_bytes exceeds 16MB");
+        return val_nil();
+    }
+    char *buf = malloc((size_t)max_bytes);
+    if (!buf) {
+        runtime_error(vm, "http.connection_read allocation failed");
+        return val_nil();
+    }
+    int n = conn_io_recv(t->http_response_fd, ssl, buf, max_bytes);
+    if (n <= 0) {
+        free(buf);
+        if (n == -1) return val_string(allocate_string(vm, "", 0));
+        return val_nil();
+    }
+    ObjString *result = allocate_string(vm, buf, n);
+    free(buf);
+    return val_string(result);
+}
+
+static bool safe_http_header_part(const char *s) {
+    return s && strchr(s, '\r') == NULL && strchr(s, '\n') == NULL;
+}
+
+static bool safe_http_header_name(const char *s) {
+    if (!s || !*s) return false;
+    for (const unsigned char *p = (const unsigned char *)s; *p; p++) {
+        if (!(isalnum(*p) || *p == '-' || *p == '_')) return false;
+    }
+    return true;
+}
+
+static Value lib_http_stream_start(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 2 || args[base].type != VAL_INT || args[base + 1].type != VAL_STRING) {
+        runtime_error(vm, "http.stream_start(status, content_type [, headers]) requires an int and string");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    if (t->http_stream_started) {
+        runtime_error(vm, "http.stream_start may only be called once per response");
+        return val_nil();
+    }
+    int status = (int)args[base].as.integer;
+    const char *content_type = args[base + 1].as.string->chars;
+    if (status < 200 || status > 599 || status == 204 || status == 205 || status == 304) {
+        runtime_error(vm, "http.stream_start requires a status that permits a response body");
+        return val_nil();
+    }
+    if (!*content_type || !safe_http_header_part(content_type)) {
+        runtime_error(vm, "http.stream_start content type is empty or contains a newline");
+        return val_nil();
+    }
+    char custom[8192] = "";
+    int custom_len = 0;
+    if (arg_count > base + 2 && args[base + 2].type != VAL_NIL) {
+        if (args[base + 2].type != VAL_STRUCT) {
+            runtime_error(vm, "http.stream_start headers must be a struct");
+            return val_nil();
+        }
+        ObjStruct *hs = args[base + 2].as.structure;
+        for (int i = 0; i < hs->field_count; i++) {
+            if (hs->fields[i].type != VAL_STRING) {
+                runtime_error(vm, "http.stream_start header values must be strings");
+                return val_nil();
+            }
+            const char *name = hs->field_names[i];
+            const char *value = hs->fields[i].as.string->chars;
+            if (!safe_http_header_name(name) || !safe_http_header_part(value)) {
+                runtime_error(vm, "http.stream_start contains an invalid header");
+                return val_nil();
+            }
+            char normalized[256];
+            snprintf(normalized, sizeof(normalized), "%s", name);
+            for (int j = 0; normalized[j]; j++) if (normalized[j] == '_') normalized[j] = '-';
+            if (strcasecmp(normalized, "content-length") == 0 ||
+                strcasecmp(normalized, "transfer-encoding") == 0 ||
+                strcasecmp(normalized, "connection") == 0 ||
+                strcasecmp(normalized, "content-type") == 0) {
+                runtime_error(vm, "http.stream_start cannot override framing headers");
+                return val_nil();
+            }
+            int left = (int)sizeof(custom) - custom_len;
+            int n = snprintf(custom + custom_len, (size_t)(left > 0 ? left : 0), "%s: %s\r\n", normalized, value);
+            if (n < 0 || n >= left) {
+                runtime_error(vm, "http.stream_start headers exceed 8KB");
+                return val_nil();
+            }
+            custom_len += n;
+        }
+    }
+    char head[16384];
+    int n = snprintf(head, sizeof(head),
+        "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nTransfer-Encoding: chunked\r\n%sConnection: close\r\n\r\n",
+        status, http_status_text(status), content_type, custom);
+    if (n <= 0 || n >= (int)sizeof(head) || !conn_io_send_all(t->http_response_fd, ssl, head, n)) {
+        runtime_error(vm, "http.stream_start failed to write response headers");
+        return val_nil();
+    }
+    t->http_stream_started = true;
+    return val_bool(true);
+}
+
+static Value lib_http_stream_write(VM *vm, int arg_count, Value *args) {
+    int base = http_arg_base(arg_count, args);
+    if (arg_count < base + 1 || args[base].type != VAL_STRING) {
+        runtime_error(vm, "http.stream_write(data) requires a string");
+        return val_nil();
+    }
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    if (!t->http_stream_started || t->http_stream_ended) {
+        runtime_error(vm, "http.stream_write requires an open chunked response");
+        return val_nil();
+    }
+    ObjString *data = args[base].as.string;
+    if (data->length == 0) return val_int(0);
+    char prefix[32];
+    int pn = snprintf(prefix, sizeof(prefix), "%x\r\n", data->length);
+    if (!conn_io_send_all(t->http_response_fd, ssl, prefix, pn) ||
+        !conn_io_send_all(t->http_response_fd, ssl, data->chars, data->length) ||
+        !conn_io_send_all(t->http_response_fd, ssl, "\r\n", 2)) {
+        runtime_error(vm, "http.stream_write failed");
+        return val_nil();
+    }
+    return val_int(data->length);
+}
+
+static Value lib_http_stream_end(VM *vm, int arg_count, Value *args) {
+    (void)arg_count; (void)args;
+    Task *t = NULL;
+    SSL *ssl = NULL;
+    if (!http_stream_task(vm, &t, &ssl)) return val_nil();
+    if (!t->http_stream_started || t->http_stream_ended) {
+        runtime_error(vm, "http.stream_end requires an open chunked response");
+        return val_nil();
+    }
+    if (!conn_io_send_all(t->http_response_fd, ssl, "0\r\n\r\n", 5)) {
+        runtime_error(vm, "http.stream_end failed");
+        return val_nil();
+    }
+    t->http_stream_ended = true;
+    return val_bool(true);
+}
+
 /* ─── http.close_socket(fd) ─── */
 static Value lib_http_close_socket(VM *vm, int arg_count, Value *args) {
     int base = http_arg_base(arg_count, args);
@@ -2441,6 +2703,46 @@ static Value lib_http_read_socket(VM *vm, int arg_count, Value *args) {
     return val_string(result);
 }
 
+/* Produce an RFC 1952 gzip member. Strings in Varian carry an explicit length,
+ * so the returned value safely contains arbitrary compressed bytes including
+ * NUL. Returning nil lets the framework preserve the original response if the
+ * compressor cannot allocate or initialize. */
+static Value lib_http_gzip(VM *vm, int arg_count, Value *args) {
+    if (arg_count != 1 || args[0].type != VAL_STRING) return val_nil();
+
+    ObjString *input = args[0].as.string;
+    z_stream stream;
+    memset(&stream, 0, sizeof(stream));
+    if (deflateInit2(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED,
+                     MAX_WBITS + 16, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
+        return val_nil();
+    }
+
+    uLong capacity = deflateBound(&stream, (uLong)input->length);
+    unsigned char *output = (unsigned char *)malloc((size_t)capacity);
+    if (!output) {
+        deflateEnd(&stream);
+        return val_nil();
+    }
+
+    stream.next_in = (Bytef *)input->chars;
+    stream.avail_in = (uInt)input->length;
+    stream.next_out = output;
+    stream.avail_out = (uInt)capacity;
+    int status = deflate(&stream, Z_FINISH);
+    if (status != Z_STREAM_END) {
+        free(output);
+        deflateEnd(&stream);
+        return val_nil();
+    }
+
+    int output_length = (int)stream.total_out;
+    ObjString *result = allocate_string(vm, (const char *)output, output_length);
+    free(output);
+    deflateEnd(&stream);
+    return val_string(result);
+}
+
 /* ─── Registration ─── */
 void lib_http_init(VM *vm) {
 #ifdef _WIN32
@@ -2457,8 +2759,14 @@ void lib_http_init(VM *vm) {
     vm_register_dispatch(vm, "http", "serve_tls", val_native_fn((void *)lib_http_serve_tls));
     vm_register_dispatch(vm, "http", "serve_with_routes", val_native_fn((void *)lib_http_serve_with_routes));
     vm_register_dispatch(vm, "http", "create_struct", val_native_fn((void *)lib_http_create_struct));
+    vm_register_dispatch(vm, "http", "gzip", val_native_fn((void *)lib_http_gzip));
     vm_register_dispatch(vm, "http", "test_request", val_native_fn((void *)lib_http_test_request));
     vm_register_dispatch(vm, "http", "write_socket", val_native_fn((void *)lib_http_write_socket));
+    vm_register_dispatch(vm, "http", "connection_write", val_native_fn((void *)lib_http_connection_write));
+    vm_register_dispatch(vm, "http", "connection_read", val_native_fn((void *)lib_http_connection_read));
+    vm_register_dispatch(vm, "http", "stream_start", val_native_fn((void *)lib_http_stream_start));
+    vm_register_dispatch(vm, "http", "stream_write", val_native_fn((void *)lib_http_stream_write));
+    vm_register_dispatch(vm, "http", "stream_end", val_native_fn((void *)lib_http_stream_end));
     vm_register_dispatch(vm, "http", "close_socket", val_native_fn((void *)lib_http_close_socket));
     vm_register_dispatch(vm, "http", "read_socket",  val_native_fn((void *)lib_http_read_socket));
     vm_register_dispatch(vm, "http", "parse_multipart", val_native_fn((void *)lib_http_parse_multipart));

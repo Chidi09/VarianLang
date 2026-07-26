@@ -1,0 +1,7 @@
+<template><main><div id="chart">Chart</div></main></template>
+<style scoped>.chart{color:var(--lumen-fg);}</style>
+<client when="visible" target="#chart">
+document.querySelector("#chart").classList.toggle("ready");
+</client>
+<client when="idle">window.mountLater();</client>
+<script>fn state(){return {ready:false}}</script>

@@ -26,12 +26,12 @@ you run `vn dev`, the dev server banner reads **"Aurora — fullstack Varian pla
 
 | Concern | Next.js / Nuxt | Aurora (Zenith + Lumen) |
 |---|---|---|
-| **Language** | JS everywhere, but client-side + server-side runtimes differ | **Varian everywhere (with Strict TypeScript support)** — `.ts` only on the frontend, compiled on the fly |
-| **Client bundle** | Webpack/Vite bundles React/Vue SPA → hundreds of KB JS | **Strict TypeScript (.ts) only** — Type annotations are stripped natively at runtime; raw `.js` is forbidden |
-| **Build pipeline** | `npm run build` → bundler, code-split, tree-shake, optimize | `vn run` — no bundler, no build step, native type stripper |
+| **Language** | JS/TS across separate browser and server runtimes | **Varian on the server** with HTML and directive-selected browser actions |
+| **Client bundle** | Webpack/Vite bundles a component runtime | Static pages emit no optional action code; interactive pages emit only detected Lumen actions |
+| **Build pipeline** | `npm run build` plus a JS bundler | `vn dev` or `vn build main.vn` composes Lumen routes with the Zenith entry |
 | **Data loading** | `getServerSideProps` / `loader` / server actions | **Remix-style `load(req)` and `action(req)`** — auto-hydrated states on GET and WebSocket loops |
 | **API + pages** | Separate `app/api/` and `app/` directories | Same `main.vn`, same `ZenithApp` instance |
-| **Background jobs** | External workers (Bull, Sidekiq) | **Durable `vn_jobs` queue** — SQLite/Postgres persistence, LiveDashboard |
+| **Background jobs** | External workers (Bull, Sidekiq) | Durable local SQLite <code>vn_jobs</code> queue with bounded retries; use an external broker for distributed workers |
 | **Swagger docs** | Manual setup or `next-swagger-doc` plugin | Automatic — `app.enable_docs("/docs")` |
 | **Security middleware** | Manual — helmet, cors, csurf, express-rate-limit | `cors()`, `rate_limit()`, `csrf()` from `shield.vn` — built in |
 | **Deploy** | Node.js runtime + `node_modules` required | **Single native binary** — no runtime, no deps |
@@ -65,13 +65,12 @@ This structure:
 - Ships data state transparently to the browser to bootstrap `/live` WebSocket connections.
 - Automatically handles POST requests using the component's `action(req)` block.
 - Integrates folder-level hierarchies including `layout.lumen` nesting and nearest `loading.lumen` fallback states.
-- Protects route groups using directory-level security guards (`+guard.vn`) compiled and executed on route matching.
 
 ```sh
 vn new myapp          # Scaffold a full Aurora project
 cd myapp
 vn dev                # http://localhost:8090 — live reload
-vn build --release    # Compile to a native binary
+vn build main.vn --release    # Compile the composed app to a native binary
 ```
 
 Aurora is **not a separate framework**. It is a project structure convention that the
@@ -80,14 +79,14 @@ toolchain (`vn new`, `vn dev`, `vn build`) recognises. A `constellation.toml` wi
 
 - Compile `.lumen` pages via the Lumen build pass
 - Embed `public/` assets into the output binary
-- Wire the Zenith app with middleware, API routes, and page mounts
+- Generate `aurora_mount_pages(app)` and compose it with `main.vn`
 - Produce a single runnable artifact (`.vnb` or native binary)
 
 ---
 
 ## Reference storefront
 
-The `aurora/` directory at the repository root is a **demonstration storefront** that
+The `aurora-chat/` directory at the repository root is a larger **demonstration application** that
 exercises nearly every capability the Varian stack exposes — SQLite, auth, sessions,
 background jobs, email, API routes, Lumen SSR pages, Swagger docs, rate limiting, and
 more.
@@ -95,7 +94,7 @@ more.
 ### Quick start
 
 ```bash
-cd aurora
+cd aurora-chat
 ../vn run build_pages.vn    # Compile .lumen pages → .gen/pages.vn
 ../vn run main.vn           # Start integrated API + page server
 # Open http://localhost:8080
@@ -104,7 +103,7 @@ cd aurora
 ### Architecture
 
 ```
-aurora/
+aurora-chat/
   main.vn                  # Entry: use lib/*, build app, wire, listen
   build_pages.vn           # Compile .lumen pages → .gen/pages.vn
   lib/
@@ -144,6 +143,14 @@ aurora/
 | `/product/:id` | SSR product detail — DB query → render | SSR Lumen page |
 | `/api/products` | Product listing with pagination | JSON API |
 | `/api/products/:id` | Single product | JSON API |
+
+### Route guards
+
+An optional `pages/+guard.vn` protects the complete page tree; nested guards such as
+`pages/account/+guard.vn` or `pages/teams/[team]/+guard.vn` refine a subtree. Each file
+defines `fn guard(req)` and returns `null` to continue or a normal Zenith response to stop.
+Aurora compiles guards into the composed application, so authorization executes in the
+same process with the same request context and no per-request source evaluation.
 | `/api/cart` | Session-backed cart read | JSON API |
 | `/api/cart/:id` | Add/remove cart items | JSON API |
 | `/api/checkout` | Validate, create order, enqueue email | JSON API |
@@ -184,22 +191,21 @@ aurora/
 
 ## What Aurora ships at once
 
-Aurora is **Lumen + Zenith + every built-in module** behind a single manifest convention
-(`kind = "aurora"`). Where Next.js needs Next + React + React Router + your own API server
-+ Bull + Prisma + Zod + Winston + your own auth + your own email + your own rate limiter,
-Aurora ships a single binary that is all of those things.
+Aurora composes **Lumen + Zenith** in one Varian process behind a single manifest convention
+(`kind = "aurora"`). Applications can use the built-in database, validation, authentication,
+queue, mail, storage, logging, and security modules without a package-manager dependency tree.
 
 | Capability | Next.js + Express | Aurora |
 |---|---|---|
 | **What you install** | `npx create-next-app` → 300 MB `node_modules` | `vn new myapp` → **zero downloads** |
 | **Language** | JS/TS (client) + JS/TS (server) + SQL (DB) | **Varian everywhere** |
-| **Client framework** | React (400 KB gzipped) | **~2 KB Lumen JS** inline |
+| **Client framework** | React client runtime where interactive | Static export can use **zero JS**; live pages use a core capped below **4.1 KB uncompressed** plus selected actions |
 | **Server framework** | Express / Fastify + 16+ packages | **Zenith** — built in |
 | **Router** | React Router + Express Router | **One radix trie** — client + server |
-| **Auth** | `next-auth` / `jsonwebtoken` + session store | **Built-in** — `auth.jwt()`, `auth.session_store()`, `auth.sha1_base64()` |
+| **Auth** | Authentication package + session store | **Built-in** — `zenith_auth.jwt()`, `zenith_auth.session_store()`, `zenith_auth.session()` and password helpers |
 | **ORM** | Prisma / Drizzle / Knex | **Built-in** — comptime `select().where().build()`, zero runtime cost |
-| **Background jobs** | Bull / Sidekiq + Redis | **Built-in** — `WorkerPool.spawn()`, `cron()` |
-| **Email** | Nodemailer / Resend SDK | **Built-in** — `send_smtp()`, `send_resend()` |
+| **Background jobs** | External queue service or process | **Built-in** — durable SQLite named jobs, bounded retries, worker pools, and `cron()` |
+| **Email** | Nodemailer / Resend SDK | **Built-in** — chainable messages, escaped file templates, Resend, SendGrid, and SMTP |
 | **File storage** | multer / boto3 SDK | **Built-in** — `Storage.put()/.get()/.delete()` |
 | **Structured logging** | Winston / Pino | **Built-in** — JSON `Logger.info_with()` |
 | **Prometheus metrics** | prom-client | **Built-in** — `metrics_handler()` |
@@ -211,6 +217,22 @@ Aurora ships a single binary that is all of those things.
 | **Python bridge** | Subprocess / n/a | **Built-in** — `python.run()` for S3/R2/GCS SDKs |
 | **Deploy** | Node.js runtime + `node_modules` | **Single native binary** — `vn build --release` |
 | **Total packages** | **30+** (React + Next + Express + Prisma + Zod + Bull + Winston + cors + helmet + csurf + express-rate-limit + jsonwebtoken + nodemailer + multer + swagger-jsdoc + prom-client + …) | **1 binary** |
+
+Administrative queue controls are not exposed automatically. After installing the
+application's authentication and authorization middleware, opt in with
+`app.enable_job_dashboard("/operations/jobs")`. The dashboard uses the database selected
+by `queue_configure(...)` and is entirely server-rendered, so it adds no browser runtime.
+
+Email templates live at `email_templates/<name>.html`, use `{{key}}` markers, and load
+through Varian's asset-aware I/O path. Context values are HTML-escaped by default, template
+names reject path traversal, and address/header fields reject CR/LF injection. Missing files
+fall back to the built-in accessible HTML shell.
+
+Release compilation performs conservative whole-program reachability before native code
+generation. Unreferenced ambient prelude functions are omitted, while application entry
+points, transitive dependencies, module initialization, and dynamically dispatched methods
+remain available. This keeps the batteries-included development model without forcing every
+unused framework helper into the production translation unit.
 
 ### Engineering patterns Aurora proves
 

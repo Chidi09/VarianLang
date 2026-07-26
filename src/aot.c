@@ -1,7 +1,11 @@
+#include "semantic.h"
 #include "vm.h"
 #include "parser.h"
 #include "lexer.h"
 #include "ast.h"
+#include "suspend_analysis.h"
+#include "ssa.h"
+#include "aot_native.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +32,254 @@ static void collect_functions(Value val, ObjFunction ***funcs, int *count, int *
     for (int i = 0; i < fn->constant_count; i++) {
         collect_functions(fn->constants[i], funcs, count, capacity);
     }
+}
+
+typedef struct {
+    AstNode *node;
+    const char *name;
+    bool reachable;
+} ReleaseFunction;
+
+typedef struct {
+    ReleaseFunction *functions;
+    int count;
+    bool changed;
+} ReleaseReachability;
+
+static void release_scan_node(AstNode *node, ReleaseReachability *reach);
+
+static void release_mark_name(ReleaseReachability *reach, const char *name) {
+    if (!name) return;
+    for (int i = 0; i < reach->count; i++) {
+        if (!reach->functions[i].reachable &&
+            strcmp(reach->functions[i].name, name) == 0) {
+            reach->functions[i].reachable = true;
+            reach->changed = true;
+        }
+    }
+}
+
+static void release_scan_many(AstNode **nodes, int count,
+                              ReleaseReachability *reach) {
+    for (int i = 0; i < count; i++) release_scan_node(nodes[i], reach);
+}
+
+/* Conservatively discover references to top-level functions. Identifier
+ * shadowing can retain an extra function but can never remove a required one;
+ * that is the right tradeoff for a dynamic language release optimizer. */
+static void release_scan_node(AstNode *node, ReleaseReachability *reach) {
+    if (!node) return;
+    switch (node->kind) {
+        case NODE_PROGRAM:
+            release_scan_many(node->program.stmts, node->program.stmt_count, reach);
+            break;
+        case NODE_BLOCK:
+            release_scan_many(node->block.stmts, node->block.stmt_count, reach);
+            break;
+        case NODE_LET_DECL:
+        case NODE_CONST_DECL:
+            release_scan_node(node->let_decl.initializer, reach);
+            break;
+        case NODE_FN_DECL:
+            release_scan_many(node->fn_decl.decorator_values,
+                              node->fn_decl.decorator_count, reach);
+            release_scan_node(node->fn_decl.body, reach);
+            break;
+        case NODE_EXPR_STMT:
+            release_scan_node(node->expr_stmt.expr, reach);
+            break;
+        case NODE_IF:
+            release_scan_node(node->if_stmt.condition, reach);
+            release_scan_node(node->if_stmt.then_branch, reach);
+            release_scan_node(node->if_stmt.else_branch, reach);
+            break;
+        case NODE_WHILE:
+            release_scan_node(node->while_stmt.condition, reach);
+            release_scan_node(node->while_stmt.body, reach);
+            break;
+        case NODE_FOR:
+            release_scan_node(node->for_stmt.iterable, reach);
+            release_scan_node(node->for_stmt.body, reach);
+            break;
+        case NODE_LOOP:
+            release_scan_node(node->loop_stmt.body, reach);
+            break;
+        case NODE_RETURN:
+            release_scan_many(node->return_stmt.values,
+                              node->return_stmt.value_count, reach);
+            break;
+        case NODE_ASSIGN:
+            release_scan_node(node->assign.target, reach);
+            release_scan_node(node->assign.value, reach);
+            break;
+        case NODE_BINARY:
+            release_scan_node(node->binary.left, reach);
+            release_scan_node(node->binary.right, reach);
+            break;
+        case NODE_UNARY:
+            release_scan_node(node->unary.operand, reach);
+            break;
+        case NODE_CALL:
+            release_scan_node(node->call.callee, reach);
+            release_scan_many(node->call.args, node->call.arg_count, reach);
+            break;
+        case NODE_INDEX:
+            release_scan_node(node->index.object, reach);
+            release_scan_node(node->index.index, reach);
+            break;
+        case NODE_MEMBER:
+        case NODE_QUESTION_DOT:
+            release_scan_node(node->member.object, reach);
+            break;
+        case NODE_IDENTIFIER:
+            release_mark_name(reach, node->identifier.name);
+            break;
+        case NODE_INTERPOLATED_STRING:
+            release_scan_many(node->interpolated_string.parts,
+                              node->interpolated_string.part_count, reach);
+            break;
+        case NODE_ARRAY_LITERAL:
+        case NODE_TUPLE_LITERAL:
+            release_scan_many(node->array_literal.elements,
+                              node->array_literal.element_count, reach);
+            break;
+        case NODE_STRUCT_DECL:
+            release_scan_many(node->struct_decl.decorator_values,
+                              node->struct_decl.decorator_count, reach);
+            for (int i = 0; i < node->struct_decl.field_count; i++)
+                release_scan_many(node->struct_decl.field_decorator_values[i],
+                                  node->struct_decl.field_decorator_counts[i], reach);
+            break;
+        case NODE_SCHEMA_DECL:
+            release_scan_many(node->schema_decl.decorator_values,
+                              node->schema_decl.decorator_count, reach);
+            for (int i = 0; i < node->schema_decl.field_count; i++)
+                release_scan_many(node->schema_decl.field_decorator_values[i],
+                                  node->schema_decl.field_decorator_counts[i], reach);
+            break;
+        case NODE_STRUCT_LITERAL:
+            release_scan_many(node->struct_literal.field_values,
+                              node->struct_literal.field_count, reach);
+            break;
+        case NODE_ENUM_LITERAL:
+            release_scan_many(node->enum_literal.values,
+                              node->enum_literal.value_count, reach);
+            break;
+        case NODE_MATCH:
+            release_scan_node(node->match_stmt.value, reach);
+            release_scan_many(node->match_stmt.arms, node->match_stmt.arm_count, reach);
+            break;
+        case NODE_MATCH_ARM:
+            release_scan_node(node->match_arm.pattern, reach);
+            release_scan_node(node->match_arm.body, reach);
+            break;
+        case NODE_CHAN_SEND:
+            release_scan_node(node->chan_send.channel, reach);
+            release_scan_node(node->chan_send.value, reach);
+            break;
+        case NODE_CHAN_RECEIVE:
+            release_scan_node(node->chan_receive.channel, reach);
+            break;
+        case NODE_AWAIT:
+            release_scan_node(node->await.expr, reach);
+            break;
+        case NODE_ASSERT:
+            release_scan_node(node->assert_stmt.condition, reach);
+            break;
+        case NODE_TEST:
+            release_scan_node(node->test_decl.body, reach);
+            break;
+        case NODE_PROPAGATE:
+            release_scan_node(node->propagate.expr, reach);
+            break;
+        case NODE_TRY:
+            release_scan_node(node->try_stmt.try_body, reach);
+            release_scan_node(node->try_stmt.catch_body, reach);
+            break;
+        case NODE_COMPTIME:
+            release_scan_node(node->comptime.body, reach);
+            break;
+        case NODE_DISPATCH_CALL:
+            release_scan_node(node->dispatch_call.object, reach);
+            release_scan_many(node->dispatch_call.args,
+                              node->dispatch_call.arg_count, reach);
+            break;
+        case NODE_INT_LITERAL:
+        case NODE_FLOAT_LITERAL:
+        case NODE_STRING_LITERAL:
+        case NODE_BOOL_LITERAL:
+        case NODE_NULL_LITERAL:
+        case NODE_BREAK:
+        case NODE_CONTINUE:
+        case NODE_ACTOR_DECL:
+        case NODE_ENUM_DECL:
+        case NODE_TRAIT_DECL:
+        case NODE_FFI_DECL:
+            break;
+    }
+}
+
+static int release_prune_unused_functions(AstNode *program,
+                                          int user_source_offset) {
+    if (!program || program->kind != NODE_PROGRAM || user_source_offset <= 0)
+        return 0;
+
+    int function_count = 0;
+    for (int i = 0; i < program->program.stmt_count; i++)
+        if (program->program.stmts[i]->kind == NODE_FN_DECL) function_count++;
+    if (function_count == 0) return 0;
+
+    ReleaseReachability reach = {0};
+    reach.functions = calloc((size_t)function_count, sizeof(ReleaseFunction));
+    if (!reach.functions) return 0;
+    reach.count = function_count;
+
+    int at = 0;
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        if (stmt->kind != NODE_FN_DECL) continue;
+        reach.functions[at].node = stmt;
+        reach.functions[at].name = stmt->fn_decl.name;
+        /* User functions are externally visible program behavior. Methods and
+         * module initializers can be reached through dynamic dispatch. */
+        reach.functions[at].reachable = stmt->loc.offset >= user_source_offset ||
+            stmt->fn_decl.is_pub || stmt->fn_decl.is_method ||
+            stmt->fn_decl.is_module_init;
+        at++;
+    }
+
+    /* Every retained top-level statement executes during initialization. */
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        if (stmt->kind != NODE_FN_DECL) release_scan_node(stmt, &reach);
+    }
+    do {
+        reach.changed = false;
+        for (int i = 0; i < reach.count; i++)
+            if (reach.functions[i].reachable)
+                release_scan_node(reach.functions[i].node, &reach);
+    } while (reach.changed);
+
+    int write = 0;
+    int removed = 0;
+    for (int i = 0; i < program->program.stmt_count; i++) {
+        AstNode *stmt = program->program.stmts[i];
+        bool keep = true;
+        if (stmt->kind == NODE_FN_DECL && stmt->loc.offset < user_source_offset) {
+            keep = false;
+            for (int j = 0; j < reach.count; j++) {
+                if (reach.functions[j].node == stmt) {
+                    keep = reach.functions[j].reachable;
+                    break;
+                }
+            }
+        }
+        if (keep) program->program.stmts[write++] = stmt;
+        else removed++;
+    }
+    program->program.stmt_count = write;
+    free(reach.functions);
+    return removed;
 }
 
 static void output_val_serialize(FILE *out, Value val, ObjFunction **funcs, int fn_count) {
@@ -80,9 +332,11 @@ static void output_val_serialize(FILE *out, Value val, ObjFunction **funcs, int 
     }
 }
 
-int aot_compile(const char *source, const char *filename, const char *out_path) {
+int aot_compile(const char *source, const char *filename, const char *out_path,
+                int user_source_offset, bool dump_suspend, bool dump_ssa) {
     Lexer lexer;
     lexer_init(&lexer, source, filename);
+    lexer_set_user_source_offset(&lexer, user_source_offset);
 
     Arena *arena = arena_create(0);
     Parser parser;
@@ -95,22 +349,75 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
         return 1;
     }
 
+    SemanticResult *sem = semantic_analyze(program);
+    if (sem->had_error) {
+        for (int i = 0; i < sem->count; i++) {
+            fprintf(stderr, "AOT semantic error in %s:%d:%d [%s]: %s\n",
+                    filename ? filename : "<script>", sem->diagnostics[i].line,
+                    sem->diagnostics[i].column, sem->diagnostics[i].code,
+                    sem->diagnostics[i].message);
+        }
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        return 1;
+    }
+    semantic_result_free(sem);
+
+    int pruned_functions = release_prune_unused_functions(program, user_source_offset);
+    if (pruned_functions > 0) {
+        fprintf(stderr, "[Kiln] Removed %d unreachable prelude function%s.\n",
+                pruned_functions, pruned_functions == 1 ? "" : "s");
+    }
+
+    /* Conservatively determine which functions never reach a suspending
+     * operation (await/channel/dynamic-dispatch) — only those are eligible
+     * for Kiln's future native/typed codegen. See suspend_analysis.h for why:
+     * the scheduler's mid-function resumption contract only works when all
+     * live state is boxed Values on the task stack. */
+    SuspendAnalysis *suspend_analysis = suspend_analyze(program);
+    if (dump_suspend && suspend_analysis) {
+        fprintf(stderr, "[Kiln] Suspend analysis:\n");
+        for (int i = 0; i < suspend_analysis->count; i++) {
+            fprintf(stderr, "  %s -> %s\n", suspend_analysis->functions[i].name,
+                    suspend_analysis->functions[i].suspends ? "SUSPENDS" : "LEAF");
+        }
+    }
+
+    /* Typed SSA IR, built only for the functions suspend_analyze just proved
+     * safe, then type-inferred (monotonic, safe-by-construction — see
+     * ssa_infer_types' doc comment in ssa.h) and escape-analyzed (see
+     * ssa_escape_analyze's doc comment). Kept alive until after code emission:
+     * the native backend (aot_native.c) pairs each compiled ObjFunction back
+     * to its SsaFunction via ObjFunction.source_node. */
+    SsaModule *ssa_module = ssa_build(program, suspend_analysis);
+    ssa_infer_types(ssa_module);
+    ssa_escape_analyze(ssa_module);
+    if (dump_ssa && ssa_module) {
+        fprintf(stderr, "[Kiln] SSA IR:\n");
+        ssa_dump(ssa_module, stderr);
+    }
+
     Chunk chunk;
     chunk_init(&chunk);
 
     Compiler compiler;
     compiler_init(&compiler, arena, &chunk, program);
+    compiler.suspend_analysis = suspend_analysis;
 
     if (!compiler_compile(&compiler)) {
         fprintf(stderr, "AOT compile error: %s\n", compiler.error_message);
+        suspend_analysis_free(suspend_analysis);
+        ssa_module_free(ssa_module);
         chunk_free(&chunk);
         arena_destroy(arena);
         return 1;
     }
+    suspend_analysis_free(suspend_analysis);
 
     // Wrap main function
     ObjFunction main_fn_obj;
     memset(&main_fn_obj, 0, sizeof(ObjFunction));
+    main_fn_obj.suspends_maybe = true; /* top-level program init: always conservative */
     main_fn_obj.obj.type = VAL_FUNCTION;
     main_fn_obj.code = chunk.code;
     main_fn_obj.code_count = chunk.count;
@@ -127,6 +434,7 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     if (!out) {
         fprintf(stderr, "Could not open output file '%s' for writing.\n", out_path);
         free(funcs);
+        ssa_module_free(ssa_module);
         chunk_free(&chunk);
         arena_destroy(arena);
         return 1;
@@ -153,6 +461,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     fprintf(out, "static void aot_op_mul(VM *vm, Task *t);\n");
     fprintf(out, "static void aot_op_div(VM *vm, Task *t);\n");
     fprintf(out, "static void aot_op_mod(VM *vm, Task *t);\n");
+    fprintf(out, "static void aot_op_bitwise(VM *vm, Task *t, int op);\n");
+    fprintf(out, "static void aot_op_shift(VM *vm, Task *t, int left);\n");
     fprintf(out, "static void aot_op_negate(VM *vm, Task *t);\n");
     fprintf(out, "static void aot_op_not(VM *vm, Task *t);\n");
     fprintf(out, "static void aot_op_equal(VM *vm, Task *t);\n");
@@ -166,8 +476,17 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     fprintf(out, "static void aot_helper_ffi_call(VM *vm, Task *t, int pc, uint8_t ffi_idx, uint8_t arg_count);\n");
     fprintf(out, "static void aot_helper_throw(VM *vm, Task *t, int pc);\n\n");
 
+    /* Decide, once and up front, which functions get Kiln's native (typed,
+     * unboxed) body — the prototypes, the emission loop and the shadow-mode
+     * scaffolding all have to agree, so the answer is computed here rather
+     * than recomputed at each site. Everything not proven eligible keeps the
+     * existing boxed transpile under its ordinary name, unchanged. */
+    AotNativePlan *native_plan = aot_native_plan(ssa_module, funcs, fn_count);
+
     // Declare functions
     for (int i = 0; i < fn_count; i++) {
+        if (native_plan && native_plan->ssa[i])
+            fprintf(out, "static void varian_aot_fn_%d_boxed(VM *vm, Task *t);\n", i);
         fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t);\n", i);
     }
     fprintf(out, "\n");
@@ -251,6 +570,20 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     fprintf(out, "    int64_t a = POP().as.integer;\n");
     fprintf(out, "    if (b == 0) { runtime_error(vm, \"Division by zero\"); return; }\n");
     fprintf(out, "    PUSH(val_int(a %% b));\n");
+    fprintf(out, "}\n");
+    fprintf(out, "static void aot_op_bitwise(VM *vm, Task *t, int op) {\n");
+    fprintf(out, "    Value b = POP(); Value a = POP();\n");
+    fprintf(out, "    if (a.type != VAL_INT || b.type != VAL_INT) { runtime_error(vm, \"Bitwise operands must be integers\"); return; }\n");
+    fprintf(out, "    if (op == 0) PUSH(val_int(a.as.integer & b.as.integer));\n");
+    fprintf(out, "    else if (op == 1) PUSH(val_int(a.as.integer | b.as.integer));\n");
+    fprintf(out, "    else PUSH(val_int(a.as.integer ^ b.as.integer));\n");
+    fprintf(out, "}\n");
+    fprintf(out, "static void aot_op_shift(VM *vm, Task *t, int left) {\n");
+    fprintf(out, "    Value b = POP(); Value a = POP();\n");
+    fprintf(out, "    if (a.type != VAL_INT || b.type != VAL_INT) { runtime_error(vm, \"Shift operands must be integers\"); return; }\n");
+    fprintf(out, "    if (b.as.integer < 0 || b.as.integer >= 64) { runtime_error(vm, \"Shift count must be between 0 and 63\"); return; }\n");
+    fprintf(out, "    if (left) PUSH(val_int((int64_t)((uint64_t)a.as.integer << (uint64_t)b.as.integer)));\n");
+    fprintf(out, "    else PUSH(val_int(a.as.integer >> b.as.integer));\n");
     fprintf(out, "}\n");
     fprintf(out, "static void aot_op_negate(VM *vm, Task *t) {\n");
     fprintf(out, "    Value v = POP();\n");
@@ -636,11 +969,16 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     fprintf(out, "    }\n");
     fprintf(out, "}\n\n");
 
+    aot_native_emit_prelude(out, native_plan, funcs);
+
     // Output all functions
     for (int f = 0; f < fn_count; f++) {
         ObjFunction *fn = funcs[f];
         fprintf(out, "/* Function %d */\n", f);
-        fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t) {\n", f);
+        if (native_plan && native_plan->ssa[f])
+            fprintf(out, "static void varian_aot_fn_%d_boxed(VM *vm, Task *t) {\n", f);
+        else
+            fprintf(out, "void varian_aot_fn_%d(VM *vm, Task *t) {\n", f);
         fprintf(out, "    CallFrame *frame = &t->frames[t->frame_count - 1];\n");
         fprintf(out, "    uint8_t *code = frame->function->code;\n");
         fprintf(out, "    int pc = (int)(frame->ip - code);\n\n");
@@ -656,8 +994,10 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
             if (op == BC_CONSTANT || op == BC_CONSTANT_LONG || op == BC_DEFINE_GLOBAL ||
                 op == BC_GET_GLOBAL || op == BC_SET_GLOBAL || op == BC_JUMP ||
                 op == BC_JUMP_IF_FALSE || op == BC_JUMP_IF_NOT_NIL || op == BC_JUMP_IF_NIL || op == BC_LOOP ||
-                op == BC_MAKE_FUNCTION || op == BC_TRY || op == BC_MEMBER || op == BC_MEMBER_SAFE || op == BC_SET_MEMBER) {
+                op == BC_MAKE_FUNCTION || op == BC_MEMBER || op == BC_MEMBER_SAFE || op == BC_SET_MEMBER) {
                 size = 3;
+            } else if (op == BC_TRY) {
+                size = 4; /* opcode + catch jump + captured local count */
             } else if (op == BC_GET_LOCAL || op == BC_SET_LOCAL || op == BC_CALL ||
                        op == BC_RETURN_N || op == BC_GET_UPVALUE || op == BC_SET_UPVALUE ||
                        op == BC_ARRAY || op == BC_TUPLE ||
@@ -750,6 +1090,26 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     break;
                 case BC_MOD:
                     fprintf(out, "        aot_op_mod(vm, t);\n");
+                    offset += 1;
+                    break;
+                case BC_BIT_AND:
+                    fprintf(out, "        aot_op_bitwise(vm, t, 0);\n");
+                    offset += 1;
+                    break;
+                case BC_BIT_OR:
+                    fprintf(out, "        aot_op_bitwise(vm, t, 1);\n");
+                    offset += 1;
+                    break;
+                case BC_BIT_XOR:
+                    fprintf(out, "        aot_op_bitwise(vm, t, 2);\n");
+                    offset += 1;
+                    break;
+                case BC_SHL:
+                    fprintf(out, "        aot_op_shift(vm, t, 1);\n");
+                    offset += 1;
+                    break;
+                case BC_SHR:
+                    fprintf(out, "        aot_op_shift(vm, t, 0);\n");
                     offset += 1;
                     break;
                 case BC_NEGATE:
@@ -1043,27 +1403,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "            Value obj = POP();\n");
                     fprintf(out, "            if (obj.type == VAL_STRUCT) {\n");
                     fprintf(out, "                ObjStruct *s = obj.as.structure;\n");
-                    fprintf(out, "                int found = -1;\n");
                     fprintf(out, "                uint32_t name_hash = hash_string(name->chars, name->length);\n");
-                    fprintf(out, "                for (int ci = 0; ci < s->field_cache_count; ci++) {\n");
-                    fprintf(out, "                    if (s->field_cache[ci].hash == name_hash) {\n");
-                    fprintf(out, "                        found = s->field_cache[ci].index;\n");
-                    fprintf(out, "                        break;\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
-                    fprintf(out, "                if (found < 0) {\n");
-                    fprintf(out, "                    for (int i = 0; i < s->field_count; i++) {\n");
-                    fprintf(out, "                        if (strcmp(s->field_names[i], name->chars) == 0) {\n");
-                    fprintf(out, "                            found = i;\n");
-                    fprintf(out, "                            if (s->field_cache_count < STRUCT_CACHE_SIZE) {\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].hash = name_hash;\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].index = i;\n");
-                    fprintf(out, "                                s->field_cache_count++;\n");
-                    fprintf(out, "                            }\n");
-                    fprintf(out, "                            break;\n");
-                    fprintf(out, "                        }\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
+                    fprintf(out, "                int found = shape_index_of(s->shape, name->chars, name_hash);\n");
                     fprintf(out, "                if (found >= 0) {\n");
                     fprintf(out, "                    PUSH(s->fields[found]);\n");
                     fprintf(out, "                } else {\n");
@@ -1091,27 +1432,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "            Value obj = POP();\n");
                     fprintf(out, "            if (obj.type == VAL_STRUCT) {\n");
                     fprintf(out, "                ObjStruct *s = obj.as.structure;\n");
-                    fprintf(out, "                int found = -1;\n");
                     fprintf(out, "                uint32_t name_hash = hash_string(name->chars, name->length);\n");
-                    fprintf(out, "                for (int ci = 0; ci < s->field_cache_count; ci++) {\n");
-                    fprintf(out, "                    if (s->field_cache[ci].hash == name_hash) {\n");
-                    fprintf(out, "                        found = s->field_cache[ci].index;\n");
-                    fprintf(out, "                        break;\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
-                    fprintf(out, "                if (found < 0) {\n");
-                    fprintf(out, "                    for (int i = 0; i < s->field_count; i++) {\n");
-                    fprintf(out, "                        if (strcmp(s->field_names[i], name->chars) == 0) {\n");
-                    fprintf(out, "                            found = i;\n");
-                    fprintf(out, "                            if (s->field_cache_count < STRUCT_CACHE_SIZE) {\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].hash = name_hash;\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].index = i;\n");
-                    fprintf(out, "                                s->field_cache_count++;\n");
-                    fprintf(out, "                            }\n");
-                    fprintf(out, "                            break;\n");
-                    fprintf(out, "                        }\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
+                    fprintf(out, "                int found = shape_index_of(s->shape, name->chars, name_hash);\n");
                     fprintf(out, "                if (found >= 0) { PUSH(s->fields[found]); } else { PUSH(val_nil()); }\n");
                     fprintf(out, "            } else if (obj.type == VAL_MODULE) {\n");
                     fprintf(out, "                Value *func_val = vm_find_dispatch(vm, obj.as.module->name, name->chars);\n");
@@ -1137,27 +1459,8 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     fprintf(out, "            Value obj = POP();\n");
                     fprintf(out, "            if (obj.type == VAL_STRUCT) {\n");
                     fprintf(out, "                ObjStruct *s = obj.as.structure;\n");
-                    fprintf(out, "                int found = -1;\n");
                     fprintf(out, "                uint32_t name_hash = hash_string(name->chars, name->length);\n");
-                    fprintf(out, "                for (int ci = 0; ci < s->field_cache_count; ci++) {\n");
-                    fprintf(out, "                    if (s->field_cache[ci].hash == name_hash) {\n");
-                    fprintf(out, "                        found = s->field_cache[ci].index;\n");
-                    fprintf(out, "                        break;\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
-                    fprintf(out, "                if (found < 0) {\n");
-                    fprintf(out, "                    for (int i = 0; i < s->field_count; i++) {\n");
-                    fprintf(out, "                        if (strcmp(s->field_names[i], name->chars) == 0) {\n");
-                    fprintf(out, "                            found = i;\n");
-                    fprintf(out, "                            if (s->field_cache_count < STRUCT_CACHE_SIZE) {\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].hash = name_hash;\n");
-                    fprintf(out, "                                s->field_cache[s->field_cache_count].index = i;\n");
-                    fprintf(out, "                                s->field_cache_count++;\n");
-                    fprintf(out, "                            }\n");
-                    fprintf(out, "                            break;\n");
-                    fprintf(out, "                        }\n");
-                    fprintf(out, "                    }\n");
-                    fprintf(out, "                }\n");
+                    fprintf(out, "                int found = shape_index_of(s->shape, name->chars, name_hash);\n");
                     fprintf(out, "                if (found >= 0) {\n");
                     fprintf(out, "                    s->fields[found] = val;\n");
                     fprintf(out, "                    PUSH(val);\n");
@@ -1307,12 +1610,13 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
                     break;
                 case BC_TRY: {
                     uint16_t t_offset = (fn->code[offset + 1] << 8) | fn->code[offset + 2];
+                    uint8_t local_count = fn->code[offset + 3];
                     fprintf(out, "        if (t->try_count >= TASK_TRY_MAX) { runtime_error(vm, \"Too many nested try blocks\"); return; }\n");
-                    fprintf(out, "        t->try_stack[t->try_count].catch_offset = %d;\n", offset + 3 + t_offset);
-                    fprintf(out, "        t->try_stack[t->try_count].stack_depth = t->stack_top;\n");
+                    fprintf(out, "        t->try_stack[t->try_count].catch_offset = %d;\n", offset + 4 + t_offset);
+                    fprintf(out, "        t->try_stack[t->try_count].stack_depth = (int)(frame->slots - t->stack) + %d;\n", local_count);
                     fprintf(out, "        t->try_stack[t->try_count].frame_index = t->frame_count - 1;\n");
                     fprintf(out, "        t->try_count++;\n");
-                    offset += 3;
+                    offset += 4;
                     break;
                 }
                 case BC_POP_TRY:
@@ -1598,6 +1902,11 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
         }
         
         fprintf(out, "}\n\n");
+
+        /* The boxed body above stays byte-for-byte what it has always been;
+         * the native body is emitted alongside it as the guarded entry point
+         * that falls back to it. */
+        if (native_plan) aot_native_emit_function(out, native_plan, funcs, f);
     }
 
     // Output bytecode and constants static initialization arrays
@@ -1678,6 +1987,12 @@ int aot_compile(const char *source, const char *filename, const char *out_path) 
     fprintf(out, "}\n");
 
     fclose(out);
+    if (native_plan && native_plan->count > 0) {
+        fprintf(stderr, "[Kiln] Natively compiled %d of %d function%s (typed, unboxed).\n",
+                native_plan->count, fn_count, fn_count == 1 ? "" : "s");
+    }
+    aot_native_plan_free(native_plan);
+    ssa_module_free(ssa_module);
     free(funcs);
     chunk_free(&chunk);
     arena_destroy(arena);

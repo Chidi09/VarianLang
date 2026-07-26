@@ -1,0 +1,52 @@
+test "responsive images are layout stable escaped and zero JS" {
+    let html = lumen_image("/img/card-800.webp", "R&D <team>", {
+        width: 800,
+        height: 450,
+        sizes: "(max-width: 600px) 100vw, 800px",
+        srcset: [
+            { src: "/img/card-400.webp?x=1&y=2", width: 400 },
+            { src: "/img/card-800.webp", width: 800 }
+        ]
+    })
+    assert_ne(html.index_of("width=\"800\" height=\"450\""), -1)
+    assert_ne(html.index_of("loading=\"lazy\" decoding=\"async\""), -1)
+    assert_ne(html.index_of("R&amp;D &lt;team&gt;"), -1)
+    assert_ne(html.index_of("x=1&amp;y=2 400w"), -1)
+    assert_eq(_lumen_scan_directives(html).len(), 0)
+}
+
+test "priority images require eager loading" {
+    let html = lumen_image("/hero.jpg", "Hero", {
+        width: 1600, height: 900, loading: "eager", fetchpriority: "high"
+    })
+    assert_ne(html.index_of("loading=\"eager\""), -1)
+    assert_ne(html.index_of("fetchpriority=\"high\""), -1)
+    assert_throws(| | { lumen_image("/hero.jpg", "Hero", { width: 1, height: 1, fetchpriority: "high" }) })
+    assert_throws(| | { lumen_image("/hero.jpg", "Hero", { width: 0, height: 1 }) })
+    assert_throws(| | { lumen_image("/hero.jpg", null, { width: 1, height: 1 }) })
+}
+
+test "picture emits ordered modern formats and fallback" {
+    let html = lumen_picture("/photo.jpg", "Photo", {
+        width: 1200,
+        height: 800,
+        sizes: "100vw",
+        srcset: [{ src: "/photo-600.jpg", width: 600 }, { src: "/photo.jpg", width: 1200 }],
+        sources: [
+            { "type": "image/avif", srcset: [{ src: "/photo-600.avif", width: 600 }, { src: "/photo.avif", width: 1200 }] },
+            { "type": "image/webp", srcset: [{ src: "/photo-600.webp", width: 600 }, { src: "/photo.webp", width: 1200 }] }
+        ]
+    })
+    assert_eq(lumen_test_count(html, "<source"), 2)
+    assert_eq(html.index_of("image/avif") < html.index_of("image/webp"), 1)
+    assert_eq(html.index_of("image/webp") < html.index_of("<img"), 1)
+    assert_throws(| | { lumen_picture("/x.jpg", "x", { width: 1, height: 1, sources: [{ "type": "image/svg+xml", srcset: [] }] }) })
+}
+
+test "responsive candidate contracts reject ambiguity" {
+    assert_throws(| | { lumen_image("/x.jpg", "x", {
+        width: 100, height: 100, srcset: [{ src: "/x.jpg", width: 100 }, { src: "/x2.jpg", width: 100 }]
+    }) })
+    assert_throws(| | { lumen_image("/x.jpg", "x", { width: 100, height: 100, sizes: "100vw" }) })
+    assert_throws(| | { lumen_image("bad\nurl", "x", { width: 100, height: 100 }) })
+}

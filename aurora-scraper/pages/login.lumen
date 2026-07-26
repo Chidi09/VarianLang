@@ -1,0 +1,161 @@
+<template>
+<link rel="stylesheet" href="/public/styles/tailwind.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Outfit:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+<Page class="flex min-h-screen">
+  <div class="flex w-full min-h-screen">
+    <!-- Left Pane: Form (50%) -->
+    <div class="relative w-full lg:w-1/2 min-h-screen bg-[#051424] flex flex-col overflow-hidden">
+      <!-- Glowing blobs -->
+      <div class="absolute inset-0 z-0 pointer-events-none">
+        <div class="absolute top-[-15%] left-[-15%] w-[50%] h-[50%] bg-[#3b82f6]/20 rounded-full blur-[200px]"></div>
+        <div class="absolute bottom-[-15%] right-[-15%] w-[50%] h-[50%] bg-[#1d4ed8]/20 rounded-full blur-[200px]"></div>
+      </div>
+      <!-- Dot grid SVG pattern overlay -->
+      <div class="absolute inset-0 z-0 pointer-events-none opacity-[0.04]">
+        <svg width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <pattern id="dotGrid-login" x="0" y="0" width="24" height="24" patternUnits="userSpaceOnUse">
+              <circle cx="2" cy="2" r="1.2" fill="#ffffff"/>
+            </pattern>
+          </defs>
+          <rect width="100%" height="100%" fill="url(#dotGrid-login)"/>
+        </svg>
+      </div>
+
+      <!-- Content -->
+      <div class="relative z-10 flex flex-col min-h-screen">
+        <!-- Logo -->
+        <div class="pt-8 px-10 lg:px-16">
+          <a href="/" class="inline-flex items-center gap-2.5 group">
+            <svg width="34" height="34" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="transition-transform duration-300 group-hover:scale-110">
+              <path d="M18 2L8 18H14L12 30L24 14H18L20 2H18Z" fill="url(#aurora-grad-login)" />
+              <defs>
+                <linearGradient id="aurora-grad-login" x1="8" y1="2" x2="24" y2="30" gradientUnits="userSpaceOnUse">
+                  <stop stop-color="#3b82f6"/>
+                  <stop offset="1" stop-color="#1d4ed8"/>
+                </linearGradient>
+              </defs>
+            </svg>
+            <span class="text-2xl font-extrabold bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] bg-clip-text text-transparent tracking-tight" style="font-family: 'Outfit', sans-serif;">Aurora</span>
+          </a>
+        </div>
+
+        <!-- Vertically centered form -->
+        <div class="flex-1 flex items-center justify-center px-10 lg:px-16">
+          <div class="w-full max-w-sm flex flex-col gap-7">
+            <div class="flex flex-col gap-2">
+              <h1 class="text-3xl font-bold text-white tracking-tight" style="font-family: 'Outfit', sans-serif;">Welcome back</h1>
+              <p class="text-sm text-[#b9cacb]">Sign in to continue to your mission control dashboard.</p>
+            </div>
+
+            <!-- Error alert -->
+            <div id="login-error" class="hidden bg-red-500/10 backdrop-blur-sm border border-red-500/20 rounded-2xl px-5 py-3.5 text-sm text-red-400 font-medium flex items-center gap-2.5">
+              <span class="material-symbols-outlined text-[18px]">error</span>
+              <span id="login-error-text"></span>
+            </div>
+
+            <form class="flex flex-col gap-5" onsubmit="doLogin(event)">
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-[#b9cacb] uppercase tracking-widest">Email Address</label>
+                <input id="login-email" class="w-full bg-[#020617] border border-[#3b494b]/50 rounded-2xl px-5 py-4 text-sm font-medium text-white placeholder-[#6b8a8c] focus:border-[#3b82f6]/50 focus:ring-4 focus:ring-[#3b82f6]/10 transition-all outline-none" placeholder="name@domain.com" type="email" required autocomplete="email" />
+              </div>
+              <div class="flex flex-col gap-1.5">
+                <label class="text-xs font-semibold text-[#b9cacb] uppercase tracking-widest">Password</label>
+                <input id="login-pass" class="w-full bg-[#020617] border border-[#3b494b]/50 rounded-2xl px-5 py-4 text-sm font-medium text-white placeholder-[#6b8a8c] focus:border-[#3b82f6]/50 focus:ring-4 focus:ring-[#3b82f6]/10 transition-all outline-none" placeholder="••••••••" type="password" required autocomplete="current-password" />
+              </div>
+              <button type="submit" class="w-full bg-gradient-to-r from-[#3b82f6] to-[#1d4ed8] text-white font-bold py-4 rounded-2xl shadow-lg shadow-[#3b82f6]/20 hover:shadow-[#3b82f6]/30 hover:scale-[1.02] active:scale-[0.98] transition-all duration-300 text-sm tracking-wide">
+                Sign In
+              </button>
+            </form>
+
+            <div class="relative">
+              <div class="absolute inset-0 flex items-center"><div class="w-full border-t border-[#3b494b]/30"></div></div>
+              <div class="relative flex justify-center"><span class="bg-[#051424] px-4 text-xs text-[#6b8a8c]">or</span></div>
+            </div>
+
+            <p class="text-center text-sm text-[#b9cacb]">
+              Don't have an account? <a href="/register" class="text-[#3b82f6] hover:text-[#3b82f6]/80 font-semibold hover:underline transition-all">Create one</a>
+            </p>
+          </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="px-10 lg:px-16 pb-8">
+          <p class="text-xs text-[#6b8a8c]">&copy; 2026 Aurora Scraper. All rights reserved.</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right Pane: Image (50%) - hidden on mobile -->
+    <div class="relative w-1/2 min-h-screen hidden lg:block overflow-hidden">
+      <img src="/public/hero-auth.jpg" alt="" class="absolute inset-0 w-full h-full object-cover" />
+      <div class="absolute inset-0 bg-gradient-to-t from-[#030d1a] via-[#030d1a]/30 to-transparent"></div>
+      <div class="absolute inset-0 bg-gradient-to-r from-[#051424]/70 to-transparent"></div>
+      <div class="absolute bottom-0 left-0 right-0 p-12 lg:p-16">
+        <div class="max-w-md">
+          <svg width="44" height="44" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" class="mb-5 opacity-90">
+            <path d="M18 2L8 18H14L12 30L24 14H18L20 2H18Z" fill="url(#aurora-grad-login-r)" />
+            <defs>
+              <linearGradient id="aurora-grad-login-r" x1="8" y1="2" x2="24" y2="30" gradientUnits="userSpaceOnUse">
+                <stop stop-color="#3b82f6"/>
+                <stop offset="1" stop-color="#1d4ed8"/>
+              </linearGradient>
+            </defs>
+          </svg>
+          <h2 class="text-3xl font-bold text-white mb-3 leading-tight" style="font-family: 'Outfit', sans-serif;">AI-Powered Web Scraping</h2>
+          <p class="text-[#b9cacb] text-sm leading-relaxed">Extract, analyze, and monitor web data at scale with Aurora's intelligent scraping engine powered by Gemini AI.</p>
+          <div class="flex items-center gap-4 mt-6">
+            <div class="flex items-center gap-2">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#3b82f6] shadow-[0_0_8px_#3b82f6]"></div>
+              <span class="text-xs text-[#b9cacb]">Real-time extraction</span>
+            </div>
+            <div class="flex items-center gap-2">
+              <div class="w-1.5 h-1.5 rounded-full bg-[#1d4ed8] shadow-[0_0_8px_#1d4ed8]"></div>
+              <span class="text-xs text-[#b9cacb]">AI-powered parsing</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</Page>
+</template>
+
+<script>
+fn state() { return {} }
+</script>
+
+<client>
+window.doLogin = async function(event) {
+    event.preventDefault();
+    let email = document.getElementById("login-email").value;
+    let pass = document.getElementById("login-pass").value;
+    let btn = event.target.querySelector("button");
+    let originalText = btn.innerHTML;
+    btn.innerHTML = "Signing in...";
+    btn.disabled = true;
+    try {
+        let res = await fetch("/auth/login", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: email, password: pass })
+        });
+        if (res.ok) {
+            window.location.href = "/dashboard";
+        } else {
+            let data = await res.json();
+            document.getElementById("login-error").classList.remove("hidden");
+            document.getElementById("login-error-text").textContent = data.error || "Invalid credentials";
+            btn.innerHTML = originalText;
+            btn.disabled = false;
+        }
+    } catch(e) {
+        document.getElementById("login-error").classList.remove("hidden");
+        document.getElementById("login-error-text").textContent = "Connection failed. Please try again.";
+        btn.innerHTML = originalText;
+        btn.disabled = false;
+    }
+};
+</client>

@@ -9,15 +9,21 @@ STATUS: Chunks 1, 2 & 3 DONE.
   live `COUNT(*)` total), `_data_table_virtual_html(core)` (fixed-height scroller; tbody = top
   spacer row + visible window + bottom spacer row, so the scrollbar reflects the full dataset
   while the DOM stays ~40 rows), `data_table_virtual_component(opts)` (handler `dt_window` takes
-  `{f,c}`). Client: a scroll listener appended to `_lumen_client_core()` reads
+  `{f,c}`). Client: the opt-in `vtable` browser action reads
   `[data-lumen-vtable]` scrollTop/clientHeight, computes the overscan window, and sends
   `{t:'event',h:'dt_window',v:{f,c}}` via `__lumen_ws` (dedup via `__lf/__lc`). `reconcile()`
   patches the scroller in place so scrollTop survives morphs. Example:
   `examples/lumen_data_table_virtual.vn`.
 
 NOTE: windowing uses OFFSET (random scroll-access needs it; keyset is sequential-only) — the
-plan's "keyset" goal applies to the `next_page` load-more path, not random scroll. Untested at
-runtime (Windows is LSP-only / `.vn` interpreted — real test needs Linux/WSL).
+plan's "keyset" goal applies to the `next_page` load-more path, not random scroll.
+
+The implementation is now exercised on Linux against SQLite by
+`tests/lumen_table_test.vn`: server sort/filter/pagination, database-change refetch,
+bounded virtual windows, safe HTML, and exact optional browser-action detection. Table,
+column, sort, and filter contracts reject undeclared identifiers and unsafe SQL operators.
+The capture layer appends dependency arrays structurally; it never applies numeric `+` to
+array values.
 
 
 Goal: a built-in data table that does **server-side sort / filter / paginate + windowed

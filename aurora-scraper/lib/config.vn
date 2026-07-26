@@ -1,0 +1,37 @@
+// lib/config.vn — Project configuration and environment variables
+
+struct Config {
+    db_path: string,
+    port: int,
+    session_secret: string,
+    gemini_key: string,
+    gemini_model: string
+}
+
+fn get_config() {
+    let db = env.get("DB_PATH")
+    if db == null or db == "" { db = "aurora-scraper.db" }
+
+    let port_str = env.get("PORT")
+    let port = 8090
+    if port_str != null and port_str != "" {
+        // Simple string to int conversion if needed, but 8090 is fine as default
+    }
+
+    let secret = env.get("SESSION_SECRET")
+    if secret == null or secret == "" { secret = "default-aurora-scraper-secret-key-12345" }
+
+    let gemini = env.get("GEMINI_API_KEY")
+    if gemini == null or gemini == "" { gemini = "" }
+
+    let model = env.get("GEMINI_MODEL")
+    if model == null or model == "" { model = "gemini-2.5-flash" }
+
+    return Config {
+        db_path: db,
+        port: port,
+        session_secret: secret,
+        gemini_key: gemini,
+        gemini_model: model
+    }
+}

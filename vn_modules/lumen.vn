@@ -275,8 +275,10 @@ fn _lumen_presence_broadcast(topic) {
             try {
                 let html = (conn.component.render_fn)(new_state)
                 let prev = conn.prev_html
-                let res = _lumen_send_update(conn.ws, prev, html)
-                conn.prev_html = html
+                if prev != null and html != prev {
+                    let res = _lumen_send_update(conn.ws, prev, html)
+                    conn.prev_html = html
+                }
             } catch e {}
         }
     }
@@ -923,21 +925,48 @@ fn lumen_compile_source(name, lumen_src) {
         }
     }
 
-    fn _ts_strip(code) {
-        code = regex.replace("interface[[:space:]]+[^{]+\\{[^}]*\\}", code, "")
-        code = regex.replace("type[[:space:]]+[A-Za-z0-9_]+[[:space:]]*=[^;]+;", code, "")
-        code = regex.replace(":[[:space:]]*(string|number|boolean|any|void|unknown)", code, "")
-        code = regex.replace("[[:space:]]+as[[:space:]]+[A-Za-z0-9_]+", code, "")
-        return code
-    }
+    // ─── Client islands ───
+    // Browser code remains explicit. Activation wrappers are emitted only for
+    // the policies an author requests; a component without <client> ships none.
+    let client_from = 0
+    while true {
+        let client_start = lumen_src.index_of("<client", client_from)
+        if client_start < 0 { break }
+        let client_open_end = lumen_src.index_of(">", client_start + 7)
+        if client_open_end < 0 { throw("Lumen: unclosed <client> opening tag in " + name) }
+        let client_end = lumen_src.index_of("</client>", client_open_end + 1)
+        if client_end < 0 { throw("Lumen: missing </client> in " + name) }
 
-    // ─── M8: client islands ───
-    let client_start = lumen_src.index_of("<client>")
-    let client_end = lumen_src.index_of("</client>")
-    if client_start >= 0 and client_end > client_start {
-        let client_js = lumen_src.substring(client_start + 8, client_end)
-        client_js = _ts_strip(client_js)
-        template = template + "<script>" + client_js + "</script>"
+        let client_attrs = lumen_src.substring(client_start + 7, client_open_end)
+        let attrs = _lumen_parse_attrs(client_attrs)
+        let client_lang = _validate.get_field(attrs, "lang")
+        if client_lang != null and client_lang != "" and client_lang != "js" and client_lang != "javascript" {
+            throw("Lumen: <client> accepts browser JavaScript; precompile '" + client_lang + "' before embedding it in " + name)
+        }
+        let policy = _validate.get_field(attrs, "when")
+        if policy == null or policy == "" { policy = "load" }
+        // Verbatim by contract. Lumen must not pretend a few regular
+        // expressions are a JavaScript or TypeScript compiler.
+        let client_js = lumen_src.substring(client_open_end + 1, client_end)
+        let activated = client_js
+
+        if policy == "idle" {
+            activated = "(function(f)\{(window.requestIdleCallback||function(g)\{setTimeout(g,1)\})(f)\})(function()\{" + client_js + "\n\});"
+        } else if policy == "visible" {
+            let target = _validate.get_field(attrs, "target")
+            let target_js = "null"
+            if target != null and target != "" { target_js = json_encode(target) }
+            activated = "(function(s,f)\{var q=" + target_js + ",t=q?document.querySelector(q):s.previousElementSibling;while(t&&(t.tagName==='SCRIPT'||t.tagName==='STYLE'))t=t.previousElementSibling;if(!t||!window.IntersectionObserver)\{f();return\}var o=new IntersectionObserver(function(e)\{if(e[0]&&e[0].isIntersecting)\{o.disconnect();f()\}\});o.observe(t)\})(document.currentScript,function()\{" + client_js + "\n\});"
+        } else if policy == "media" {
+            let query = _validate.get_field(attrs, "media")
+            if query == null or query == "" { throw("Lumen: <client when=\"media\"> requires a media query in " + name) }
+            activated = "(function(f)\{var m=matchMedia(" + json_encode(query) + ");if(m.matches)\{f();return\}var h=function(e)\{if(e.matches)\{m.removeEventListener('change',h);f()\}\};m.addEventListener('change',h)\})(function()\{" + client_js + "\n\});"
+        } else if policy != "load" {
+            throw("Lumen: unknown client activation policy '" + policy + "' in " + name)
+        }
+
+        template = template + "<script>" + activated + "</script>"
+        client_from = client_end + 9
     }
 
     let escaped_tpl = _lumen_escape_string(template)
@@ -985,472 +1014,6 @@ fn lumen_compile_file(lumen_path, vn_path) {
     io.write_text(vn_path, code)
 }
 
-// ─── File-based routing (the `vn dev` tool, à la Next/Nuxt) ───
-// A pages/ directory maps file names to routes and component names:
-//   pages/index.lumen      → "/"        component "Index"
-//   pages/about.lumen      → "/about"   component "About"
-//   pages/user-card.lumen  → "/user-card" component "UserCard"
-
-fn _lumen_pascal(base) {
-    let out = ""
-    let cap = true
-    let i = 0
-    let n = base.len()
-    while i < n {
-        let c = base.substring(i, i + 1)
-        if c == "-" or c == "_" or c == " " {
-            cap = true
-        } else {
-            if cap { out = out + c.upper() } else { out = out + c }
-            cap = false
-        }
-        i = i + 1
-    }
-    return out
-}
-
-fn _lumen_route(base) {
-    if base == "index" { return "/" }
-    return "/" + base
-}
-
-// Recursively collect .lumen page info from a directory tree.
-// Returns an array of {path, route, comp, param} structs (one per .lumen page).
-// Files named [param].lumen produce a dynamic :param route segment and set the
-// param field so lumen_mount can inject req.params[param] into component state.
-fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_layout_paths, parent_loading, parent_loading_path) {
-    if parent_layouts == null { parent_layouts = [] }
-    if parent_layout_paths == null { parent_layout_paths = [] }
-    if parent_loading == null { parent_loading = "" }
-    if parent_loading_path == null { parent_loading_path = "" }
-    let names = io.list_dir(dir)
-    if names == null { return [] }
-    let results = []
-
-    let has_layout = false
-    let has_loading = false
-    for ni in 0..names.len() {
-        if names[ni] == "layout.lumen" { has_layout = true }
-        if names[ni] == "loading.lumen" { has_loading = true }
-    }
-
-    let current_layouts = parent_layouts
-    let current_layout_paths = parent_layout_paths
-    if has_layout {
-        let layout_comp = comp_prefix + "Layout"
-        let layout_path = dir + "/layout.lumen"
-        current_layouts = parent_layouts.push(layout_comp)
-        current_layout_paths = parent_layout_paths.push(layout_path)
-    }
-
-    let current_loading = parent_loading
-    let current_loading_path = parent_loading_path
-    if has_loading {
-        current_loading = comp_prefix + "Loading"
-        current_loading_path = dir + "/loading.lumen"
-    }
-
-    for ni in 0..names.len() {
-        let name = names[ni]
-        if name == "components" or name == "layout.lumen" or name == "loading.lumen" { continue }
-        let child = dir + "/" + name
-        if io.list_dir(child) != null {
-            let sub = _lumen_collect_pages(child, route_prefix + "/" + name, comp_prefix + _lumen_pascal(name), current_layouts, current_layout_paths, current_loading, current_loading_path)
-            for si in 0..sub.len() {
-                results.append(sub[si])
-            }
-        } else if name.ends_with(".lumen") {
-            let base = name.substring(0, name.len() - 6)
-            let param = ""
-            let seg = base
-            if base.starts_with("[") and base.ends_with("]") {
-                param = base.substring(1, base.len() - 1)
-                seg = ":" + param
-            }
-            let route = ""
-            if route_prefix == "" and base == "index" {
-                route = "/"
-            } else if base == "index" {
-                route = route_prefix
-            } else {
-                route = route_prefix + "/" + seg
-            }
-            let comp_base = base
-            if param != "" { comp_base = param }
-            let comp = comp_prefix + _lumen_pascal(comp_base)
-            results.append(http.create_struct(
-                ["path","route","comp","param","layouts","layout_paths","loading","loading_path"],
-                [child, route, comp, param, current_layouts, current_layout_paths, current_loading, current_loading_path]
-            ))
-        }
-    }
-    return results
-}
-
-// Scan a pages directory, compile every .lumen file, and emit ONE runnable
-// Varian app that registers each component and mounts it at its file route.
-// (No eval in the language, so the dev command runs this generated file in a
-// second pass — see `vn dev` in main.c.) Returns the page count.
-fn _lumen_list_has(lst, x) {
-    for i in 0..lst.len() {
-        if lst[i] == x { return true }
-    }
-    return false
-}
-
-// Resolve an import path (`./x`, `../x`, `x`) against the importing file's dir.
-fn _lumen_join_path(base_dir, rel) {
-    let r = rel
-    while r.starts_with("./") { r = r.substring(2, r.len()) }
-    let b = base_dir
-    while r.starts_with("../") {
-        let slash = b.last_index_of("/")
-        if slash >= 0 { b = b.substring(0, slash) } else { b = "" }
-        r = r.substring(3, r.len())
-    }
-    if b == "" { return r }
-    return b + "/" + r
-}
-
-// Component name for an imported file path: PascalCase of its basename.
-fn _lumen_name_for_path(path) {
-    let slash = path.last_index_of("/")
-    let file = path
-    if slash >= 0 { file = path.substring(slash + 1, path.len()) }
-    if file.ends_with(".lumen") { file = file.substring(0, file.len() - 6) }
-    return _lumen_pascal(file)
-}
-
-fn _lumen_build_dir(pages_dir, out_path, port) {
-    let files = io.list_dir(pages_dir)
-    if files == null {
-        throw("Lumen: pages directory not found: " + pages_dir)
-    }
-    let combined = "// Auto-generated by `vn dev` from " + pages_dir + " — do not edit.\n"
-
-    // Names already compiled (dedup) and a worklist of (path, base_dir) pairs of
-    // imported .lumen files still to compile — the dependency graph, resolved
-    // transitively so a component can import another component, and so on.
-    let compiled = []
-    let work_paths = []
-    let work_bases = []
-
-    // Compile every component in pages/components/ (kept for back-compat: an
-    // un-imported component here still resolves), recording its name + scanning
-    // its imports.
-    let comp_dir = pages_dir + "/components"
-    let comp_files = io.list_dir(comp_dir)
-    if comp_files != null {
-        for i in 0..comp_files.len() {
-            let f = comp_files[i]
-            if f.ends_with(".lumen") {
-                let comp_name = _lumen_pascal(f.substring(0, f.len() - 6))
-                let src = io.read_text(comp_dir + "/" + f)
-                if src != null and _lumen_list_has(compiled, comp_name) == false {
-                    combined = combined + lumen_compile_source(comp_name, src) + "\n"
-                    compiled = compiled.push(comp_name)
-                    work_paths = work_paths.push(comp_dir + "/" + f)
-                    work_bases = work_bases.push(comp_dir)
-                }
-            }
-        }
-    }
-
-    let mounts = ""
-    let count = 0
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
-    for pi in 0..pages.len() {
-        let p = pages[pi]
-        let src = io.read_text(p.path)
-        if src != null {
-            for li in 0..p.layouts.len() {
-                let lay_comp = p.layouts[li]
-                let lay_path = p.layout_paths[li]
-                if _lumen_list_has(compiled, lay_comp) == false {
-                    let lay_src = io.read_text(lay_path)
-                    if lay_src != null {
-                        combined = combined + lumen_compile_source(lay_comp, lay_src) + "\n"
-                        compiled = compiled.push(lay_comp)
-                        work_paths = work_paths.push(lay_path)
-                        let lslash = lay_path.last_index_of("/")
-                        let ldir = pages_dir
-                        if lslash >= 0 { ldir = lay_path.substring(0, lslash) }
-                        work_bases = work_bases.push(ldir)
-                    }
-                }
-            }
-            if p.loading != null and p.loading != "" {
-                let lod_comp = p.loading
-                let lod_path = p.loading_path
-                if _lumen_list_has(compiled, lod_comp) == false {
-                    let lod_src = io.read_text(lod_path)
-                    if lod_src != null {
-                        combined = combined + lumen_compile_source(lod_comp, lod_src) + "\n"
-                        compiled = compiled.push(lod_comp)
-                        work_paths = work_paths.push(lod_path)
-                        let lslash = lod_path.last_index_of("/")
-                        let ldir = pages_dir
-                        if lslash >= 0 { ldir = lod_path.substring(0, lslash) }
-                        work_bases = work_bases.push(ldir)
-                    }
-                }
-            }
-            if _lumen_list_has(compiled, p.comp) == false {
-                combined = combined + lumen_compile_source(p.comp, src) + "\n"
-                compiled = compiled.push(p.comp)
-                work_paths = work_paths.push(p.path)
-                let pslash = p.path.last_index_of("/")
-                let pdir = pages_dir
-                if pslash >= 0 { pdir = p.path.substring(0, pslash) }
-                work_bases = work_bases.push(pdir)
-            }
-            if p.param != null and p.param != "" {
-                mounts = mounts + "lumen_mount_dynamic(app, \"" + p.route + "\", _lumen_get_component(\"" + p.comp + "\"), \"" + p.param + "\")\n"
-            } else {
-                mounts = mounts + "lumen_mount(app, \"" + p.route + "\", _lumen_get_component(\"" + p.comp + "\"))\n"
-            }
-            count = count + 1
-        }
-    }
-    if count == 0 {
-        throw("Lumen: no .lumen files found in " + pages_dir)
-    }
-
-    // Resolve the import graph: walk each compiled file's `import` directives,
-    // compile any local .lumen dependency not already compiled (transitively),
-    // and validate `lumen/ui` imports against the built-in registry. A relative
-    // import that doesn't resolve to a real file is a hard, clear error — the
-    // whole point of imports over the old magic-global model.
-    let wi = 0
-    while wi < work_paths.len() {
-        let fpath = work_paths[wi]
-        let fbase = work_bases[wi]
-        wi = wi + 1
-        let fsrc = io.read_text(fpath)
-        if fsrc == null { continue }
-        let imps = _lumen_extract_imports(fsrc).imports
-        for k in 0..imps.len() {
-            let imp = imps[k]
-            let path = imp.path
-            let names = imp.names
-            if path == "lumen/ui" or path == "lumen" {
-                // Built-in vocabulary: validate each imported name exists.
-                for n in 0..names.len() {
-                    if _lumen_get_component(names[n]) == null {
-                        throw("Lumen: '" + names[n] + "' is not a built-in lumen/ui component (imported in " + fpath + ")")
-                    }
-                }
-            } else if path.ends_with(".lumen") {
-                let dep_path = _lumen_join_path(fbase, path)
-                let dep_name = _lumen_name_for_path(dep_path)
-                if _lumen_list_has(compiled, dep_name) == false {
-                    let dep_src = io.read_text(dep_path)
-                    if dep_src == null {
-                        throw("Lumen: cannot resolve import \"" + path + "\" -> " + dep_path + " (in " + fpath + ")")
-                    }
-                    combined = combined + lumen_compile_source(dep_name, dep_src) + "\n"
-                    compiled = compiled.push(dep_name)
-                    // queue the dependency so ITS imports resolve too
-                    let dep_dir = pages_dir
-                    let ds = dep_path.last_index_of("/")
-                    if ds >= 0 { dep_dir = dep_path.substring(0, ds) }
-                    work_paths = work_paths.push(dep_path)
-                    work_bases = work_bases.push(dep_dir)
-                }
-            }
-        }
-    }
-    // Serve the project's /public dir (favicons, manifest, user assets). Static
-    // mounts are consulted only AFTER routing, so page routes always win and a
-    // missing file just 404s — mounting at "/" is safe.
-    let statics = "app.serve_static(\"/\", \"public\")\n"
-    // Serve directly via http.serve (not app.listen) so the framework's own
-    // startup line is suppressed — `vn dev` prints its own Lumen console.
-    let program = combined + "\nlet app = new_app()\n" + mounts + statics +
-                  "http.serve(" + port + ", |req| \{ return app.handle(req) \})\n"
-    io.write_text(out_path, program)
-    return count
-}
-
-// ─── SSG: Static Site Generation ───
-// Compile every .lumen page, render it to HTML, and write .html files into
-// `out_dir` — no server, no WebSocket client, just flat files. Perfect for
-// docs, blogs, and marketing pages that don't need live interactivity.
-fn _lumen_build_static_dir(pages_dir, out_dir, base_url) {
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
-    if pages.len() == 0 {
-        throw("Lumen SSG: no .lumen files found in " + pages_dir)
-    }
-    let count = 0
-    // Compile all components first (same as _lumen_build_dir but without the server)
-    let compiled = []
-    let compiled_src = ""
-    let comp_dir = pages_dir + "/components"
-    let comp_files = io.list_dir(comp_dir)
-    if comp_files != null {
-        for i in 0..comp_files.len() {
-            let f = comp_files[i]
-            if f.ends_with(".lumen") {
-                let name = _lumen_pascal(f.substring(0, f.len() - 6))
-                let src = io.read_text(comp_dir + "/" + f)
-                if src != null and _lumen_list_has(compiled, name) == false {
-                    compiled_src = compiled_src + lumen_compile_source(name, src) + "\n"
-                    compiled = compiled.push(name)
-                }
-            }
-        }
-    }
-    // Ensure output dir exists
-    let _ = io.mkdir(out_dir)
-
-    for pi in 0..pages.len() {
-        let p = pages[pi]
-        let src = io.read_text(p.path)
-        if src != null {
-            if _lumen_list_has(compiled, p.comp) == false {
-                compiled_src = compiled_src + lumen_compile_source(p.comp, src) + "\n"
-                compiled = compiled.push(p.comp)
-            }
-        }
-    }
-
-    // Build a throwaway VM to render each page to HTML and write it to disk.
-    let plug = "// SSG runner — one-shot render per page.\n" + compiled_src + "\n"
-    // Write all page HTML files
-    for pi in 0..pages.len() {
-        let p = pages[pi]
-        let html_path = out_dir + p.route
-        let full_path = html_path
-        if html_path.ends_with("/") { full_path = html_path + "index.html" }
-        else { full_path = full_path + ".html" }
-        // Output the rendered HTML via the component's render function.
-        // Since we can't easily run it here (no eval), we emit the shell HTML
-        // from the template + _lumen_head as a static page without the live JS.
-        // The actual rendering happens at vn build time via the AOT compiler.
-        let render_prog = plug +
-            "let comp = _lumen_get_component(\"" + p.comp + "\")\n" +
-            "if comp != null \{\n" +
-            "    _lumen_active_child_states = \{\}\n" +
-            "    let st = (comp.state_fn)()\n" +
-            "    let html = (comp.render_fn)(st)\n" +
-            "    // Static output — skip the live shell, just wrap minimal doc\n" +
-            "    io.write_text(\"" + full_path + "\", html)\n" +
-            "\}\n"
-        io.write_text(".lumen-ssg-render.vn", render_prog)
-        // This would be run by `vn build --static`
-        count = count + 1
-    }
-    io.delete(".lumen-ssg-render.vn")
-
-    // Generate sitemap.xml
-    if base_url != null and base_url != "" {
-        let sitemap = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n" +
-                      "<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
-        for pi in 0..pages.len() {
-            let p = pages[pi]
-            let loc = base_url
-            if loc.ends_with("/") == false { loc = loc + "/" }
-            loc = loc + p.route.substring(1, p.route.len())
-            sitemap = sitemap + "  <url><loc>" + loc + "</loc></url>\n"
-        }
-        sitemap = sitemap + "</urlset>"
-        io.write_text(out_dir + "/sitemap.xml", sitemap)
-    }
-
-    // Generate robots.txt
-    if base_url != null and base_url != "" {
-        io.write_text(out_dir + "/robots.txt",
-            "User-agent: *\nAllow: /\nSitemap: " + base_url + "/sitemap.xml\n")
-    }
-
-    return count
-}
-
-// Emit a complete, runnable SSG program that registers every component and
-// renders each page to a static .html file, plus sitemap.xml/robots.txt.
-//
-// Why two phases: components only exist once their compiled source RUNS (it
-// calls lumen_register_component). So we can't render in this same VM — we
-// generate a self-contained program (component registrations + a render+write
-// per page) and write it to `build_path`; the caller then runs it with the
-// prelude, which registers the components and writes the HTML. This mirrors how
-// `vn dev` generates `.lumen-build.vn` and then runs it.
-fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
-    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "")
-    if pages.len() == 0 {
-        throw("Lumen SSG: no .lumen files found in " + pages_dir)
-    }
-    // Create the output dir now (mkdir -p): the render program re-creates it in
-    // phase 2, but sitemap.xml/robots.txt are written below in THIS phase and
-    // would silently fail if the dir didn't exist yet.
-    let _mkdir_now = io.mkdir(out_dir)
-    // Compile every component (shared components first, then each page).
-    let compiled = []
-    let compiled_src = ""
-    let comp_dir = pages_dir + "/components"
-    let comp_files = io.list_dir(comp_dir)
-    if comp_files != null {
-        for i in 0..comp_files.len() {
-            let f = comp_files[i]
-            if f.ends_with(".lumen") {
-                let name = _lumen_pascal(f.substring(0, f.len() - 6))
-                let src = io.read_text(comp_dir + "/" + f)
-                if src != null and _lumen_list_has(compiled, name) == false {
-                    compiled_src = compiled_src + lumen_compile_source(name, src) + "\n"
-                    compiled = compiled.push(name)
-                }
-            }
-        }
-    }
-    for pi in 0..pages.len() {
-        let p = pages[pi]
-        let src = io.read_text(p.path)
-        if src != null and _lumen_list_has(compiled, p.comp) == false {
-            compiled_src = compiled_src + lumen_compile_source(p.comp, src) + "\n"
-            compiled = compiled.push(p.comp)
-        }
-    }
-
-    // Build the runnable render program. Inside the string literals, real braces
-    // for the generated code are escaped as \{ \} so they aren't interpolated.
-    let prog = "// AUTO-GENERATED Lumen SSG render program — do not edit.\n"
-    prog = prog + compiled_src + "\n"
-    prog = prog + "let _ssg_out = io.mkdir(\"" + out_dir + "\")\n"
-    let pi2 = 0
-    while pi2 < pages.len() {
-        let p = pages[pi2]
-        let full_path = out_dir + p.route
-        if p.route.ends_with("/") { full_path = full_path + "index.html" }
-        else { full_path = full_path + ".html" }
-        prog = prog + "let _c = _lumen_get_component(\"" + p.comp + "\")\n"
-        prog = prog + "if _c != null \{\n"
-        prog = prog + "    _lumen_active_child_states = \{\}\n"
-        prog = prog + "    let _st = (_c.state_fn)()\n"
-        prog = prog + "    let _html = (_c.render_fn)(_st)\n"
-        prog = prog + "    let _w = io.write_text(\"" + full_path + "\", _html)\n"
-        prog = prog + "    print(\"  rendered " + p.route + " -> " + full_path + "\")\n"
-        prog = prog + "\} else \{ print(\"  MISSING component " + p.comp + "\") \}\n"
-        pi2 = pi2 + 1
-    }
-    let _bw = io.write_text(build_path, prog)
-
-    // sitemap.xml + robots.txt need no rendering — write them now.
-    if base_url != null and base_url != "" {
-        let sitemap = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
-        for pi in 0..pages.len() {
-            let p = pages[pi]
-            let loc = base_url
-            if loc.ends_with("/") == false { loc = loc + "/" }
-            if p.route.len() > 1 { loc = loc + p.route.substring(1, p.route.len()) }
-            sitemap = sitemap + "  <url><loc>" + loc + "</loc></url>\n"
-        }
-        sitemap = sitemap + "</urlset>"
-        let _sm = io.write_text(out_dir + "/sitemap.xml", sitemap)
-        let _rb = io.write_text(out_dir + "/robots.txt",
-            "User-agent: *\nAllow: /\nSitemap: " + base_url + "/sitemap.xml\n")
-    }
-    return pages.len()
-}
 
 // ─── Public API (Milestone 1) ───
 
@@ -1484,35 +1047,6 @@ fn lumen_store(initial) {
     let set = |key, value| { holder[0] = _tpl_bind(holder[0], key, value); return null }
     let all = | | { return holder[0] }
     return http.create_struct(["get", "set", "all"], [get, set, all])
-}
-
-// ─── Lumen resource: reactive async-shaped data (React-Query-style) ───
-// v1 is synchronous (fetcher runs on the render/handler thread).
-// FUTURE (separate milestone): off-thread fetch + live re-render.
-//
-// Usage:
-//   let users = lumen_resource(| | { return db.query("select ...") })
-//   render:  if (r.state)().loading { ... } else { each (r.state)().data ... }
-//   handler: let _ = (r.refetch)()   // re-runs the fetcher; loop re-renders after
-fn lumen_resource(fetcher) {
-    let holder = [http.create_struct(["loading","error","data"], [true, null, null])]
-    let apply = |st| { holder[0] = st; return st }
-    let run = | | {
-        let st = null
-        try {
-            let d = fetcher()
-            st = http.create_struct(["loading","error","data"], [false, null, d])
-        } catch e {
-            st = http.create_struct(["loading","error","data"], [false, "" + e, null])
-        }
-        return (apply)(st)
-    }
-    let _ = (run)()
-    let snapshot = | | { return holder[0] }
-    return http.create_struct(
-        ["state", "refetch"],
-        [snapshot, run]
-    )
 }
 
 // ─── Pillar 1: reactive tick — drain DB changes, refetch dependent live
@@ -1562,9 +1096,9 @@ fn _lumen_ensure_reactive() {
 
 fn live_query(fetcher) {
     _lumen_ensure_reactive()
-    db.capture_start()
+    capture_start()
     let res = lumen_resource(fetcher)
-    let tables = db.capture_end()
+    let tables = capture_end()
     let i = 0
     while i < tables.len() {
         let tbl = tables[i]
@@ -1585,6 +1119,64 @@ fn live_query(fetcher) {
 //                         columns: [ {name:"id",label:"ID",sortable:true}, ... ],
 //                         page_size: 25, order_by: "id", order_dir: "desc", filters: [] })
 //   render:  each (dt.rows)() ...      handler: (dt.set_sort)("name")
+fn _data_table_identifier(name) {
+    if name == null or name == "" { return false }
+    let segment_start = true
+    for i in 0..name.len() {
+        let c = name.substring(i, i + 1)
+        if c == "." {
+            if segment_start { return false }
+            segment_start = true
+        } else {
+            if _lumen_is_ident_char(c) == false { return false }
+            let code = c.code_at(0)
+            if segment_start and code >= 48 and code <= 57 { return false }
+            segment_start = false
+        }
+    }
+    return segment_start == false
+}
+
+fn _data_table_column(columns, field, require_sortable) {
+    if field == null { return false }
+    for i in 0..columns.len() {
+        if _validate.get_field(columns[i], "name") == field {
+            if require_sortable and _validate.get_field(columns[i], "sortable") != true { return false }
+            return true
+        }
+    }
+    return false
+}
+
+fn _data_table_validate_filters(columns, filters) {
+    let allowed = ["=", "!=", "<>", "<", "<=", ">", ">=", "LIKE"]
+    for i in 0..filters.len() {
+        let field = _validate.get_field(filters[i], "field")
+        let op = _validate.get_field(filters[i], "op")
+        if _data_table_column(columns, field, false) == false {
+            throw("Lumen table: unknown filter column '" + field + "'")
+        }
+        let valid_op = false
+        for j in 0..allowed.len() { if op == allowed[j] { valid_op = true } }
+        if valid_op == false { throw("Lumen table: unsafe filter operator '" + op + "'") }
+    }
+    return true
+}
+
+fn _data_table_validate_contract(table, columns, filters, initial_sort) {
+    if _data_table_identifier(table) == false { throw("Lumen table: unsafe table identifier") }
+    for i in 0..columns.len() {
+        if _data_table_identifier(_validate.get_field(columns[i], "name")) == false {
+            throw("Lumen table: unsafe column identifier")
+        }
+    }
+    _data_table_validate_filters(columns, filters)
+    if initial_sort != null and _data_table_column(columns, initial_sort, true) == false {
+        throw("Lumen table: sort column must be declared sortable")
+    }
+    return true
+}
+
 fn data_table(opts) {
     let conn = _validate.get_field(opts, "conn")
     let table = _validate.get_field(opts, "table")
@@ -1601,6 +1193,7 @@ fn data_table(opts) {
     let st_page = [1]
     let st_filters = [_validate.get_field(opts, "filters")]
     if st_filters[0] == null { st_filters[0] = [] }
+    _data_table_validate_contract(table, columns, st_filters[0], st_sort[0])
 
     // column name list for SELECT (fall back to "*")
     let col_names = []
@@ -1650,6 +1243,7 @@ fn data_table(opts) {
         return null
     }
     let set_sort = |field| {
+        if _data_table_column(columns, field, true) == false { return null }
         if st_sort[0] == field {
             if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
         } else {
@@ -1660,6 +1254,7 @@ fn data_table(opts) {
         return (_apply)()
     }
     let set_filter = |filters| {
+        _data_table_validate_filters(columns, filters)
         st_filters[0] = filters
         st_page[0] = 1
         return (_apply)()
@@ -1771,6 +1366,7 @@ fn data_table_component(opts) {
     if init_dir == null { init_dir = "asc" }
     let filters = _validate.get_field(opts, "filters")
     if filters == null { filters = [] }
+    _data_table_validate_contract(table, columns, filters, init_sort)
     let cfg = http.create_struct(
         ["conn", "table", "columns", "page_size", "filters"],
         [conn, table, columns, page_size, filters]
@@ -1784,6 +1380,7 @@ fn data_table_component(opts) {
     let handler_names = ["dt_sort", "dt_next", "dt_prev", "dt_reload"]
     let handler_fns = [
         |s, v| {
+            if _data_table_column(columns, v, true) == false { return s }
             if s.dt_sort == v {
                 if s.dt_dir == "asc" { s.dt_dir = "desc" } else { s.dt_dir = "asc" }
             } else {
@@ -1913,6 +1510,7 @@ fn data_table_virtual(opts) {
     if init_dir != null { st_dir[0] = init_dir }
     let st_filters = [_validate.get_field(opts, "filters")]
     if st_filters[0] == null { st_filters[0] = [] }
+    _data_table_validate_contract(table, columns, st_filters[0], st_sort[0])
     let st_first = [0]
     let st_count = [40]
     let initc = _validate.get_field(opts, "window_count")
@@ -1998,6 +1596,7 @@ fn data_table_virtual(opts) {
         return (_wake)()
     }
     let set_sort = |field| {
+        if _data_table_column(columns, field, true) == false { return null }
         if st_sort[0] == field {
             if st_dir[0] == "asc" { st_dir[0] = "desc" } else { st_dir[0] = "asc" }
         } else {
@@ -2008,6 +1607,7 @@ fn data_table_virtual(opts) {
         return (_wake)()
     }
     let set_filter = |filters| {
+        _data_table_validate_filters(columns, filters)
         st_filters[0] = filters
         st_first[0] = 0
         return (_wake_all)()
@@ -2114,6 +1714,7 @@ fn data_table_virtual_component(opts) {
     if init_dir == null { init_dir = "asc" }
     let filters = _validate.get_field(opts, "filters")
     if filters == null { filters = [] }
+    _data_table_validate_contract(table, columns, filters, init_sort)
 
     let cfg = http.create_struct(
         ["conn", "table", "columns", "row_height", "viewport_height"],
@@ -2129,6 +1730,7 @@ fn data_table_virtual_component(opts) {
     let handler_names = ["dt_window", "dt_sort", "dt_reload"]
     let handler_fns = [
         |s, v| {
+            if _data_table_column(columns, v, true) == false { return s }
             let f = _validate.get_field(v, "f")
             let c = _validate.get_field(v, "c")
             if f < 0 { f = 0 }
@@ -2271,383 +1873,58 @@ fn _render_dt_virtual_live(cfg, s) {
     return lumen_render(wrap, {})
 }
 
-// ─── Pillar 3: schema-bound forms — declare fields + validators once, get a
-// live, server-validated form. Per-field @input gives inline validation as the
-// user types; @submit validates all via lumen_form then calls on_submit(values).
-// Because a successful on_submit writes the DB, any Pillar-1 live_query / Pillar-2
-// table on that table auto-updates. ───
-
-// Helper: build a per-field setter handler (separate fn so each closure captures
-// its own field name — avoids loop-variable capture bugs).
-fn _df_make_setter(core, name) {
-    return |s, v| { let _ = (core.set_field)(name, v); return s }
-}
-
-fn _df_make_live_setter(cfg, name) {
-    return |s, v| {
-        s.values = _tpl_bind(s.values, name, v)
-        let fields = _validate.get_field(cfg, "fields")
-        let validator = null
-        let fi = 0
-        while fi < fields.len() {
-            let f = fields[fi]
-            if _validate.get_field(f, "name") == name {
-                validator = _validate.get_field(f, "validator")
-                break
-            }
-            fi = fi + 1
-        }
-        if validator != null {
-            let res = _validate_parse(validator, v)
-            if res.success {
-                s.errors = _tpl_bind(s.errors, name, null)
-            } else {
-                s.errors = _tpl_bind(s.errors, name, res.error)
-            }
-        }
-        return s
-    }
-}
-
-fn data_form(opts) {
-    let fields = _validate.get_field(opts, "fields")
-    if fields == null { fields = [] }
-    let on_submit = _validate.get_field(opts, "on_submit")
-    let submit_label = _validate.get_field(opts, "submit_label")
-    if submit_label == null { submit_label = "Submit" }
-
-    // field-name list + name->validator schema for lumen_form
-    let names = []
-    let sch_keys = []
-    let sch_vals = []
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let nm = _validate.get_field(f, "name")
-        names = names.push(nm)
-        let v = _validate.get_field(f, "validator")
-        if v != null {
-            sch_keys = sch_keys.push(nm)
-            sch_vals = sch_vals.push(v)
-        }
-        fi = fi + 1
-    }
-    let schema = http.create_struct(sch_keys, sch_vals)
-    let form = lumen_form(schema)
-
-    let st_values = [http.create_struct([], [])]
-    let st_errors = [http.create_struct([], [])]
-    let st_status = ["idle"]
-    let st_message = [null]
-
-    let values = | | { return st_values[0] }
-    let errors = | | { return st_errors[0] }
-    let status = | | { return st_status[0] }
-    let message = | | { return st_message[0] }
-
-    let _wake = | | { let _ = _lumen_async_updates <- true; return null }
-
-    // live-validate a single field; returns an error string or null
-    let _validate_one = |name, val| {
-        let validator = _validate.get_field(schema, name)
-        if validator == null { return null }
-        let res = _validate_parse(validator, val)
-        if res.success { return null }
-        return res.error
-    }
-
-    let set_field = |name, val| {
-        st_values[0] = _tpl_bind(st_values[0], name, val)
-        let err = (_validate_one)(name, val)
-        st_errors[0] = _tpl_bind(st_errors[0], name, err)
-        return (_wake)()
-    }
-
-    let submit = | | {
-        st_status[0] = "saving"
-        let r = (form.validate)(st_values[0])
-        if r.ok {
-            st_errors[0] = http.create_struct([], [])
-            if on_submit != null {
-                try {
-                    let _ = on_submit(r.values)
-                    st_status[0] = "saved"
-                    st_message[0] = null
-                } catch e {
-                    st_status[0] = "error"
-                    st_message[0] = "" + e
-                }
-            } else {
-                st_status[0] = "saved"
-                st_message[0] = null
-            }
-        } else {
-            st_errors[0] = r.errors
-            st_status[0] = "error"
-            st_message[0] = null
-        }
-        return (_wake)()
-    }
-
-    let reset = | | {
-        st_values[0] = http.create_struct([], [])
-        st_errors[0] = http.create_struct([], [])
-        st_status[0] = "idle"
-        st_message[0] = null
-        return (_wake)()
-    }
-
-    return http.create_struct(
-        ["fields", "names", "submit_label", "values", "errors", "status", "message", "set_field", "submit", "reset"],
-        [fields, names, submit_label, values, errors, status, message, set_field, submit, reset]
-    )
-}
-
-// Render a data_form core to live HTML (label + input/textarea + inline error per
-// field, submit button, status message). Run through lumen_render so events bind.
-fn _data_form_html(core) {
-    let fields = core.fields
-    let vals = (core.values)()
-    let errs = (core.errors)()
-
-    let body = "<form class=\"lmn-form\" @submit=\"df_submit\">"
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let name = _validate.get_field(f, "name")
-        let label = _validate.get_field(f, "label")
-        if label == null { label = name }
-        let ftype = _validate.get_field(f, "type")
-        if ftype == null { ftype = "text" }
-        let placeholder = _validate.get_field(f, "placeholder")
-        if placeholder == null { placeholder = "" }
-        let hint = _validate.get_field(f, "hint")
-        let cur = _validate.get_field(vals, name)
-        if cur == null { cur = "" }
-        let err = _validate.get_field(errs, name)
-
-        let hh = "df_set_" + name
-        body = body + "<div class=\"lmn-field\"><label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>"
-        if ftype == "textarea" {
-            body = body + "<textarea class=\"lmn-input\" @input=\"" + hh + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\">" + _sanitize.escape_html("" + cur) + "</textarea>"
-        } else {
-            body = body + "<input class=\"lmn-input\" type=\"" + _sanitize.escape_html("" + ftype) + "\" value=\"" + _sanitize.escape_html("" + cur) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\" @input=\"" + hh + "\" />"
-        }
-        if err != null {
-            body = body + "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + err) + "</p>"
-        } else {
-            if hint != null {
-                body = body + "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
-            }
-        }
-        body = body + "</div>"
-        fi = fi + 1
-    }
-
-    let st = (core.status)()
-    let msg = (core.message)()
-    let msg_html = ""
-    if st == "saved" {
-        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">Saved.</p>"
-    } else {
-        if st == "error" and msg != null {
-            msg_html = "<p class=\"lmn-form-msg\" data-tone=\"danger\">" + _sanitize.escape_html("" + msg) + "</p>"
-        }
-    }
-
-    body = body + "<div class=\"lmn-form-actions\"><button class=\"lmn-btn\" data-variant=\"primary\" type=\"submit\">" + _sanitize.escape_html("" + core.submit_label) + "</button>" + msg_html + "</div>"
-    body = body + "</form>"
-    return lumen_render(body, {})
-}
-
-// Build a live, mountable schema-bound form component.
-//   let f = data_form_component({ fields: [
-//       {name:"email", label:"Email", type:"email", validator: validate.str().is_email()},
-//       {name:"name",  label:"Name",  validator: validate.str().min(2)} ],
-//       on_submit: |values| { (conn.execute)("INSERT INTO users (email,name) VALUES (?,?)",
-//                                             [values.email, values.name]) } })
-//   lumen_mount(app, "/signup", f)
-fn data_form_component(opts) {
-    let fields = _validate.get_field(opts, "fields")
-    if fields == null { fields = [] }
-    let on_submit = _validate.get_field(opts, "on_submit")
-    let submit_label = _validate.get_field(opts, "submit_label")
-    if submit_label == null { submit_label = "Submit" }
-
-    let names = []
-    let sch_keys = []
-    let sch_vals = []
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let nm = _validate.get_field(f, "name")
-        names = names.push(nm)
-        let v = _validate.get_field(f, "validator")
-        if v != null {
-            sch_keys = sch_keys.push(nm)
-            sch_vals = sch_vals.push(v)
-        }
-        fi = fi + 1
-    }
-    let schema = http.create_struct(sch_keys, sch_vals)
-    let form = lumen_form(schema)
-
-    let cfg = http.create_struct(
-        ["fields", "names", "submit_label", "on_submit", "form"],
-        [fields, names, submit_label, on_submit, form]
-    )
-
-    let state_fn = | | {
-        return http.create_struct(["values", "errors", "status", "message"],
-            [http.create_struct([], []), http.create_struct([], []), "idle", null])
-    }
-
-    let render_fn = |s| { return _render_df_live(cfg, s) }
-
-    let handler_names = ["df_submit", "df_reset"]
-    let handler_fns = [
-        |s, v| {
-            let form = _validate.get_field(cfg, "form")
-            let on_submit = _validate.get_field(cfg, "on_submit")
-            s.status = "saving"
-            let r = (form.validate)(s.values)
-            if r.ok {
-                s.errors = http.create_struct([], [])
-                if on_submit != null {
-                    try {
-                        let _ = on_submit(r.values)
-                        s.status = "saved"
-                        s.message = null
-                    } catch e {
-                        s.status = "error"
-                        s.message = "" + e
-                    }
-                } else {
-                    s.status = "saved"
-                    s.message = null
-                }
-            } else {
-                s.errors = r.errors
-                s.status = "error"
-                s.message = null
-            }
-            return s
-        },
-        |s, v| {
-            s.values = http.create_struct([], [])
-            s.errors = http.create_struct([], [])
-            s.status = "idle"
-            s.message = null
-            return s
-        }
-    ]
-    let i = 0
-    while i < names.len() {
-        let nm = names[i]
-        handler_names = handler_names.push("df_set_" + nm)
-        handler_fns = handler_fns.push(_df_make_live_setter(cfg, nm))
-        i = i + 1
-    }
-    return lumen_component(state_fn, render_fn, handler_names, handler_fns)
-}
-
-fn _render_df_live(cfg, s) {
-    let fields = _validate.get_field(cfg, "fields")
-    let submit_label = _validate.get_field(cfg, "submit_label")
-    let vals = s.values
-    let errs = s.errors
-
-    let body = "<form class=\"lmn-form\" @submit=\"df_submit\">"
-    let fi = 0
-    while fi < fields.len() {
-        let f = fields[fi]
-        let name = _validate.get_field(f, "name")
-        let label = _validate.get_field(f, "label")
-        if label == null { label = name }
-        let ftype = _validate.get_field(f, "type")
-        if ftype == null { ftype = "text" }
-        let placeholder = _validate.get_field(f, "placeholder")
-        if placeholder == null { placeholder = "" }
-        let hint = _validate.get_field(f, "hint")
-        let cur = _validate.get_field(vals, name)
-        if cur == null { cur = "" }
-        let err = _validate.get_field(errs, name)
-
-        let hh = "df_set_" + name
-        body = body + "<div class=\"lmn-field\"><label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>"
-        if ftype == "textarea" {
-            body = body + "<textarea class=\"lmn-input\" @input=\"" + hh + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\">" + _sanitize.escape_html("" + cur) + "</textarea>"
-        } else {
-            body = body + "<input class=\"lmn-input\" type=\"" + _sanitize.escape_html("" + ftype) + "\" value=\"" + _sanitize.escape_html("" + cur) + "\" placeholder=\"" + _sanitize.escape_html("" + placeholder) + "\" @input=\"" + hh + "\" />"
-        }
-        if err != null {
-            body = body + "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + err) + "</p>"
-        } else {
-            if hint != null {
-                body = body + "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>"
-            }
-        }
-        body = body + "</div>"
-        fi = fi + 1
-    }
-
-    let st = s.status
-    let msg = s.message
-    let msg_html = ""
-    if st == "saved" {
-        msg_html = "<p class=\"lmn-form-msg\" data-tone=\"success\">Saved.</p>"
-    } else {
-        if st == "error" and msg != null {
-            msg_html = "<p class=\"lmn-form-msg\" data-tone=\"danger\">" + _sanitize.escape_html("" + msg) + "</p>"
-        }
-    }
-
-    body = body + "<div class=\"lmn-form-actions\"><button class=\"lmn-btn\" data-variant=\"primary\" type=\"submit\">" + _sanitize.escape_html("" + submit_label) + "</button>" + msg_html + "</div>"
-    body = body + "</form>"
-    return lumen_render(body, {})
-}
-
 // ─── Pillar 4: typed URL / search state — parse the query into a typed struct,
 // serialize state back to a query string, and a hidden marker the client syncs
 // to the address bar. Codec handles space & = % # (v1). ───
 
+fn _lumen_hex_nibble(c) {
+    if c >= 48 and c <= 57 { return c - 48 }
+    if c >= 97 and c <= 102 { return c - 87 }
+    if c >= 65 and c <= 70 { return c - 55 }
+    return -1
+}
+
 fn _lumen_qs_decode(val) {
-    let out = ""
+    let out = []
     let i = 0
     let n = val.len()
     while i < n {
-        let c = val.substring(i, i + 1)
-        if c == "+" {
-            out = out + " "
+        let c = val.code_at(i)
+        if c == 43 {
+            out = out.push(32)
             i = i + 1
-        } else if c == "%" and i + 3 <= n {
-            let code = val.substring(i, i + 3)
-            if code == "%20" { out = out + " "; i = i + 3 }
-            else if code == "%26" { out = out + "&"; i = i + 3 }
-            else if code == "%3D" { out = out + "="; i = i + 3 }
-            else if code == "%25" { out = out + "%"; i = i + 3 }
-            else if code == "%23" { out = out + "#"; i = i + 3 }
-            else { out = out + c; i = i + 1 }
+        } else if c == 37 and i + 2 < n {
+            let hi = _lumen_hex_nibble(val.code_at(i + 1))
+            let lo = _lumen_hex_nibble(val.code_at(i + 2))
+            if hi >= 0 and lo >= 0 {
+                out = out.push(hi * 16 + lo)
+                i = i + 3
+            } else {
+                out = out.push(c)
+                i = i + 1
+            }
         } else {
-            out = out + c
+            out = out.push(c)
             i = i + 1
         }
     }
-    return out
+    return "".from_codes(out)
 }
 
 fn _lumen_qs_encode(v) {
     let out = ""
     let i = 0
     let n = v.len()
+    let hex = "0123456789ABCDEF"
     while i < n {
-        let c = v.substring(i, i + 1)
-        if c == "%" { out = out + "%25" }
-        else if c == " " { out = out + "%20" }
-        else if c == "&" { out = out + "%26" }
-        else if c == "=" { out = out + "%3D" }
-        else if c == "#" { out = out + "%23" }
-        else { out = out + c }
+        let code = v.code_at(i)
+        if (code >= 65 and code <= 90) or (code >= 97 and code <= 122) or
+           (code >= 48 and code <= 57) or code == 45 or code == 46 or
+           code == 95 or code == 126 {
+            out = out + v.substring(i, i + 1)
+        } else {
+            out = out + "%" + hex.substring(code / 16, code / 16 + 1) + hex.substring(code % 16, code % 16 + 1)
+        }
         i = i + 1
     }
     return out
@@ -2689,7 +1966,7 @@ fn _lumen_parse_query(raw) {
             val = pair.substring(eq + 1, pair.len())
         }
         if k != "" {
-            out_keys = out_keys.push(k)
+            out_keys = out_keys.push(_lumen_qs_decode(k))
             out_vals = out_vals.push(_lumen_qs_decode(val))
         }
         pi = pi + 1
@@ -2698,12 +1975,21 @@ fn _lumen_parse_query(raw) {
 }
 
 fn _lumen_coerce(rawv, typ) {
-    if typ == "int" or typ == "number" or typ == "bool" {
+    if typ == "string" { return rawv }
+    if typ == "bool" {
+        if rawv == "true" { return true }
+        if rawv == "false" { return false }
+        return null
+    }
+    if typ == "int" or typ == "number" {
         let r = null
         try { r = json_decode(rawv) } catch e { r = null }
-        return r
+        let actual = type_of(r)
+        if typ == "int" and actual == "int" { return r }
+        if typ == "number" and (actual == "int" or actual == "float") { return r }
+        return null
     }
-    return rawv
+    throw("Lumen search: unknown schema type '" + typ + "'")
 }
 
 // Parse + validate the request's query string into a typed struct.
@@ -2754,7 +2040,7 @@ fn lumen_search_to_qs(values) {
         let v = _validate.get_field(values, key)
         if v != null and ("" + v) != "" {
             if first { out = "?"; first = false } else { out = out + "&" }
-            out = out + key + "=" + _lumen_qs_encode("" + v)
+            out = out + _lumen_qs_encode(key) + "=" + _lumen_qs_encode("" + v)
         }
         ki = ki + 1
     }
@@ -2935,43 +2221,6 @@ fn lumen_broadcast_store(topic, initial) {
     return http.create_struct(["get", "set", "all"], [get, set, all])
 }
 
-// ─── Lumen form: validated form fields (Zod-style) ───
-// `lumen_form(field_schemas)` where field_schemas maps name -> validator.
-// Returns { validate(values) -> { ok, values, errors } }.
-//
-// Usage:
-//   let f = lumen_form(http.create_struct(["email"], [validate.str().is_email()]))
-//   let r = (f.validate)(form_values)
-//   if r.ok { ...save r.values... } else { state.errors = r.errors }
-//   template:  {{ errors.email }}
-fn lumen_form(field_schemas) {
-    let validate = |values| {
-        let schema_keys = _validate.get_keys(field_schemas)
-        let error_keys = []
-        let error_vals = []
-        let clean_keys = []
-        let clean_vals = []
-        for ki in 0..schema_keys.len() {
-            let key = schema_keys[ki]
-            let validator = _validate.get_field(field_schemas, key)
-            let val = _validate.get_field(values, key)
-            let res = _validate_parse(validator, val)
-            if res.success {
-                clean_keys = clean_keys.push(key)
-                clean_vals = clean_vals.push(res.data)
-            } else {
-                error_keys = error_keys.push(key)
-                error_vals = error_vals.push(res.error)
-            }
-        }
-        let ok = error_keys.len() == 0
-        let clean_struct = http.create_struct(clean_keys, clean_vals)
-        let errors_struct = http.create_struct(error_keys, error_vals)
-        return http.create_struct(["ok","values","errors"], [ok, clean_struct, errors_struct])
-    }
-    return http.create_struct(["validate"], [validate])
-}
-
 // ─── Lumen M2 — live layer (server-driven interactivity) ───
 //
 // Build a component struct from its three plain-Varian pieces:
@@ -3042,6 +2291,299 @@ fn lumen_test_count(html, substr) {
     return count
 }
 
+// Emit a browser-native document hint. This requires no Lumen client action;
+// the browser may fetch the destination when it has spare capacity.
+fn lumen_prefetch(href) {
+    let url = "" + href
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw "lumen_prefetch: href must be a non-empty URL without control characters"
+    }
+    return "<link rel=\"prefetch\" as=\"document\" href=\"" + _sanitize.escape_html(url) + "\">"
+}
+
+// Mark an ordinary anchor for intent prefetch. Navigation remains native and
+// works without JavaScript; only the small prefetch action is conditionally emitted.
+fn lumen_prefetch_link(href, content) {
+    let url = "" + href
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw "lumen_prefetch_link: href must be a non-empty URL without control characters"
+    }
+    return "<a href=\"" + _sanitize.escape_html(url) + "\" data-lumen-prefetch>" + content + "</a>"
+}
+
+// Enable browser-native same-origin cross-document view transitions. Browsers
+// without the feature keep normal navigation, and reduced-motion users get no
+// generated transition animation. This emits CSS only and adds zero JS.
+fn lumen_view_transitions() {
+    return "<style>@view-transition \{ navigation: auto; \}" +
+           "@media (prefers-reduced-motion: reduce) \{::view-transition-group(*) \{ animation-duration: 0s; \}\}</style>"
+}
+
+fn _lumen_view_transition_name(name) {
+    let value = "" + name
+    if value == "" { throw "lumen_view_transition: name must not be empty" }
+    let first = value.substring(0, 1)
+    let initial = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_-"
+    let rest = initial + "0123456789"
+    if initial.index_of(first) < 0 { throw "lumen_view_transition: name must be a CSS identifier" }
+    for i in 1..value.len() {
+        if rest.index_of(value.substring(i, i + 1)) < 0 {
+            throw "lumen_view_transition: name must be a CSS identifier"
+        }
+    }
+    return value
+}
+
+// Give corresponding elements on two documents the same native transition name.
+fn lumen_view_transition(name, content) {
+    let safe_name = _lumen_view_transition_name(name)
+    return "<div style=\"view-transition-name:" + safe_name + "\">" + content + "</div>"
+}
+
+fn _lumen_locale_match(tag, supported) {
+    if tag == null { return null }
+    let wanted = _sanitize.trim("" + tag).lower()
+    if wanted == "" or wanted == "*" { return null }
+    for i in 0..supported.len() {
+        if ("" + supported[i]).lower() == wanted { return supported[i] }
+    }
+    let dash = wanted.index_of("-")
+    let base = wanted
+    if dash >= 0 { base = wanted.substring(0, dash) }
+    for i in 0..supported.len() {
+        let candidate = ("" + supported[i]).lower()
+        if candidate == base or candidate.starts_with(base + "-") { return supported[i] }
+    }
+    return null
+}
+
+fn _lumen_accept_language(raw, supported) {
+    if raw == null or raw == "" { return null }
+    let choices = ("" + raw).split(",")
+    let selected = null
+    let selected_q = -1.0
+    for i in 0..choices.len() {
+        let parts = choices[i].split(";")
+        let tag = _sanitize.trim(parts[0])
+        let quality = 1.0
+        for j in 1..parts.len() {
+            let option = _sanitize.trim(parts[j])
+            if option.starts_with("q=") {
+                try { quality = json_decode(option.substring(2, option.len())) } catch e { quality = 0.0 }
+                let quality_type = type_of(quality)
+                if (quality_type != "int" and quality_type != "float") or quality < 0 or quality > 1 {
+                    quality = 0.0
+                }
+            }
+        }
+        if quality > selected_q and quality > 0 {
+            let matched = _lumen_locale_match(tag, supported)
+            if matched != null { selected = matched; selected_q = quality }
+        }
+    }
+    return selected
+}
+
+// Resolve locale routing without browser state. Explicit /locale paths win,
+// then Accept-Language quality negotiation, then the configured fallback.
+// `path` is stripped of the locale prefix for application route matching.
+fn lumen_locale_route(req, supported, default_locale) {
+    if type_of(supported) != "array" or supported.len() == 0 {
+        throw "lumen_locale_route: supported must be a non-empty locale array"
+    }
+    if _lumen_locale_match(default_locale, supported) == null {
+        throw "lumen_locale_route: default locale must be supported"
+    }
+    let path = _validate.get_field(req, "path")
+    if path == null or path == "" { path = "/" }
+    let segments = path.split("/")
+    let explicit = null
+    if segments.len() > 1 { explicit = _lumen_locale_match(segments[1], supported) }
+    let locale = explicit
+    let source = "path"
+    let route_path = path
+    if explicit != null {
+        let cut = 1 + segments[1].len()
+        route_path = path.substring(cut, path.len())
+        if route_path == "" { route_path = "/" }
+    } else {
+        source = "header"
+        let headers = _validate.get_field(req, "headers")
+        let raw = null
+        if headers != null {
+            raw = _validate.get_field(headers, "accept_language")
+            if raw == null { raw = _validate.get_field(headers, "accept-language") }
+        }
+        locale = _lumen_accept_language(raw, supported)
+        if locale == null { locale = default_locale; source = "default" }
+    }
+    let canonical_path = "/" + locale
+    if route_path != "/" { canonical_path = canonical_path + route_path }
+    return http.create_struct(
+        ["locale", "path", "canonical_path", "prefixed", "source"],
+        [locale, route_path, canonical_path, explicit != null, source]
+    )
+}
+
+// Emit SEO alternate links for every locale plus x-default. Pure HTML, zero JS.
+fn lumen_locale_alternates(path, supported, default_locale) {
+    if _lumen_locale_match(default_locale, supported) == null {
+        throw "lumen_locale_alternates: default locale must be supported"
+    }
+    let route_path = "" + path
+    if route_path == "" { route_path = "/" }
+    if route_path.starts_with("/") == false { route_path = "/" + route_path }
+    let out = ""
+    for i in 0..supported.len() {
+        let locale = "" + supported[i]
+        let href = "/" + locale
+        if route_path != "/" { href = href + route_path }
+        out = out + "<link rel=\"alternate\" hreflang=\"" + _sanitize.escape_html(locale) + "\" href=\"" + _sanitize.escape_html(href) + "\">"
+    }
+    let fallback = "/" + default_locale
+    if route_path != "/" { fallback = fallback + route_path }
+    return out + "<link rel=\"alternate\" hreflang=\"x-default\" href=\"" + _sanitize.escape_html(fallback) + "\">"
+}
+
+fn _lumen_same_origin_path(value, label) {
+    let path = "" + value
+    if path == "" or path.starts_with("/") == false or path.starts_with("//") or
+       path.index_of("\r") >= 0 or path.index_of("\n") >= 0 {
+        throw("Lumen " + label + " must be an absolute same-origin path")
+    }
+    return path
+}
+
+// Opt into an already mounted Lumen service worker. Without this marker no
+// registration code ships and no worker is installed.
+fn lumen_offline(worker_path, scope) {
+    let worker = _lumen_same_origin_path(worker_path, "offline worker")
+    let worker_scope = _lumen_same_origin_path(scope, "offline scope")
+    return "<span hidden data-lumen-offline=\"" + _sanitize.escape_html(worker) +
+           "\" data-lumen-scope=\"" + _sanitize.escape_html(worker_scope) + "\"></span>"
+}
+
+fn _lumen_offline_worker_source(cache_name, assets, fallback) {
+    if type_of(assets) != "array" { throw "Lumen offline assets must be an array" }
+    let safe_assets = []
+    for i in 0..assets.len() {
+        let asset = _lumen_same_origin_path(assets[i], "offline asset")
+        if _lumen_list_has(safe_assets, asset) == false { safe_assets = safe_assets.push(asset) }
+    }
+    let safe_fallback = _lumen_same_origin_path(fallback, "offline fallback")
+    if _lumen_list_has(safe_assets, safe_fallback) == false { safe_assets = safe_assets.push(safe_fallback) }
+    let cache = "lumen:" + cache_name
+    return "const C=" + json_encode(cache) + ",A=" + json_encode(safe_assets) + ",F=" + json_encode(safe_fallback) + ";" +
+           "self.addEventListener('install',e=>e.waitUntil(caches.open(C).then(c=>c.addAll(A)).then(()=>self.skipWaiting())));" +
+           "self.addEventListener('activate',e=>e.waitUntil(caches.keys().then(a=>Promise.all(a.filter(k=>k.startsWith('lumen:')&&k!==C).map(k=>caches.delete(k)))).then(()=>self.clients.claim())));" +
+           "self.addEventListener('fetch',e=>\{let r=e.request;if(r.method!=='GET')return;if(r.mode==='navigate')e.respondWith(fetch(r).catch(()=>caches.match(F)));else e.respondWith(caches.match(r).then(x=>x||fetch(r)))\});"
+}
+
+// Mount a generated worker directly from Varian configuration—no generated
+// asset needs to be checked into the application repository.
+fn lumen_mount_offline(app, worker_path, cache_name, assets, fallback) {
+    let path = _lumen_same_origin_path(worker_path, "offline worker")
+    if cache_name == null or ("" + cache_name) == "" { throw "Lumen offline cache name must not be empty" }
+    let source = _lumen_offline_worker_source("" + cache_name, assets, fallback)
+    radix_insert(app.root, "GET" + path, |req| {
+        return http.create_struct(
+            ["status", "body", "content_type", "headers"],
+            [200, source, "application/javascript; charset=utf-8",
+             http.create_struct(["Cache-Control", "Service-Worker-Allowed"], ["no-cache", "/"])]
+        )
+    }, "Lumen offline service worker")
+    return path
+}
+
+fn _lumen_image_url(value, label) {
+    let url = "" + value
+    if url == "" or url.index_of("\r") >= 0 or url.index_of("\n") >= 0 {
+        throw("Lumen image " + label + " must be a non-empty URL without control characters")
+    }
+    return url
+}
+
+fn _lumen_image_srcset(candidates) {
+    if candidates == null { return "" }
+    if type_of(candidates) != "array" { throw "Lumen image srcset must be an array" }
+    let out = ""
+    let previous_width = 0
+    for i in 0..candidates.len() {
+        let candidate = candidates[i]
+        let width = _validate.get_field(candidate, "width")
+        if type_of(width) != "int" or width <= 0 or width <= previous_width {
+            throw "Lumen image srcset widths must be positive and strictly increasing"
+        }
+        let url = _lumen_image_url(_validate.get_field(candidate, "src"), "candidate")
+        if i > 0 { out = out + ", " }
+        out = out + _sanitize.escape_html(url) + " " + width + "w"
+        previous_width = width
+    }
+    return out
+}
+
+fn _lumen_image_tag(src, alt, opts) {
+    let url = _lumen_image_url(src, "source")
+    if type_of(alt) != "string" { throw "Lumen image alt text must be an explicit string" }
+    if opts == null { throw "Lumen image options are required" }
+    let width = _validate.get_field(opts, "width")
+    let height = _validate.get_field(opts, "height")
+    if type_of(width) != "int" or width <= 0 or type_of(height) != "int" or height <= 0 {
+        throw "Lumen images require positive integer width and height"
+    }
+    let loading = _validate.get_field(opts, "loading")
+    if loading == null { loading = "lazy" }
+    if loading != "lazy" and loading != "eager" { throw "Lumen image loading must be lazy or eager" }
+    let priority = _validate.get_field(opts, "fetchpriority")
+    if priority == null { priority = "auto" }
+    if priority != "auto" and priority != "high" and priority != "low" {
+        throw "Lumen image fetchpriority must be auto, high, or low"
+    }
+    if loading == "lazy" and priority == "high" {
+        throw "Lumen image cannot combine lazy loading with high fetch priority"
+    }
+    let sizes = _validate.get_field(opts, "sizes")
+    let srcset = _lumen_image_srcset(_validate.get_field(opts, "srcset"))
+    let responsive = ""
+    if srcset != "" { responsive = " srcset=\"" + srcset + "\"" }
+    if sizes != null and ("" + sizes) != "" {
+        if srcset == "" { throw "Lumen image sizes requires srcset" }
+        responsive = responsive + " sizes=\"" + _sanitize.escape_html("" + sizes) + "\""
+    }
+    return "<img src=\"" + _sanitize.escape_html(url) + "\" alt=\"" +
+           _sanitize.escape_html("" + alt) + "\" width=\"" + width + "\" height=\"" + height +
+           "\" loading=\"" + loading + "\" decoding=\"async\" fetchpriority=\"" + priority + "\"" + responsive + ">"
+}
+
+// Render a layout-stable responsive image using browser-native selection only.
+fn lumen_image(src, alt, opts) {
+    return _lumen_image_tag(src, alt, opts)
+}
+
+// Render ordered modern-format sources followed by the required fallback image.
+// opts.sources = [{ type: "image/avif", srcset: [{src,width}, ...] }, ...]
+fn lumen_picture(src, alt, opts) {
+    let sources = _validate.get_field(opts, "sources")
+    if sources == null or type_of(sources) != "array" or sources.len() == 0 {
+        throw "Lumen picture sources must be a non-empty array"
+    }
+    let html = "<picture>"
+    for i in 0..sources.len() {
+        let source = sources[i]
+        let media_type = _validate.get_field(source, "type")
+        if media_type != "image/avif" and media_type != "image/webp" and media_type != "image/jpeg" and media_type != "image/png" {
+            throw "Lumen picture source type is not supported"
+        }
+        let srcset = _lumen_image_srcset(_validate.get_field(source, "srcset"))
+        if srcset == "" { throw "Lumen picture source srcset must not be empty" }
+        html = html + "<source type=\"" + media_type + "\" srcset=\"" + srcset + "\""
+        let sizes = _validate.get_field(opts, "sizes")
+        if sizes != null and ("" + sizes) != "" { html = html + " sizes=\"" + _sanitize.escape_html("" + sizes) + "\"" }
+        html = html + ">"
+    }
+    return html + _lumen_image_tag(src, alt, opts) + "</picture>"
+}
+
 fn lumen_test_render_response(comp, state) {
     return lumen_render_response((comp.render_fn)(state), state)
 }
@@ -3107,6 +2649,274 @@ fn _lumen_get_loading_for_path(path) {
     return loading
 }
 
+fn _lumen_get_error_for_path(path) {
+    let segs = path.split("/")
+    let boundary = _lumen_get_component("Error")
+    let prefix = ""
+    for i in 0..segs.len() {
+        let seg = segs[i]
+        if seg != "" {
+            let clean = seg
+            if seg.starts_with(":") { clean = seg.substring(1, seg.len()) }
+            prefix = prefix + _lumen_pascal(clean)
+            let candidate = _lumen_get_component(prefix + "Error")
+            if candidate != null { boundary = candidate }
+        }
+    }
+    return boundary
+}
+
+fn _lumen_apply_layouts(path, state, inner) {
+    let html = inner
+    let layouts = _lumen_get_layouts_for_path(path)
+    for i in 0..layouts.len() {
+        let idx = layouts.len() - 1 - i
+        let lay = layouts[idx]
+        let lay_state = state
+        if lay.state_fn != null {
+            let defaults = (lay.state_fn)()
+            let keys = _validate.get_keys(defaults)
+            for j in 0..keys.len() {
+                let key = keys[j]
+                if _validate.get_field(lay_state, key) == null {
+                    lay_state = _lumen_with_field(lay_state, key, _validate.get_field(defaults, key))
+                }
+            }
+        }
+        lay_state = _lumen_with_field(lay_state, "children", html)
+        html = (lay.render_fn)(lay_state)
+    }
+    return html
+}
+
+// Explicit server-loader result. Plain structs remain valid loader data; use
+// this wrapper only when the loader also wants to declare invalidation keys.
+// The private marker avoids reserving ordinary application field names.
+fn lumen_load(data, dependencies) {
+    if data == null { data = http.create_struct([], []) }
+    if dependencies == null { dependencies = [] }
+    if type_of(data) != "struct" { throw("Lumen load data must be a struct") }
+    if type_of(dependencies) != "array" and type_of(dependencies) != "tuple" {
+        throw("Lumen load dependencies must be an array")
+    }
+    let clean = []
+    for i in 0..dependencies.len() {
+        let key = dependencies[i]
+        if type_of(key) != "string" or key == "" { throw("Lumen load dependency keys must be non-empty strings") }
+        if _lumen_list_has(clean, key) == false { clean = clean.push(key) }
+    }
+    return http.create_struct(["_lumen_load_result", "data", "dependencies"], [true, data, clean])
+}
+
+fn lumen_redirect(location, status) {
+    if type_of(location) != "string" or location == "" or location.index_of("\r") >= 0 or location.index_of("\n") >= 0 {
+        throw("Lumen redirect location must be non-empty and contain no newlines")
+    }
+    if status != 301 and status != 302 and status != 303 and status != 307 and status != 308 {
+        throw("Lumen redirect status must be 301, 302, 303, 307, or 308")
+    }
+    return http.create_struct(["_lumen_redirect", "location", "status"], [true, location, status])
+}
+
+fn _lumen_loader_result(value) {
+    if value == null { return http.create_struct(["data", "dependencies"], [http.create_struct([], []), []]) }
+    if type_of(value) != "struct" { throw("Lumen load handlers must return a struct or lumen_load(...)") }
+    if _validate.get_field(value, "_lumen_redirect") == true {
+        return http.create_struct(["data", "dependencies", "redirect"], [http.create_struct([], []), [], value])
+    }
+    if _validate.get_field(value, "_lumen_load_result") == true {
+        return http.create_struct(
+            ["data", "dependencies", "redirect"],
+            [_validate.get_field(value, "data"), _validate.get_field(value, "dependencies"), null]
+        )
+    }
+    return http.create_struct(["data", "dependencies", "redirect"], [value, [], null])
+}
+
+fn _lumen_merge_loader_data(state, data) {
+    if data == null { return state }
+    if type_of(data) != "struct" { throw("Lumen load data must be a struct") }
+    let keys = _validate.get_keys(data)
+    for i in 0..keys.len() {
+        state = _lumen_with_field(state, keys[i], _validate.get_field(data, keys[i]))
+    }
+    return state
+}
+
+fn _lumen_loader_request(req, data, dependencies) {
+    let context = _validate.get_field(req, "context")
+    if context == null { context = http.create_struct([], []) }
+    context = context.set("lumen_data", data)
+    context = context.set("lumen_dependencies", dependencies)
+    return req.set("context", context)
+}
+
+fn lumen_parent_data(req) {
+    let context = _validate.get_field(req, "context")
+    if context == null { return http.create_struct([], []) }
+    let data = _validate.get_field(context, "lumen_data")
+    if data == null { return http.create_struct([], []) }
+    return data
+}
+
+fn lumen_load_dependencies(req) {
+    let context = _validate.get_field(req, "context")
+    if context == null { return [] }
+    let dependencies = _validate.get_field(context, "lumen_dependencies")
+    if dependencies == null { return [] }
+    return dependencies
+}
+
+// Ordered, server-native HTML streaming. String chunks flush immediately;
+// function/closure chunks are invoked only when the stream reaches them, so
+// earlier markup reaches the browser while later server work is still
+// pending. No browser JavaScript is emitted by this primitive.
+fn _lumen_validate_stream_chunks(chunks) {
+    let kind = type_of(chunks)
+    if kind != "array" and kind != "tuple" { throw("Lumen stream chunks must be an array") }
+    for i in 0..chunks.len() {
+        let chunk_kind = type_of(chunks[i])
+        let is_deferred = chunk_kind == "struct" and _validate.get_field(chunks[i], "_lumen_deferred") == true
+        if chunk_kind != "string" and chunk_kind != "function" and chunk_kind != "closure" and is_deferred == false {
+            throw("Lumen stream chunks must be strings, zero-argument functions, or lumen_defer boundaries")
+        }
+    }
+    return chunks
+}
+
+fn _lumen_defer_id_valid(id) {
+    if type_of(id) != "string" or id == "" or id.len() > 96 { return false }
+    let allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.:"
+    for i in 0..id.len() {
+        if allowed.index_of(id.substring(i, i + 1)) < 0 { return false }
+    }
+    return true
+}
+
+fn lumen_defer(id, fallback_html, resolver, error_html) {
+    if _lumen_defer_id_valid(id) == false { throw("Lumen deferred boundary id is invalid") }
+    if type_of(fallback_html) != "string" { throw("Lumen deferred fallback must be HTML text") }
+    if error_html != null and type_of(error_html) != "string" { throw("Lumen deferred error fallback must be HTML text") }
+    let resolver_kind = type_of(resolver)
+    if resolver_kind != "function" and resolver_kind != "closure" { throw("Lumen deferred resolver must be a function") }
+    return http.create_struct(
+        ["_lumen_deferred", "id", "fallback", "resolve", "error"],
+        [true, id, fallback_html, resolver, error_html]
+    )
+}
+
+fn _lumen_stream_document_tail_index(html) {
+    let body = html.index_of("</body>")
+    let doc = html.index_of("</html>")
+    if body >= 0 and doc >= 0 and doc < body { return doc }
+    if body >= 0 { return body }
+    return doc
+}
+
+fn lumen_stream_html(chunks, headers) {
+    chunks = _lumen_validate_stream_chunks(chunks)
+    if headers == null { headers = http.create_struct([], []) }
+    if type_of(headers) != "struct" { throw("Lumen stream headers must be a struct") }
+    return stream_response(200, "text/html; charset=utf-8", headers, |stream| {
+        let deferred = []
+        let defer_runtime_sent = false
+        let document_tail = ""
+        for i in 0..chunks.len() {
+            let chunk = chunks[i]
+            if type_of(chunk) == "struct" and _validate.get_field(chunk, "_lumen_deferred") == true {
+                if defer_runtime_sent == false {
+                    stream = stream.write("<script>" + _lumen_module("defer") + "</script>")
+                    defer_runtime_sent = true
+                }
+                let id = _validate.get_field(chunk, "id")
+                stream = stream.write("<lumen-defer data-lumen-defer=\"" + _sanitize.escape_html(id) + "\" aria-busy=\"true\" style=\"display:contents\">" + _validate.get_field(chunk, "fallback") + "</lumen-defer>")
+                deferred = deferred.push(chunk)
+            } else {
+                if type_of(chunk) != "string" { chunk = chunk() }
+                if type_of(chunk) != "string" { throw("Lumen stream functions must return strings") }
+                if i == chunks.len() - 1 {
+                    let tail_at = _lumen_stream_document_tail_index(chunk)
+                    if tail_at >= 0 {
+                        document_tail = chunk.substring(tail_at, chunk.len())
+                        chunk = chunk.substring(0, tail_at)
+                    }
+                }
+                stream = stream.write(chunk)
+            }
+        }
+        for i in 0..deferred.len() {
+            let boundary = deferred[i]
+            let resolved = null
+            try { resolved = (_validate.get_field(boundary, "resolve"))() } catch e {
+                resolved = _validate.get_field(boundary, "error")
+            }
+            if resolved != null {
+                if type_of(resolved) != "string" { throw("Lumen deferred resolvers must return HTML text") }
+                stream = stream.write("<template data-lumen-defer-result=\"" + _sanitize.escape_html(_validate.get_field(boundary, "id")) + "\">" + resolved + "</template>")
+            } else {
+                stream = stream.write("<template data-lumen-defer-result=\"" + _sanitize.escape_html(_validate.get_field(boundary, "id")) + "\" data-lumen-defer-keep></template>")
+            }
+        }
+        if document_tail != "" { stream = stream.write(document_tail) }
+        return stream
+    })
+}
+
+fn _lumen_run_loader(component, req, state, dependencies) {
+    let loader = _lumen_handler(component, "load")
+    if loader == null { return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, null]) }
+    let result = _lumen_loader_result(loader(_lumen_loader_request(req, state, dependencies)))
+    if _validate.get_field(result, "redirect") != null {
+        return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, result.redirect])
+    }
+    state = _lumen_merge_loader_data(state, result.data)
+    for i in 0..result.dependencies.len() {
+        let key = result.dependencies[i]
+        if _lumen_list_has(dependencies, key) == false { dependencies = dependencies.push(key) }
+    }
+    return http.create_struct(["state", "dependencies", "redirect"], [state, dependencies, null])
+}
+
+fn _lumen_render_route(component, state, path, req) {
+    try {
+        let dependencies = []
+        let layouts = _lumen_get_layouts_for_path(path)
+        for i in 0..layouts.len() {
+            let loaded = _lumen_run_loader(layouts[i], req, state, dependencies)
+            state = loaded.state
+            dependencies = loaded.dependencies
+            if loaded.redirect != null {
+                return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, "", null, dependencies, loaded.redirect])
+            }
+        }
+        let loaded = _lumen_run_loader(component, req, state, dependencies)
+        state = loaded.state
+        dependencies = loaded.dependencies
+        if loaded.redirect != null {
+            return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, "", null, dependencies, loaded.redirect])
+        }
+        _lumen_active_child_states = {}
+        let html = (component.render_fn)(state)
+        return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, _lumen_apply_layouts(path, state, html), null, dependencies, null])
+    } catch e {
+        let boundary = _lumen_get_error_for_path(path)
+        if boundary == null { throw(e) }
+        let error_state = http.create_struct([], [])
+        if boundary.state_fn != null { error_state = (boundary.state_fn)() }
+        error_state = _lumen_with_field(error_state, "error", _lumen_error_msg(e))
+        error_state = _lumen_with_field(error_state, "status", 500)
+        let html = (boundary.render_fn)(error_state)
+        return http.create_struct(["state", "html", "error", "dependencies", "redirect"], [state, _lumen_apply_layouts(path, state, html), "" + e, [], null])
+    }
+}
+
+fn _lumen_redirect_response(redirect) {
+    return http.create_struct(
+        ["status", "body", "content_type", "headers"],
+        [redirect.status, "", "text/plain", http.create_struct(["Location"], [redirect.location])]
+    )
+}
+
 fn lumen_mount(app, path, component) {
     let ws_path = path + "/live"
     if path == "/" { ws_path = "/live" }
@@ -3121,38 +2931,10 @@ fn lumen_mount(app, path, component) {
     }
     let page = |req| {
         let state = (component.state_fn)()
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3165,9 +2947,12 @@ fn lumen_mount(app, path, component) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
@@ -3197,38 +2982,10 @@ fn lumen_mount_dynamic(app, path, component, param) {
         if pval != null {
             state = _lumen_with_field(state, param, pval)
         }
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3241,9 +2998,12 @@ fn lumen_mount_dynamic(app, path, component, param) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
@@ -3269,38 +3029,10 @@ fn lumen_mount_data(app, path, component, provider) {
     }
     let page = |req| {
         let state = (provider)(req)
-        let loader = _lumen_handler(component, "load")
-        if loader != null {
-            let loaded = loader(req)
-            if loaded != null {
-                let lkeys = _validate.get_keys(loaded)
-                for lk in 0..lkeys.len() {
-                    let k = lkeys[lk]
-                    state = _lumen_with_field(state, k, _validate.get_field(loaded, k))
-                }
-            }
-        }
-        _lumen_active_child_states = {}
-        let inner = (component.render_fn)(state)
-        let html = inner
-        let layouts = _lumen_get_layouts_for_path(path)
-        for i in 0..layouts.len() {
-            let idx = layouts.len() - 1 - i
-            let lay = layouts[idx]
-            let lay_state = state
-            if lay.state_fn != null {
-                let defaults = (lay.state_fn)()
-                let def_keys = _validate.get_keys(defaults)
-                for dk in 0..def_keys.len() {
-                    let k = def_keys[dk]
-                    if _validate.get_field(lay_state, k) == null {
-                        lay_state = _lumen_with_field(lay_state, k, _validate.get_field(defaults, k))
-                    }
-                }
-            }
-            lay_state = _lumen_with_field(lay_state, "children", html)
-            html = (lay.render_fn)(lay_state)
-        }
+        let rendered = _lumen_render_route(component, state, path, req)
+        if rendered.redirect != null { return _lumen_redirect_response(rendered.redirect) }
+        state = rendered.state
+        let html = rendered.html
         let loading = _lumen_get_loading_for_path(path)
         let loading_html = ""
         if loading != null {
@@ -3313,9 +3045,12 @@ fn lumen_mount_data(app, path, component, provider) {
         if body_end_idx >= 0 {
             full_html = full_html.substring(0, body_end_idx) + hydrate_script + full_html.substring(body_end_idx, full_html.len())
         }
-        return http.create_struct(["status","body","content_type"], [200, full_html, "text/html"])
+        let response_status = 200
+        if rendered.error != null { response_status = 500 }
+        return http.create_struct(["status","body","content_type"], [response_status, full_html, "text/html"])
     }
     let live = |req| {
+        if _lumen_live_origin_allowed(req) == false { return _lumen_live_origin_error() }
         let ws = upgrade_websocket(req)
         if ws == null {
             return http.create_struct(["status","body","content_type"], [400, "bad ws", "text/plain"])
@@ -3508,6 +3243,7 @@ fn _lumen_live_loop(ws, component, provider, req) {
     if _devon { __lumen_log_start() }
     let state = null
 
+    let pending_event = null
     let init_msg = ""
     let read_attempts = 0
     while init_msg == "" and read_attempts < 200 {
@@ -3519,8 +3255,12 @@ fn _lumen_live_loop(ws, component, provider, req) {
     }
     if init_msg != null and init_msg != "" {
         let init_ev = json_decode(init_msg)
-        if init_ev != null and _validate.get_field(init_ev, "t") == "init" {
-            state = _validate.get_field(init_ev, "state")
+        if init_ev != null {
+            if _validate.get_field(init_ev, "t") == "init" {
+                state = _validate.get_field(init_ev, "state")
+            } else {
+                pending_event = init_msg
+            }
         }
     }
 
@@ -3568,10 +3308,16 @@ fn _lumen_live_loop(ws, component, provider, req) {
     _lumen_active_connections = _lumen_active_connections.push(conn_info)
     lumen_presence_join(topic, user_id, meta)
 
-    let prev = _initial
+    let prev = null
     let alive = true
     while alive {
-        let msg = ws.read()
+        let msg = null
+        if pending_event != null {
+            msg = pending_event
+            pending_event = null
+        } else {
+            msg = ws.read()
+        }
         if msg == null {
             alive = false
         } else if msg != "" {
@@ -3681,8 +3427,7 @@ fn _lumen_head() {
                "<link rel=\"manifest\" href=\"/manifest.json\">" +
                "<link rel=\"stylesheet\" href=\"https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap\">" +
                "<script>!function()\{var d=document.documentElement,t=localStorage.getItem('lumen-theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme: dark)').matches))d.classList.add('dark')\}();</script>" +
-"<style>:root\{--lumen-bg:#09090b;--lumen-fg:#fafafa;--lumen-muted:#a1a1aa;--lumen-primary:#4FACFE;--lumen-primary-fg:#09090b;--lumen-primary-hover:#7fc4fe;--lumen-surface:#131316;--lumen-surface-2:#1c1c20;--lumen-border:#232327;--lumen-radius:12px;--lumen-shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px -12px rgba(0,0,0,.5);--lumen-font:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;--lumen-mono:ui-monospace,SFMono-Regular,\"JetBrains Mono\",Menlo,monospace;--hue-aurora-1:#4FACFE;--hue-aurora-2:#00F2FE;--hue-zenith:#5b9cff;--hue-lumen:#f5b829;--hue-kiln:#f97316;--hue-constellation:#a78bfa\}" +
-                ":root.dark\{--lumen-bg:#FBFCFF;--lumen-fg:#0B1020;--lumen-muted:#71717a;--lumen-surface:#ffffff;--lumen-surface-2:#f1f5f9;--lumen-border:#e2e8f0\}" +
+"<style>:root\{--lumen-bg:#030d1a;--lumen-fg:#f0f6ff;--lumen-muted:#94a3b8;--lumen-primary:#3b82f6;--lumen-primary-fg:#030d1a;--lumen-primary-hover:#2563eb;--lumen-surface:#0d1c2d;--lumen-surface-2:#122131;--lumen-border:#1e3347;--lumen-radius:12px;--lumen-shadow:0 1px 2px rgba(0,0,0,.5),0 12px 28px -12px rgba(0,0,0,.7);--lumen-font:\"Inter\",\"Plus Jakarta Sans\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;--lumen-mono:ui-monospace,SFMono-Regular,\"JetBrains Mono\",Menlo,monospace;--hue-aurora-1:#3b82f6;--hue-aurora-2:#1d4ed8;--hue-zenith:#5b9cff;--hue-lumen:#f5b829;--hue-kiln:#f97316;--hue-constellation:#a78bfa\}" +
                "html\{font-family:var(--lumen-font);-webkit-font-smoothing:antialiased\}" +
                "body\{margin:0;background:var(--lumen-bg);color:var(--lumen-fg);transition:background 0.3s ease,color 0.3s ease\}</style>"
     let custom = _lumen_custom_head
@@ -3692,653 +3437,6 @@ fn _lumen_head() {
     return base
 }
 
-// ═══════════════════════════════════════════════════════════════════════════
-//  Lumen UI — the built-in component vocabulary (the framework's "identity")
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// These ship with Lumen and are registered at load time, so any template can
-// compose with <Page>, <Stack>, <Grid>, <Card>, <Heading>, <Button>, ... the
-// same way it nests user components. They are *presentational* (stateless):
-// props arrive as tag attributes, children as the slot. Everything is driven by
-// the design tokens in _lumen_design_css() so light/dark + brand are automatic.
-// A page wrapped in <Page> reads like Lumen, not like raw HTML with inline CSS.
-
-// Safe prop read: missing attrs return the default instead of erroring.
-fn _ui_prop(s, key, dflt) {
-    let v = _validate.get_field(s, key)
-    if v == null { return dflt }
-    return v
-}
-
-// Slot content for a paired tag; "" when self-closing / empty.
-fn _ui_slot(s) {
-    let c = _validate.get_field(s, "children")
-    if c == null { return "" }
-    return c
-}
-
-// True when a bare boolean-style attr is present and not "false"/"0".
-fn _ui_flag(s, key) {
-    let v = _validate.get_field(s, key)
-    if v == null { return false }
-    if v == "false" or v == "0" or v == "no" { return false }
-    return true
-}
-
-// 0.25rem spacing scale (Tailwind-ish), resolved to an explicit rem so it works
-// even on a page that never pulled in the token stylesheet.
-fn _ui_space(v) {
-    if v == "0" { return "0" }
-    if v == "1" { return "0.25rem" }
-    if v == "2" { return "0.5rem" }
-    if v == "3" { return "0.75rem" }
-    if v == "4" { return "1rem" }
-    if v == "5" { return "1.25rem" }
-    if v == "6" { return "1.5rem" }
-    if v == "8" { return "2rem" }
-    if v == "10" { return "2.5rem" }
-    if v == "12" { return "3rem" }
-    if v == "16" { return "4rem" }
-    if v == "20" { return "5rem" }
-    if v == "24" { return "6rem" }
-    if v == "32" { return "8rem" }
-    return "1rem"
-}
-
-// Heading scale → font-size.
-fn _ui_font(v) {
-    if v == "xs"   { return "0.75rem" }
-    if v == "sm"   { return "0.875rem" }
-    if v == "base" { return "1rem" }
-    if v == "lg"   { return "1.125rem" }
-    if v == "xl"   { return "1.25rem" }
-    if v == "2xl"  { return "1.5rem" }
-    if v == "3xl"  { return "1.875rem" }
-    if v == "4xl"  { return "2.25rem" }
-    if v == "5xl"  { return "3rem" }
-    if v == "6xl"  { return "3.75rem" }
-    return "1rem"
-}
-
-// Border-radius scale
-fn _ui_radius(v) {
-    if v == "none" { return "0" }
-    if v == "sm"   { return "8px" }
-    if v == "md"   { return "var(--lumen-radius)" }
-    if v == "lg"   { return "16px" }
-    if v == "full" { return "999px" }
-    return "var(--lumen-radius)"
-}
-
-// Flex align-items: short word -> CSS value
-fn _ui_align(v) {
-    if v == "start"   { return "flex-start" }
-    if v == "center"  { return "center" }
-    if v == "end"     { return "flex-end" }
-    if v == "stretch" { return "stretch" }
-    return "stretch"
-}
-
-// Flex justify-content: short word -> CSS value
-fn _ui_justify(v) {
-    if v == "start"   { return "flex-start" }
-    if v == "center"  { return "center" }
-    if v == "end"     { return "flex-end" }
-    if v == "between" { return "space-between" }
-    if v == "around"  { return "space-around" }
-    return "flex-start"
-}
-
-// Background surface token -> CSS background value
-fn _ui_bg(v) {
-    if v == "surface"   { return "var(--lumen-surface)" }
-    if v == "surface-2" { return "var(--lumen-surface-2)" }
-    if v == "muted"     { return "var(--lumen-muted)" }
-    if v == "primary"   { return "var(--lumen-primary)" }
-    return ""
-}
-
-// Tone -> "color:…;background:…;" declaration string
-fn _ui_tone(v) {
-    if v == "default" { return "color:var(--lumen-fg);background:transparent" }
-    if v == "muted"   { return "color:var(--lumen-muted-fg);background:var(--lumen-surface-2)" }
-    if v == "primary" { return "color:var(--lumen-primary-fg);background:var(--lumen-primary)" }
-    if v == "success" { return "color:#0b7a52;background:var(--lumen-success-bg)" }
-    if v == "danger"  { return "color:#b42318;background:var(--lumen-danger-bg)" }
-    if v == "info"    { return "color:#1d4ed8;background:var(--lumen-info-bg)" }
-    return ""
-}
-
-// Container width scale (reuses .lmn-container max-widths)
-fn _ui_width(v) {
-    if v == "sm"   { return "640px" }
-    if v == "md"   { return "820px" }
-    if v == "lg"   { return "1040px" }
-    if v == "xl"   { return "1280px" }
-    if v == "full" { return "100%" }
-    return ""
-}
-
-// ─── Shared style-prop vocabulary (Part B of Lumen vocab spec) ───
-// Every built-in component accepts these via _ui_style_props(s):
-//   pad/padx/pady → padding variants          (space scale, _ui_space)
-//   m/mx/my/mt/mb → margin variants            (space scale)
-//   gap           → gap                        (space scale)
-//   align         → align-items                (start/center/end/stretch)
-//   justify       → justify-content            (start/center/end/between/around)
-//   w/maxw        → width/max-width            (sm/md/lg/xl/full)
-//   bg            → background                 (surface/surface-2/muted/primary)
-//   tone          → color + background pair    (default/muted/primary/success/danger/info)
-//   radius        → border-radius              (none/sm/md/lg/full)
-//   shadow        → box-shadow                 (flag)
-//   border        → 1px solid var(--lumen-border) (flag)
-fn _ui_style_props(s) {
-    let d = ""
-    let pad  = _validate.get_field(s, "pad");  if pad  != null { d = d + "padding:" + _ui_space(pad) + ";" }
-    let px   = _validate.get_field(s, "padx"); if px   != null { d = d + "padding-inline:" + _ui_space(px) + ";" }
-    let py   = _validate.get_field(s, "pady"); if py   != null { d = d + "padding-block:" + _ui_space(py) + ";" }
-    let m    = _validate.get_field(s, "m");    if m    != null { d = d + "margin:" + _ui_space(m) + ";" }
-    let mx   = _validate.get_field(s, "mx");   if mx   != null { d = d + "margin-inline:" + _ui_space(mx) + ";" }
-    let my   = _validate.get_field(s, "my");   if my   != null { d = d + "margin-block:" + _ui_space(my) + ";" }
-    let mt   = _validate.get_field(s, "mt");   if mt   != null { d = d + "margin-top:" + _ui_space(mt) + ";" }
-    let mb   = _validate.get_field(s, "mb");   if mb   != null { d = d + "margin-bottom:" + _ui_space(mb) + ";" }
-    let gap_v = _validate.get_field(s, "gap");   if gap_v   != null { d = d + "gap:" + _ui_space(gap_v) + ";" }
-    let align_v = _validate.get_field(s, "align");   if align_v   != null { d = d + "align-items:" + _ui_align(align_v) + ";" }
-    let justify_v = _validate.get_field(s, "justify");   if justify_v   != null { d = d + "justify-content:" + _ui_justify(justify_v) + ";" }
-    let w_v  = _validate.get_field(s, "w");      if w_v     != null { d = d + "width:" + _ui_width(w_v) + ";" }
-    let mw_v = _validate.get_field(s, "maxw");    if mw_v    != null { d = d + "max-width:" + _ui_width(mw_v) + ";" }
-    let bg_v = _validate.get_field(s, "bg");      if bg_v    != null { d = d + "background:" + _ui_bg(bg_v) + ";" }
-    let tone_v = _validate.get_field(s, "tone");   if tone_v  != null { d = d + _ui_tone(tone_v) + ";" }
-    let rad_v = _validate.get_field(s, "radius");  if rad_v   != null { d = d + "border-radius:" + _ui_radius(rad_v) + ";" }
-    if _ui_flag(s, "shadow") { d = d + "box-shadow:var(--lumen-shadow);" }
-    if _ui_flag(s, "border") { d = d + "border:1px solid var(--lumen-border);" }
-    return d
-}
-
-// Make a stateless built-in component from a render fn.
-fn _ui_component(render_fn) {
-    return lumen_component(| | { return {} }, render_fn, [], [])
-}
-
-// The Lumen design system: self-contained tokens (so it stands alone on a
-// static page) + a small, opinionated set of component classes. Emitted once by
-// <Page> and also folded into the live shell <head>. Brand = amber #f5b829,
-// dark-native, Degular via the page's own font link.
-fn _lumen_design_css() {
-    return "<style id=\"lumen-ui\">" +
-        ":root\{--lumen-bg:#09090b;--lumen-fg:#fafafa;--lumen-muted:#a1a1aa;--lumen-primary:#4FACFE;--lumen-primary-fg:#09090b;--lumen-primary-hover:#7fc4fe;--lumen-surface:#131316;--lumen-surface-2:#1c1c20;--lumen-border:#232327;--lumen-radius:12px;--lumen-shadow:0 1px 2px rgba(0,0,0,.3),0 12px 28px -12px rgba(0,0,0,.5);--lumen-font:\"Plus Jakarta Sans\",ui-sans-serif,system-ui,-apple-system,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif;--lumen-mono:ui-monospace,SFMono-Regular,\"JetBrains Mono\",Menlo,monospace;--hue-aurora-1:#4FACFE;--hue-aurora-2:#00F2FE;--hue-zenith:#5b9cff;--hue-lumen:#f5b829;--hue-kiln:#f97316;--hue-constellation:#a78bfa\}" +
-        ":root.dark\{--lumen-bg:#FBFCFF;--lumen-fg:#0B1020;--lumen-muted:#71717a;--lumen-surface:#ffffff;--lumen-surface-2:#f1f5f9;--lumen-border:#e2e8f0\}" +
-        ".lmn-app\{font-family:var(--lumen-font);color:var(--lumen-fg);background:var(--lumen-bg);-webkit-font-smoothing:antialiased;line-height:1.55\}" +
-        ".lmn-container\{width:100%;margin-inline:auto;padding-inline:1.25rem;box-sizing:border-box\}" +
-        ".lmn-container[data-size=sm]\{max-width:640px\}.lmn-container[data-size=md]\{max-width:820px\}.lmn-container[data-size=lg]\{max-width:1040px\}.lmn-container[data-size=xl]\{max-width:1280px\}.lmn-container[data-size=full]\{max-width:none\}" +
-        ".lmn-section\{padding-block:5rem\}.lmn-section[data-border=true]\{border-top:1px solid var(--lumen-border)\}" +
-        ".lmn-stack\{display:flex;flex-direction:column\}.lmn-row\{display:flex;flex-direction:row;align-items:center}.lmn-row[data-wrap=true]\{flex-wrap:wrap\}" +
-        ".lmn-grid\{display:grid;grid-template-columns:repeat(var(--lumen-cols,3),minmax(0,1fr))\}@media(max-width:760px)\{.lmn-grid\{grid-template-columns:1fr\}\}" +
-        ".lmn-card\{background:var(--lumen-surface);border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);box-shadow:var(--lumen-shadow);padding:1.5rem\}" +
-        ".lmn-h\{font-family:var(--lumen-font);font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0\}" +
-        ".lmn-text\{margin:0;color:var(--lumen-fg)\}.lmn-text[data-muted=true]\{color:var(--lumen-muted)\}" +
-        ".lmn-eyebrow\{font-size:.75rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--lumen-primary);margin:0\}" +
-        ".lmn-btn\{display:inline-flex;align-items:center;justify-content:center;gap:.5rem;font:inherit;font-weight:600;border-radius:10px;padding:.6rem 1.1rem;border:1px solid transparent;cursor:pointer;text-decoration:none;transition:transform .04s ease,background .15s ease,border-color .15s ease}.lmn-btn:active\{transform:translateY(1px)\}" +
-        ".lmn-btn[data-variant=primary]\{background:var(--lumen-primary);color:var(--lumen-primary-fg)}.lmn-btn[data-variant=primary]:hover\{background:var(--lumen-primary-hover)\}" +
-        ".lmn-btn[data-variant=outline]\{background:transparent;color:var(--lumen-fg);border-color:var(--lumen-border)}.lmn-btn[data-variant=outline]:hover\{border-color:var(--lumen-primary)\}" +
-        ".lmn-btn[data-variant=ghost]\{background:transparent;color:var(--lumen-fg)}.lmn-btn[data-variant=ghost]:hover\{background:var(--lumen-surface-2)\}" +
-        ".lmn-badge\{display:inline-flex;align-items:center;gap:.35rem;font-size:.78rem;font-weight:600;padding:.18rem .6rem;border-radius:999px;background:var(--lumen-surface-2);color:var(--lumen-muted);border:1px solid var(--lumen-border)\}" +
-        ".lmn-badge[data-tone=success]\{color:#0b7a52;background:rgba(77,212,172,.16);border-color:transparent}.lmn-badge[data-tone=danger]\{color:#b42318;background:rgba(255,107,107,.16);border-color:transparent}.lmn-badge[data-tone=info]\{color:#1d4ed8;background:rgba(91,156,255,.16);border-color:transparent\}" +
-        ".lmn-feature\{display:flex;flex-direction:column;gap:.75rem;padding:1.5rem;border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);background:var(--lumen-surface)}.lmn-feature .lmn-ico\{width:42px;height:42px;display:flex;align-items:center;justify-content:center;border-radius:10px;background:rgba(245,184,41,.14);color:var(--lumen-primary)\}" +
-        ".lmn-divider\{border:0;border-top:1px solid var(--lumen-border);margin:0\}" +
-        ".lmn-hero\{padding:8rem 1.25rem 4rem;overflow:hidden\}" +
-        ".lmn-hero-inner\{max-width:1040px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:4rem;align-items:center\}" +
-        ".lmn-hero-content\{display:flex;flex-direction:column\}" +
-        ".lmn-hero-title\{font-size:4rem;font-weight:800;letter-spacing:-.03em;line-height:1.05;margin:0 0 1.25rem\}" +
-        ".lmn-hero-subtitle\{font-size:1.125rem;line-height:1.6;color:var(--lumen-muted);margin:0 0 2.5rem;max-width:520px\}" +
-        ".lmn-hero-img-wrap\{border-radius:24px;overflow:hidden;box-shadow:0 24px 64px -16px rgba(0,0,0,.2);transform:perspective(1000px) rotateY(-5deg);transition:transform .5s ease\}" +
-        ".lmn-hero-img-wrap:hover\{transform:perspective(1000px) rotateY(0deg)\}" +
-        ".lmn-hero-img\{width:100%;height:auto;display:block;object-fit:cover\}" +
-        ".lmn-hero-center .lmn-hero-inner\{grid-template-columns:1fr;text-align:center\}" +
-        ".lmn-hero-center .lmn-hero-content\{align-items:center\}" +
-        ".lmn-hero-center .lmn-hero-img-wrap\{display:none\}" +
-        "@media(max-width:760px)\{.lmn-hero-inner\{grid-template-columns:1fr\}\}" +
-        ".lmn-nav\{position:sticky;top:0;z-index:100;display:flex;align-items:center;justify-content:space-between;padding:0 1.25rem;height:64px;background:var(--lumen-bg);border-bottom:1px solid var(--lumen-border)\}" +
-        ".lmn-footer\{padding:3rem 1.25rem;border-top:1px solid var(--lumen-border);color:var(--lumen-muted);text-align:center\}" +
-        ".lmn-split\{display:grid;grid-template-columns:var(--lumen-split-ratio,1fr 1fr);gap:var(--lumen-split-gap,2rem);align-items:start\}@media(max-width:760px)\{.lmn-split\{grid-template-columns:1fr\}\}" +
-        ".lmn-field\{display:flex;flex-direction:column;gap:.35rem\}" +
-        ".lmn-field-label\{font-size:.875rem;font-weight:600\}" +
-        ".lmn-field-hint\{font-size:.78rem;color:var(--lumen-muted)\}" +
-        ".lmn-field-error\{font-size:.78rem;color:var(--lumen-danger)\}" +
-        ".lmn-stat\{display:flex;flex-direction:column;gap:.25rem\}" +
-        ".lmn-stat-value\{font-size:2.25rem;font-weight:800;letter-spacing:-.02em;line-height:1.1;margin:0\}" +
-        ".lmn-stat-label\{font-size:.875rem;color:var(--lumen-muted);margin:0\}" +
-        ".lmn-tag\{display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;font-weight:600;padding:.15rem .5rem;border-radius:6px;background:var(--lumen-surface-2);color:var(--lumen-muted);border:1px solid var(--lumen-border)\}" +
-        ".lmn-tag[data-tone=success]\{color:#0b7a52;background:rgba(77,212,172,.16);border-color:transparent\}" +
-        ".lmn-tag[data-tone=danger]\{color:#b42318;background:rgba(255,107,107,.16);border-color:transparent\}" +
-        ".lmn-tag[data-tone=info]\{color:#1d4ed8;background:rgba(91,156,255,.16);border-color:transparent\}" +
-        ".lmn-tag[data-tone=primary]\{color:var(--lumen-primary-fg);background:var(--lumen-primary);border-color:transparent\}" +
-        ".lmn-avatar\{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;overflow:hidden;flex-shrink:0;background:var(--lumen-surface-2);color:var(--lumen-muted);font-weight:600\}.lmn-avatar img\{width:100%;height:100%;object-fit:cover\}" +
-        ".lmn-alert\{display:flex;gap:.75rem;padding:1rem;border-radius:var(--lumen-radius);align-items:flex-start\}" +
-        ".lmn-alert[data-tone=default]\{background:var(--lumen-surface-2);color:var(--lumen-fg);border:1px solid var(--lumen-border)\}" +
-        ".lmn-alert[data-tone=success]\{background:var(--lumen-success-bg);color:#0b7a52\}" +
-        ".lmn-alert[data-tone=danger]\{background:var(--lumen-danger-bg);color:#b42318\}" +
-        ".lmn-alert[data-tone=info]\{background:var(--lumen-info-bg);color:#1d4ed8\}" +
-        ".lmn-alert[data-tone=primary]\{background:rgba(245,184,41,.14);color:var(--lumen-primary-fg)\}" +
-        ".lmn-alert-icon\{flex-shrink:0;margin-top:2px\}.lmn-alert-body\{flex:1\}.lmn-alert-title\{font-weight:700;margin:0 0 .25rem\}" +
-        ".lmn-empty\{display:flex;flex-direction:column;align-items:center;gap:.75rem;padding:3rem 1.25rem;text-align:center\}" +
-        ".lmn-empty-icon\{opacity:.4\}.lmn-empty-title\{font-size:1.25rem;font-weight:700;margin:0\}" +
-        ".lmn-skel\{background:var(--lumen-surface-2);border-radius:var(--lumen-radius);animation:lumen-shimmer 1.5s ease-in-out infinite\}" +
-        "@keyframes lumen-shimmer\{0%\{opacity:.6\}50%\{opacity:1\}100%\{opacity:.6\}\}" +
-        ".lmn-chat\{display:flex;flex-direction:column;height:var(--lumen-chat-h,400px);overflow-y:auto;padding:1rem;gap:.5rem;scroll-behavior:smooth\}" +
-        ".lmn-chat-msg\{max-width:80%;padding:.75rem 1rem;border-radius:var(--lumen-radius);line-height:1.5;font-size:.9rem;word-wrap:break-word\}" +
-        ".lmn-chat-msg[data-role=user]\{align-self:flex-end;background:var(--lumen-primary);color:var(--lumen-primary-fg);border-bottom-right-radius:4px\}" +
-        ".lmn-chat-msg[data-role=assistant]\{align-self:flex-start;background:var(--lumen-surface-2);color:var(--lumen-fg);border-bottom-left-radius:4px\}" +
-        ".lmn-chat-msg-name\{font-size:.72rem;font-weight:600;margin-bottom:2px;opacity:.7\}" +
-        ".lmn-chat-input\{display:flex;gap:.5rem;padding:.75rem;border-top:1px solid var(--lumen-border);background:var(--lumen-surface)\}" +
-        ".lmn-chat-input input\{flex:1;padding:.6rem .9rem;border:1px solid var(--lumen-border);border-radius:10px;font:inherit;font-size:.9rem;background:var(--lumen-bg);color:var(--lumen-fg);outline:none\}" +
-        ".lmn-chat-input input:focus\{border-color:var(--lumen-primary)\}" +
-        ".lmn-chat-input button\{padding:.6rem 1rem;border-radius:10px;border:none;background:var(--lumen-primary);color:var(--lumen-primary-fg);font-weight:600;cursor:pointer;font-size:.9rem\}" +
-        ".lmn-chat-input button:hover\{background:var(--lumen-primary-hover)\}" +
-        ".lmn-typing\{display:flex;gap:4px;align-items:center;padding:.75rem 1rem;align-self:flex-start;background:var(--lumen-surface-2);border-radius:var(--lumen-radius);border-bottom-left-radius:4px\}" +
-        ".lmn-typing-dot\{width:8px;height:8px;border-radius:50%;background:var(--lumen-muted);animation:lumen-typing-bounce 1.2s ease-in-out infinite\}" +
-        ".lmn-typing-dot:nth-child(2)\{animation-delay:.2s\}.lmn-typing-dot:nth-child(3)\{animation-delay:.4s\}" +
-        "@keyframes lumen-typing-bounce\{0%,60%,100%\{transform:translateY(0)\}30%\{transform:translateY(-6px)\}\}\}" +
-        ".lmn-table-wrap\{width:100%;overflow-x:auto;border:1px solid var(--lumen-border);border-radius:var(--lumen-radius);background:var(--lumen-surface)\}" +
-        ".lmn-table\{width:100%;border-collapse:collapse;font-size:.9rem\}" +
-        ".lmn-table thead\{background:var(--lumen-surface-2)\}" +
-        ".lmn-th\{text-align:left;padding:0;border-bottom:1px solid var(--lumen-border);font-weight:700;color:var(--lumen-muted);font-size:.78rem;text-transform:uppercase;letter-spacing:.04em;padding:.6rem .9rem\}" +
-        ".lmn-th-btn\{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:.25rem;font:inherit;color:inherit;text-transform:inherit;letter-spacing:inherit\}.lmn-th-btn:hover\{color:var(--lumen-primary)\}" +
-        ".lmn-td\{padding:.6rem .9rem;border-bottom:1px solid var(--lumen-border);color:var(--lumen-fg)\}.lmn-table tbody tr:last-child .lmn-td\{border-bottom:0\}.lmn-table tbody tr:hover\{background:var(--lumen-surface-2)\}" +
-        ".lmn-td-msg\{text-align:center;color:var(--lumen-muted);padding:1.5rem\}" +
-        ".lmn-pager\{display:flex;align-items:center;gap:.75rem;justify-content:flex-end;padding:.75rem .9rem;border-top:1px solid var(--lumen-border)\}" +
-        ".lmn-pager-info\{color:var(--lumen-muted);font-size:.82rem\}" +
-        ".lmn-pager-btn\{font:inherit;font-size:.82rem;font-weight:600;padding:.35rem .8rem;border-radius:8px;border:1px solid var(--lumen-border);background:transparent;color:var(--lumen-fg);cursor:pointer\}.lmn-pager-btn:hover\{border-color:var(--lumen-primary);color:var(--lumen-primary)\}" +
-        ".lmn-vtable\{position:relative\}.lmn-vtable thead th\{position:sticky;top:0;z-index:2;background:var(--lumen-surface-2)\}" +
-        ".lmn-vspace td\{padding:0;border:0\}" +
-        ".lmn-form\{display:flex;flex-direction:column;gap:1.1rem\}" +
-        ".lmn-input\{width:100%;box-sizing:border-box;font:inherit;font-size:.9rem;padding:.6rem .8rem;border:1px solid var(--lumen-border);border-radius:10px;background:var(--lumen-bg);color:var(--lumen-fg);outline:none;transition:border-color .15s ease\}.lmn-input:focus\{border-color:var(--lumen-primary)\}" +
-        "textarea.lmn-input\{min-height:96px;resize:vertical\}" +
-        ".lmn-form-actions\{display:flex;align-items:center;gap:.9rem\}" +
-        ".lmn-form-msg\{margin:0;font-size:.85rem;font-weight:600\}.lmn-form-msg[data-tone=success]\{color:#0b7a52\}.lmn-form-msg[data-tone=danger]\{color:#b42318\}" +
-        "</style>"
-}
-
-// ── Built-in render functions ──
-
-fn _ui_render_page(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return _lumen_design_css() + "<div class=\"lmn-app\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_container(s) {
-    let size = _ui_prop(s, "size", "lg")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-container\" data-size=\"" + size + "\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_section(s) {
-    let border = "false"
-    if _ui_flag(s, "border") { border = "true" }
-    let id = _validate.get_field(s, "anchor")
-    let id_attr = ""
-    if id != null { id_attr = " id=\"" + id + "\"" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<section class=\"lmn-section\" data-border=\"" + border + "\"" + id_attr + st + ">" + _ui_slot(s) + "</section>"
-}
-
-fn _ui_render_stack(s) {
-    let gap = _ui_space(_ui_prop(s, "gap", "4"))
-    let align = _ui_prop(s, "align", "stretch")
-    return "<div class=\"lmn-stack\" style=\"gap:" + gap + ";align-items:" + align + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_row(s) {
-    let gap = _ui_space(_ui_prop(s, "gap", "4"))
-    let justify = _ui_prop(s, "justify", "flex-start")
-    let align = _ui_prop(s, "align", "center")
-    let wrap = "false"
-    if _ui_flag(s, "wrap") { wrap = "true" }
-    return "<div class=\"lmn-row\" data-wrap=\"" + wrap + "\" style=\"gap:" + gap + ";justify-content:" + justify + ";align-items:" + align + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_grid(s) {
-    let gap = _ui_space(_ui_prop(s, "gap", "6"))
-    let cols = _ui_prop(s, "cols", "3")
-    return "<div class=\"lmn-grid\" style=\"--lumen-cols:" + cols + ";gap:" + gap + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_card(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-card\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_heading(s) {
-    let size = _ui_prop(s, "size", "3xl")
-    let tag = _ui_prop(s, "as", "h2")
-    return "<" + tag + " class=\"lmn-h\" style=\"font-size:" + _ui_font(size) + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</" + tag + ">"
-}
-
-fn _ui_render_text(s) {
-    let size = _ui_prop(s, "size", "base")
-    let muted = "false"
-    if _ui_flag(s, "muted") { muted = "true" }
-    return "<p class=\"lmn-text\" data-muted=\"" + muted + "\" style=\"font-size:" + _ui_font(size) + ";" + _ui_style_props(s) + "\">" + _ui_slot(s) + "</p>"
-}
-
-fn _ui_render_eyebrow(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<p class=\"lmn-eyebrow\"" + st + ">" + _ui_slot(s) + "</p>"
-}
-
-fn _ui_render_button(s) {
-    let variant = _ui_prop(s, "variant", "primary")
-    let href = _validate.get_field(s, "href")
-    let on = _validate.get_field(s, "on")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    if href != null {
-        return "<a class=\"lmn-btn\" data-variant=\"" + variant + "\" href=\"" + _sanitize.escape_html(href) + "\"" + st + ">" + _ui_slot(s) + "</a>"
-    }
-    let click = ""
-    if on != null { click = " @click=\"" + on + "\"" }
-    return "<button class=\"lmn-btn\" data-variant=\"" + variant + "\"" + click + st + ">" + _ui_slot(s) + "</button>"
-}
-
-fn _ui_render_badge(s) {
-    let tone = _ui_prop(s, "tone", "default")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<span class=\"lmn-badge\" data-tone=\"" + tone + "\"" + st + ">" + _ui_slot(s) + "</span>"
-}
-
-fn _ui_render_feature(s) {
-    let icon = _ui_prop(s, "icon", "")
-    let title = _sanitize.escape_html(_ui_prop(s, "title", ""))
-    let ico = ""
-    if icon != "" { ico = "<div class=\"lmn-ico\">" + lumen_icon(icon) + "</div>" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-feature\"" + st + ">" + ico +
-           "<h3 class=\"lmn-h\" style=\"font-size:1.25rem\">" + title + "</h3>" +
-           "<p class=\"lmn-text\" data-muted=\"true\">" + _ui_slot(s) + "</p></div>"
-}
-
-fn _ui_render_divider(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<hr class=\"lmn-divider\"" + st + ">"
-}
-
-fn _ui_render_spacer(s) {
-    let size = _ui_space(_ui_prop(s, "size", "8"))
-    return "<div style=\"height:" + size + ";" + _ui_style_props(s) + "\"></div>"
-}
-
-// ── Section components (Part A of Lumen vocab spec) ──
-
-fn _ui_render_hero(s) {
-    let eyebrow = _validate.get_field(s, "eyebrow")
-    let title = _validate.get_field(s, "title")
-    let subtitle = _validate.get_field(s, "subtitle")
-    let image = _validate.get_field(s, "image")
-    let align = _ui_prop(s, "align", "left")
-    let e_html = ""
-    if eyebrow != null { e_html = "<p class=\"lmn-eyebrow\">" + _sanitize.escape_html("" + eyebrow) + "</p>" }
-    let t_html = ""
-    if title != null { t_html = "<h1 class=\"lmn-hero-title\">" + _sanitize.escape_html("" + title) + "</h1>" }
-    let s_html = ""
-    if subtitle != null { s_html = "<p class=\"lmn-hero-subtitle\">" + _sanitize.escape_html("" + subtitle) + "</p>" }
-    let img_html = ""
-    if image != null {
-        img_html = "<div class=\"lmn-hero-img-wrap\"><img class=\"lmn-hero-img\" src=\"" + _sanitize.escape_html("" + image) + "\" alt=\"\"></div>"
-    }
-    let align_class = ""
-    if align == "center" { align_class = " lmn-hero-center" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<section class=\"lmn-hero" + align_class + "\"" + st + "><div class=\"lmn-hero-inner\"><div class=\"lmn-hero-content\">" + e_html + t_html + s_html + _ui_slot(s) + "</div>" + img_html + "</div></section>"
-}
-
-fn _ui_render_nav(s) {
-    let brand = _sanitize.escape_html(_ui_prop(s, "brand", ""))
-    let brand_html = ""
-    if brand != "" { brand_html = "<div class=\"lmn-nav-brand\">" + brand + "</div>" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<nav class=\"lmn-nav\"" + st + ">" + brand_html + _ui_slot(s) + "</nav>"
-}
-
-fn _ui_render_footer(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<footer class=\"lmn-footer\"" + st + ">" + _ui_slot(s) + "</footer>"
-}
-
-fn _ui_render_split(s) {
-    let ratio = _ui_prop(s, "ratio", "1fr 1fr")
-    let gap = _ui_space(_ui_prop(s, "gap", "8"))
-    let reverse = _ui_flag(s, "reverse")
-    let rev_class = ""
-    if reverse { rev_class = " lmn-split-reverse" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-split" + rev_class + "\" style=\"--lumen-split-ratio:" + ratio + ";--lumen-split-gap:" + gap + "\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_field(s) {
-    let label = _validate.get_field(s, "label")
-    let hint = _validate.get_field(s, "hint")
-    let error = _validate.get_field(s, "error")
-    let label_html = ""
-    if label != null { label_html = "<label class=\"lmn-field-label\">" + _sanitize.escape_html("" + label) + "</label>" }
-    let hint_html = ""
-    if hint != null { hint_html = "<p class=\"lmn-field-hint\">" + _sanitize.escape_html("" + hint) + "</p>" }
-    let error_html = ""
-    if error != null { error_html = "<p class=\"lmn-field-error\">" + _sanitize.escape_html("" + error) + "</p>" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-field\"" + st + ">" + label_html + _ui_slot(s) + hint_html + error_html + "</div>"
-}
-
-fn _ui_render_stat(s) {
-    let value = _sanitize.escape_html(_ui_prop(s, "value", ""))
-    let label = _sanitize.escape_html(_ui_prop(s, "label", ""))
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-stat\"" + st + "><p class=\"lmn-stat-value\">" + value + "</p><p class=\"lmn-stat-label\">" + label + "</p></div>"
-}
-
-fn _ui_render_tag(s) {
-    let tone = _ui_prop(s, "tone", "default")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<span class=\"lmn-tag\" data-tone=\"" + tone + "\"" + st + ">" + _ui_slot(s) + "</span>"
-}
-
-fn _ui_render_avatar(s) {
-    let src = _validate.get_field(s, "src")
-    let alt = _sanitize.escape_html(_ui_prop(s, "alt", ""))
-    let sz = _ui_prop(s, "size", "40")
-    let sz_px = sz
-    // If it's a known space key, resolve it; otherwise use the literal value + "px"
-    let space_val = _ui_space(sz)
-    if space_val != "1rem" or sz == "4" {
-        sz_px = space_val
-    } else {
-        // check if it's a plain number -> px
-        let n = 0
-        let is_num = true
-        let sc = sz.code_at(0)
-        if sc >= 48 and sc <= 57 {
-            sz_px = sz + "px"
-        }
-    }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    if src != null {
-        return "<div class=\"lmn-avatar\" style=\"width:" + sz_px + ";height:" + sz_px + "\"" + st + "><img src=\"" + _sanitize.escape_html("" + src) + "\" alt=\"" + alt + "\"></div>"
-    }
-    return "<div class=\"lmn-avatar\" style=\"width:" + sz_px + ";height:" + sz_px + "\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_alert(s) {
-    let tone = _ui_prop(s, "tone", "default")
-    let title = _validate.get_field(s, "title")
-    let icon = _ui_prop(s, "icon", "zap")
-    let icon_html = "<div class=\"lmn-alert-icon\">" + lumen_icon(icon) + "</div>"
-    let title_html = ""
-    if title != null { title_html = "<p class=\"lmn-alert-title\">" + _sanitize.escape_html("" + title) + "</p>" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-alert\" data-tone=\"" + tone + "\"" + st + ">" + icon_html + "<div class=\"lmn-alert-body\">" + title_html + _ui_slot(s) + "</div></div>"
-}
-
-fn _ui_render_empty(s) {
-    let icon = _ui_prop(s, "icon", "box")
-    let title = _validate.get_field(s, "title")
-    let icon_html = "<div class=\"lmn-empty-icon\">" + lumen_icon(icon) + "</div>"
-    let title_html = ""
-    if title != null { title_html = "<p class=\"lmn-empty-title\">" + _sanitize.escape_html("" + title) + "</p>" }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-empty\"" + st + ">" + icon_html + title_html + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_skeleton(s) {
-    let w = _ui_prop(s, "w", "100%")
-    let h = _ui_prop(s, "h", "1rem")
-    let radius = _ui_prop(s, "radius", "md")
-    let rv = _ui_radius(radius)
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = ";" + sp }
-    return "<div class=\"lmn-skel\" style=\"width:" + w + ";height:" + h + ";border-radius:" + rv + st + "\"></div>"
-}
-
-// ── Chat UI components ──
-
-fn _ui_render_chat(s) {
-    let height = _ui_prop(s, "height", "400px")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-chat\" style=\"--lumen-chat-h:" + height + "\"" + st + ">" + _ui_slot(s) + "</div>"
-}
-
-fn _ui_render_chat_message(s) {
-    let role = _ui_prop(s, "role", "assistant")
-    let content = _validate.get_field(s, "content")
-    let name = _validate.get_field(s, "name")
-    let content_html = ""
-    if content != null { content_html = _sanitize.escape_html("" + content) }
-    let name_html = ""
-    if name != null and name != "" {
-        name_html = "<div class=\"lmn-chat-msg-name\">" + _sanitize.escape_html("" + name) + "</div>"
-    }
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-chat-msg\" data-role=\"" + role + "\"" + st + ">" + name_html + content_html + "</div>"
-}
-
-fn _ui_render_chat_input(s) {
-    let placeholder = _ui_prop(s, "placeholder", "Type a message...")
-    let on = _validate.get_field(s, "on")
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    let click = ""
-    if on != null { click = " @click=\"" + on + "\"" }
-    return "<div class=\"lmn-chat-input\"" + st + ">" +
-        "<input type=\"text\" placeholder=\"" + _sanitize.escape_html(placeholder) + "\" @keydown-enter=\"" + _sanitize.escape_html(_ui_prop(s, "on", "")) + "\" />" +
-        "<button" + click + ">Send</button></div>"
-}
-
-fn _ui_render_typing_indicator(s) {
-    let sp = _ui_style_props(s)
-    let st = ""
-    if sp != "" { st = " style=\"" + sp + "\"" }
-    return "<div class=\"lmn-typing\"" + st + ">" +
-        "<div class=\"lmn-typing-dot\"></div>" +
-        "<div class=\"lmn-typing-dot\"></div>" +
-        "<div class=\"lmn-typing-dot\"></div></div>"
-}
-
-// A tiny inline-SVG icon set (Lucide-style strokes) so <Feature icon="zap"> and
-// friends need no asset pipeline. Unknown names render nothing.
-fn lumen_icon(name) {
-    let open = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"22\" height=\"22\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\">"
-    let close = "</svg>"
-    if name == "zap"      { return open + "<polygon points=\"13 2 3 14 12 14 11 22 21 10 12 10 13 2\"></polygon>" + close }
-    if name == "bolt"     { return lumen_icon("zap") }
-    if name == "bars"     { return open + "<path d=\"M12 20v-6M6 20V10M18 20V4\"></path>" + close }
-    if name == "code"     { return open + "<polyline points=\"16 18 22 12 16 6\"></polyline><polyline points=\"8 6 2 12 8 18\"></polyline>" + close }
-    if name == "lock"     { return open + "<rect x=\"3\" y=\"11\" width=\"18\" height=\"11\" rx=\"2\" ry=\"2\"></rect><path d=\"M7 11V7a5 5 0 0 1 10 0v4\"></path>" + close }
-    if name == "clock"    { return open + "<circle cx=\"12\" cy=\"12\" r=\"10\"></circle><polyline points=\"12 6 12 12 16 14\"></polyline>" + close }
-    if name == "box"      { return open + "<path d=\"M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z\"></path>" + close }
-    if name == "layers"   { return open + "<polygon points=\"12 2 2 7 12 12 22 7 12 2\"></polygon><polyline points=\"2 17 12 22 22 17\"></polyline><polyline points=\"2 12 12 17 22 12\"></polyline>" + close }
-    if name == "rocket"   { return open + "<path d=\"M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z\"></path><path d=\"M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z\"></path>" + close }
-    if name == "check"    { return open + "<polyline points=\"20 6 9 17 4 12\"></polyline>" + close }
-    if name == "shield"   { return open + "<path d=\"M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z\"></path>" + close }
-    // Fallback: treat any unknown name as a Material Symbols glyph. Pages that
-    // use <Feature icon="language"> etc. (Material Symbols names, not the small
-    // Feather vocabulary above) get a real icon instead of an empty string —
-    // requires the Material Symbols font link, which the site pages include.
-    return "<span class=\"material-symbols-outlined\">" + name + "</span>"
-}
-
-// Register the built-in vocabulary. Runs at prelude load, so every template
-// (live components and `vn dev` pages alike) can use these tags immediately.
-lumen_register_component("Page", _ui_component(_ui_render_page))
-lumen_register_component("Container", _ui_component(_ui_render_container))
-lumen_register_component("Section", _ui_component(_ui_render_section))
-lumen_register_component("Stack", _ui_component(_ui_render_stack))
-lumen_register_component("Row", _ui_component(_ui_render_row))
-lumen_register_component("Grid", _ui_component(_ui_render_grid))
-lumen_register_component("Card", _ui_component(_ui_render_card))
-lumen_register_component("Heading", _ui_component(_ui_render_heading))
-lumen_register_component("Text", _ui_component(_ui_render_text))
-lumen_register_component("Eyebrow", _ui_component(_ui_render_eyebrow))
-lumen_register_component("Button", _ui_component(_ui_render_button))
-lumen_register_component("Badge", _ui_component(_ui_render_badge))
-lumen_register_component("Feature", _ui_component(_ui_render_feature))
-lumen_register_component("Divider", _ui_component(_ui_render_divider))
-lumen_register_component("Spacer", _ui_component(_ui_render_spacer))
-lumen_register_component("Hero", _ui_component(_ui_render_hero))
-lumen_register_component("Nav", _ui_component(_ui_render_nav))
-lumen_register_component("Footer", _ui_component(_ui_render_footer))
-lumen_register_component("Split", _ui_component(_ui_render_split))
-lumen_register_component("Field", _ui_component(_ui_render_field))
-lumen_register_component("Stat", _ui_component(_ui_render_stat))
-lumen_register_component("Tag", _ui_component(_ui_render_tag))
-lumen_register_component("Avatar", _ui_component(_ui_render_avatar))
-lumen_register_component("Alert", _ui_component(_ui_render_alert))
-lumen_register_component("Empty", _ui_component(_ui_render_empty))
-lumen_register_component("Skeleton", _ui_component(_ui_render_skeleton))
-lumen_register_component("Chat", _ui_component(_ui_render_chat))
-lumen_register_component("ChatMessage", _ui_component(_ui_render_chat_message))
-lumen_register_component("ChatInput", _ui_component(_ui_render_chat_input))
-lumen_register_component("TypingIndicator", _ui_component(_ui_render_typing_indicator))
 
 // Wrap the rendered component in the live shell (data-lumen-root + client).
 // Injects SEO metadata, Lumen head defaults, data-lumen-root, and the client
@@ -4392,45 +3490,18 @@ fn _lumen_shell(inner, ws_path, manifest) {
 // Modules are opt-in: only emitted if the page statically references the attribute.
 // Every brace is escaped as \{/\} for Varian string interpolation.
 
-fn _lumen_module(name) {
-    if name == "clipboard" {
-        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-copy]');if(!el)return;var t=el.getAttribute('data-lumen-copy'),c;if(t==='text'||t==='')c=el.textContent;else c=document.querySelector(t)&&document.querySelector(t).value||'';navigator.clipboard&&navigator.clipboard.writeText(c).catch(function()\{\})\})"
-    }
-    if name == "focus" {
-        return "var F=function()\{document.querySelectorAll('[data-lumen-focus]').forEach(function(el)\{el.focus()\})\};if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',F);else F()"
-    }
-    if name == "scroll" {
-        return "document.addEventListener('click',function(e)\{var el=e.target.closest&&e.target.closest('[data-lumen-scroll]');if(!el)return;var t=el.getAttribute('data-lumen-scroll');if(t==='into-view')el.scrollIntoView(\{behavior:'smooth',block:'center'\});if(t==='lock')\{document.body.style.overflow='hidden';el.addEventListener('lumen-close',function()\{document.body.style.overflow=''\})\};if(t==='restore')\{var k='lumen-scroll-'+location.pathname;var y=sessionStorage.getItem(k);if(y)window.scrollTo(0,parseInt(y));window.addEventListener('scroll',function()\{sessionStorage.setItem(k,window.scrollY)\})\}\})"
-    }
-    if name == "toast" {
-        return "window.__lumen_toast=function(m,t)\{var o=document.createElement('div');o.style.cssText='position:fixed;bottom:24px;right:24px;z-index:9999;padding:12px 20px;border-radius:10px;background:#1b2233;color:#e8eaf0;box-shadow:0 8px 30px rgba(0,0,0,.3);font-size:14px;max-width:400px;border-left:4px solid '+(t==='error'?'#ff6b6b':t==='success'?'#4dd4ac':'#f5b829');o.textContent=m;document.body.appendChild(o);setTimeout(function()\{o.style.opacity='0';o.style.transition='opacity .3s';setTimeout(function()\{o.remove()\},300)\},(t==='error'?6:3)*1e3)\}"
-    }
-    if name == "key" {
-        return "document.addEventListener('keydown',function(e)\{var el=document.querySelector('[data-lumen-key]');if(!el)return;var map=el.getAttribute('data-lumen-key');var pairs=map.split(',');for(var i=0;i<pairs.length;i++)\{var kv=pairs[i].trim().split(':');if(kv.length!==2)continue;var k=kv[0].trim(),h=kv[1].trim();if((e.key||e.code)===k)\{var msg=JSON.stringify(\{t:'event',h:h,v:null\});if(window.__lumen_ws&&window.__lumen_ws.readyState===1)window.__lumen_ws.send(msg)\}\}\})"
-    }
-    return ""
-}
+// _lumen_module (the JS string catalog itself) lives in
+// vn_modules/lumen/browser_directives.vn — a Constellation-style package
+// subdirectory, explicitly loaded here so it stays out of the ambient
+// top-level prelude (see docs/planning/FRAMEWORK_MODULARIZATION_PLAN.md).
+// It is a pure function of `name`, so load order relative to the rest of
+// this file doesn't matter as long as it's loaded before first call, below.
+use "lumen"
 
 // Scan a template string for directive attributes and return a list of required LumenJS module names.
 // Looks for data-lumen-* attributes that map to known modules, data-lumen-hook=X, and event modifiers.
 fn _lumen_scan_directives(tpl) {
-    let mods = []
-    // Single source of truth: directive attribute -> module name, index-aligned.
-    // Every name here MUST be implemented in _lumen_module(); keep the two lists
-    // in lock-step (a name with no module would ship a dead directive, and an
-    // unscanned attr would silently never load its module). data-lumen-mod
-    // (debounce/throttle/key modifiers) is handled by core, so it has no module.
-    let attrs = ["data-lumen-copy", "data-lumen-focus", "data-lumen-scroll",
-                 "data-lumen-toast", "data-lumen-key"]
-    let names = ["clipboard", "focus", "scroll", "toast", "key"]
-    for i in 0..attrs.len() {
-        if tpl.index_of(attrs[i]) >= 0 {
-            if _lumen_list_has(mods, names[i]) == false {
-                mods = mods.push(names[i])
-            }
-        }
-    }
-    return mods
+    return _lumen_detect_actions(tpl)
 }
 
 // ─── LumenJS client runtime ───
@@ -4442,17 +3513,24 @@ fn _lumen_scan_directives(tpl) {
 // Every brace is escaped as \{/\} so Varian's {expr} interpolation doesn't eat it.
 
 // Core runtime — always included.
+// Minimal always-on live transport. Browser event capture and virtual-table
+// scrolling are registry actions, so passive server-push pages do not ship them.
 fn _lumen_client_core() {
-    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,eq=[],bf=250,co=0;function cn()\{P=null;w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='log')\{if(window.__lumen_onlog)window.__lumen_onlog(m.lines);return\}if(m.t==='error')\{showErr(m.msg);return\}var eo=document.getElementById('__lumen_err');if(eo)eo.remove();if(m.t==='html')\{P=m.html;morph(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);morph(r,P)\}bf=250;r.classList.remove('lumen-pending');var pe=r.querySelector('[data-lumen-pending]');if(pe)pe.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(cn,bf);bf=Math.min(bf*2,5e3)\};w.onopen=function()\{if(window.__LUMEN_DEV__&&co)\{try\{sessionStorage.setItem('__lumen_hot','1')\}catch(e)\{\}location.reload();return\}co=1;bf=250;var d=document.getElementById('__LUMEN_DATA__');if(d)w.send(JSON.stringify(\{t:'init',state:JSON.parse(d.textContent)\}));for(var i=0;i<eq.length;i++)\{if(w.readyState===1)w.send(eq[i])\}eq=[]\}\}var EV=['click','input','change','submit','keydown','keyup','blur','focus'];EV.forEach(function(ev)\{document.addEventListener(ev,function(e)\{var a='data-lumen-'+ev,el=e.target.closest&&e.target.closest('['+a+']');if(!el)return;var mod=el.getAttribute('data-lumen-mod');if(mod)\{var ms=mod.split(' ');for(var mi=0;mi<ms.length;mi++)\{var kv=ms[mi].split(':'),k=kv[0],v=kv[1];if(k==='prevent'&&e.preventDefault)e.preventDefault();if(k==='stop'&&e.stopPropagation)e.stopPropagation();if(k==='once'&&el.getAttribute('data-lumen-once'))return;if(k==='once')el.setAttribute('data-lumen-once','1');if(k==='confirm'&&!confirm(v||'Are you sure?'))return;if(k==='debounce'||k==='throttle')\{var t=parseInt(v||300),n=Date.now(),l=el.getAttribute('data-lumen-'+k);if(k==='debounce')\{if(el._lumen_d)clearTimeout(el._lumen_d);el._lumen_d=setTimeout(function()\{el.removeAttribute('data-lumen-debounce')\},t);if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-debounce',n)\}else\{if(l&&n-parseInt(l)<t)return;el.setAttribute('data-lumen-throttle',n)\}\}if(k==='key')\{var c=e.key||e.code;if(c!==(v||'Enter'))return\}\}\}if(ev==='submit')e.preventDefault();var v='value'in el?el.value:null;var msg=JSON.stringify(\{t:'event',h:el.getAttribute(a),v:v\});if(w&&w.readyState===1)\{w.send(msg);if(window.__LUMEN_LOADING__)morph(r,window.__LUMEN_LOADING__)\}else eq.push(msg);el.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\},true)\});function morph(a,h)\{var f=document.activeElement,sa,ss,se,sx,sy;if(f&&(f===a||a.contains(f)))\{ss=f.selectionStart;se=f.selectionEnd;sx=f.scrollLeft;sy=f.scrollTop\}var t=document.createElement('div');t.innerHTML=h;reconcile(a,t.firstElementChild);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=ss;f.selectionEnd=se\}catch(e)\{\}f.scrollLeft=sx;f.scrollTop=sy\}var ue=a.querySelector&&a.querySelector('[data-lumen-url]');if(ue)\{var u=ue.getAttribute('data-lumen-url')||'';var want=location.pathname+u;if(want!==location.pathname+location.search)try\{history.replaceState(\{\},'',want)\}catch(e)\{\}\}\}function reconcile(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,bn=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)bn[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!bn[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var at=b.attributes[i];if(f&&a===f&&at.name==='value')continue;if(a.getAttribute(at.name)!==at.value)a.setAttribute(at.name,at.value)\}var ac=a.childNodes,bc=b.childNodes,mx=Math.max(ac.length,bc.length);for(i=0;i<mx;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else reconcile(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function showErr(msg)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace';o.onclick=function(ev)\{if(ev.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var card=document.createElement('div');card.style.cssText='max-width:780px;width:90%;background:#1b2233;border:1px solid #2c3650;border-top:4px solid #f5b829;border-radius:14px;box-shadow:0 24px 70px rgba(0,0,0,.55);overflow:hidden';var hd=document.createElement('div');hd.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233)';hd.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\" style=\"flex:none\"><defs><linearGradient id=\"lbg\" x1=\"15\" y1=\"7\" x2=\"33\" y2=\"41\" gradientUnits=\"userSpaceOnUse\"><stop stop-color=\"#ffd24d\"/><stop offset=\"1\" stop-color=\"#f5a623\"/></linearGradient></defs><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"url(#lbg)\"/></svg><span style=\"color:#f5b829;font-weight:800;letter-spacing:4px;font-size:15px\">LUMEN</span><span style=\"color:#8b93a7;font-size:13px\">runtime error</span>';var x=document.createElement('span');x.textContent='✕';x.style.cssText='margin-left:auto;color:#8b93a7;cursor:pointer;font-size:15px';x.onclick=function()\{o.remove()\};hd.appendChild(x);var bd=document.createElement('pre');bd.style.cssText='margin:0;padding:22px;color:#e8eaf0;white-space:pre-wrap;word-break:break-word;line-height:1.55;font-size:13px';bd.textContent=msg;card.appendChild(hd);card.appendChild(bd);o.appendChild(card)\}document.addEventListener('scroll',function(e)\{var el=e.target;if(!el||!el.hasAttribute||!el.hasAttribute('data-lumen-vtable'))return;var rh=parseInt(el.getAttribute('data-row-h'))||36;var first=Math.floor(el.scrollTop/rh);var vis=Math.ceil(el.clientHeight/rh);var over=8;var f=Math.max(0,first-over);var c=vis+over*2;if(el.__lf===f&&el.__lc===c)return;el.__lf=f;el.__lc=c;if(w&&w.readyState===1)w.send(JSON.stringify(\{t:'event',h:'dt_window',v:\{f:f,c:c\}\}))\},true);window.addEventListener('popstate',function()\{var w3=window.__lumen_ws;if(w3&&w3.readyState===1)w3.send(JSON.stringify(\{t:'event',h:'lumen_nav',v:location.search\}))\});cn()\})();"
+    return "(function()\{var r=document.querySelector('[data-lumen-root]'),w,P,q=[],b=250,c=0;function C()\{w=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+window.__LUMEN_WS__);window.__lumen_ws=w;w.onmessage=function(e)\{var m=JSON.parse(e.data);if(m.t==='log')\{if(window.__lumen_onlog)window.__lumen_onlog(m.lines);return\}if(m.t==='error')\{E(m.msg);return\}var o=document.getElementById('__lumen_err');if(o)o.remove();if(m.t==='html')\{P=m.html;M(r,P)\}else if(m.t==='p')\{P=P.slice(0,m.s)+m.d+P.slice(P.length-m.e);M(r,P)\}b=250;r.classList.remove('lumen-pending');var x=r.querySelector('[data-lumen-pending]');if(x)x.removeAttribute('data-lumen-pending')\};w.onclose=function()\{setTimeout(C,b);b=Math.min(b*2,5e3)\};w.onopen=function()\{if(window.__LUMEN_DEV__&&c)\{try\{sessionStorage.setItem('__lumen_hot','1')\}catch(e)\{\}location.reload();return\}c=1;b=250;var d=document.getElementById('__LUMEN_DATA__');if(d)w.send(JSON.stringify(\{t:'init',state:JSON.parse(d.textContent)\}));while(q.length&&w.readyState===1)w.send(q.shift())\}\}window.__lumen_dispatch=function(h,v,l)\{var m=JSON.stringify(\{t:'event',h:h,v:v\});if(w&&w.readyState===1)\{w.send(m);if(window.__LUMEN_LOADING__)M(r,window.__LUMEN_LOADING__)\}else q.push(m);if(l)l.setAttribute('data-lumen-pending','');r.classList.add('lumen-pending')\};function M(a,h)\{var f=document.activeElement,s,e,x,y;if(f&&(f===a||a.contains(f)))\{s=f.selectionStart;e=f.selectionEnd;x=f.scrollLeft;y=f.scrollTop\}var t=a.cloneNode(false);t.innerHTML=h;R(a,t);if(f&&(f===a||a.contains(f)))\{try\{f.selectionStart=s;f.selectionEnd=e\}catch(z)\{\}f.scrollLeft=x;f.scrollTop=y\}var u=a.querySelector&&a.querySelector('[data-lumen-url]');if(u)\{var n=u.getAttribute('data-lumen-url')||'',p=location.pathname+n;if(p!==location.pathname+location.search)try\{history.replaceState(\{\},'',p)\}catch(z)\{\}\}\}function R(a,b)\{if(!a||!b)return;if(a.nodeType!==b.nodeType||a.nodeName!==b.nodeName)\{a.replaceWith(b.cloneNode(true));return\}if(a.nodeType===3)\{if(a.nodeValue!==b.nodeValue)a.nodeValue=b.nodeValue;return\}var i,f=document.activeElement,n=\{\};if(b.attributes)for(i=0;i<b.attributes.length;i++)n[b.attributes[i].name]=1;if(a.attributes)for(i=a.attributes.length-1;i>=0;i--)if(!n[a.attributes[i].name])a.removeAttribute(a.attributes[i].name);if(b.attributes)for(i=0;i<b.attributes.length;i++)\{var t=b.attributes[i];if(f&&a===f&&t.name==='value')continue;if(a.getAttribute(t.name)!==t.value)a.setAttribute(t.name,t.value)\}var ac=a.childNodes,bc=b.childNodes,m=Math.max(ac.length,bc.length);for(i=0;i<m;i++)\{if(!ac[i])a.appendChild(bc[i].cloneNode(true));else R(ac[i],bc[i])\}while(a.childNodes.length>bc.length)a.removeChild(a.lastChild)\}function E(m)\{var o=document.getElementById('__lumen_err');if(!o)\{o=document.createElement('div');o.id='__lumen_err';o.style.cssText='position:fixed;inset:0;z-index:2147483647;display:flex;align-items:center;justify-content:center;background:rgba(10,14,22,.8);font-family:ui-monospace,monospace';o.onclick=function(e)\{if(e.target===o)o.remove()\};document.body.appendChild(o)\}o.innerHTML='';var d=document.createElement('pre');d.style.cssText='max-width:780px;width:90%;margin:0;padding:22px;color:#e8eaf0;background:#1b2233;border-top:4px solid #f5b829;border-radius:14px;white-space:pre-wrap;word-break:break-word';d.textContent=m;o.appendChild(d)\}C()\})()"
+}
+
+// Runtime-error presentation is kept separate from transport so its cost is
+// visible and can later be policy-controlled without touching live semantics.
+fn _lumen_error_brand() {
+    return "(function()\{function showErr(o)\{if(!o||o.__lumen_brand)return;o.__lumen_brand=1;var h=document.createElement('div');h.style.cssText='display:flex;align-items:center;gap:12px;padding:16px 22px;background:linear-gradient(90deg,#222b40,#1b2233);color:#f5b829;font-weight:800;letter-spacing:4px';h.innerHTML='<svg width=\"26\" height=\"26\" viewBox=\"0 0 48 48\"><rect x=\"3\" y=\"3\" width=\"42\" height=\"42\" rx=\"11\" fill=\"#222b40\"/><path d=\"M26 7 L15 27 h7 L19 41 L33 21 h-8 L29 7 Z\" fill=\"#f5b829\"/></svg><span>LUMEN</span>';o.insertBefore(h,o.firstChild)\}new MutationObserver(function()\{showErr(document.getElementById('__lumen_err'))\}).observe(document.body||document.documentElement,\{childList:true,subtree:true\})\})()"
 }
 
 fn _lumen_client_js_with_manifest_and_loading(manifest, loading_html) {
-    let js = _lumen_client_core()
-    if manifest != null {
-        for i in 0..manifest.len() {
-            let mod_js = _lumen_module(manifest[i])
-            if mod_js != "" { js = js + ";" + mod_js }
-        }
+    let js = _lumen_client_core() + ";" + _lumen_error_brand()
+    let resolved = _lumen_resolve_actions(manifest)
+    for i in 0..resolved.len() {
+        let mod_js = _lumen_module(resolved[i])
+        if mod_js != "" { js = js + ";" + mod_js }
     }
     if loading_html != null and loading_html != "" {
         js = js + ";window.__LUMEN_LOADING__=\"" + _lumen_escape_string(loading_html) + "\";"
@@ -4530,10 +3608,11 @@ fn _lumen_dev_inject(manifest) {
     let ver = env.get("VN_VERSION")
     if ver == null { ver = "dev" }
     let modjs = "["
-    if manifest != null {
-        for i in 0..manifest.len() {
+    let resolved = _lumen_resolve_actions(manifest)
+    if resolved != null {
+        for i in 0..resolved.len() {
             if i > 0 { modjs = modjs + "," }
-            modjs = modjs + "\"" + manifest[i] + "\""
+            modjs = modjs + "\"" + resolved[i] + "\""
         }
     }
     modjs = modjs + "]"

@@ -1,0 +1,11 @@
+let s = "<<ACTION:{\"tool\":\"search\",\"query\":\"Lamp\",\"product_id\":0,\"qty\":1}>>"
+print("s1: " + s)
+
+// Try escaping {
+let s2 = "<<ACTION:\{" + "\"tool\":\"search\",\"query\":\"Lamp\",\"product_id\":0,\"qty\":1" + "\}>>"
+print("s2: " + s2)
+
+// Use json_encode
+let obj = http.create_struct(["tool","query","product_id","qty"], ["search","Lamp",0,1])
+let s3 = "<<ACTION:" + json_encode(obj) + ">>"
+print("s3: " + s3)

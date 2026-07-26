@@ -1,0 +1,29 @@
+// app_db.vn — DB connection, schema, and shared HTTP/format helpers.
+// Schema is FROZEN per CONTRACT.md §2 — do not rename columns.
+
+fn db_init(db_path) {
+    let conn = sqlite.connect(db_path)
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS products (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, slug TEXT NOT NULL UNIQUE, price_cents INTEGER NOT NULL, stock INTEGER NOT NULL DEFAULT 0, image TEXT NOT NULL DEFAULT '', description TEXT NOT NULL DEFAULT '', category TEXT NOT NULL DEFAULT 'general', featured INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL DEFAULT (datetime('now')))")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, pass_hash TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', avatar TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT (datetime('now')))")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS orders (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, session_key TEXT NOT NULL DEFAULT '', total_cents INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created TEXT NOT NULL DEFAULT (datetime('now')))")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS order_items (id INTEGER PRIMARY KEY AUTOINCREMENT, order_id INTEGER NOT NULL, product_id INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 1, price_cents INTEGER NOT NULL)")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS carts (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL, product_id INTEGER NOT NULL, qty INTEGER NOT NULL DEFAULT 1, UNIQUE(session_key, product_id))")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS chat_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL UNIQUE, user_id INTEGER, created TEXT NOT NULL DEFAULT (datetime('now')))")
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS chat_messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_key TEXT NOT NULL, role TEXT NOT NULL, content TEXT NOT NULL, created TEXT NOT NULL DEFAULT (datetime('now')))")
+    return conn
+}
+
+fn json_res(data, status) {
+    return http.create_struct(["status", "body", "content_type"], [status, json_encode(data), "application/json"])
+}
+
+fn err_res(msg, status) {
+    return json_res(http.create_struct(["error"], [msg]), status)
+}
+
+fn format_price(cents) {
+    let dollars = cents / 100
+    let c = cents % 100
+    if c < 10 { return "$" + dollars + ".0" + c }
+    return "$" + dollars + "." + c
+}

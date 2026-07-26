@@ -114,6 +114,14 @@ typedef enum {
     /* Special */
     BC_HALT,
     BC_REGISTER_VALIDATIONS,
+
+    /* Bitwise integer operations. Appended to preserve existing VNB opcode
+     * numbers for every previously serialized instruction. */
+    BC_BIT_AND,
+    BC_BIT_OR,
+    BC_BIT_XOR,
+    BC_SHL,
+    BC_SHR,
 } OpCode;
 
 /* ─── Value ─── */
@@ -220,6 +228,20 @@ struct ObjFunction {
     int *rle_counts;
     int rle_count;
     AotFunc aot_func;
+    /* Conservatively true unless Kiln's suspend_analyze() proved this
+     * function's body never reaches await/channel/actor-dispatch. Only
+     * functions proven false here are eligible for native/typed AOT codegen
+     * (see suspend_analysis.h) — everything else keeps the boxed-Value
+     * per-instruction transpile, since that's the only form the scheduler's
+     * mid-function resumption contract supports today. */
+    bool suspends_maybe;
+    /* The NODE_FN_DECL this function was compiled from, or NULL for the
+     * synthetic top-level init and for functions built without an AST on hand.
+     * Only Kiln's release path reads it, to pair a compiled ObjFunction back up
+     * with the SsaFunction built for the same declaration (see aot_native.h);
+     * the interpreter never touches it, and a NULL here just means "no native
+     * codegen for this one", never a wrong pairing. */
+    AstNode *source_node;
     /* True only for a synthesized `use "pkg" as ns` module initializer. Its
      * hoisted sibling functions capture each other before assignment, so their
      * upvalues must be snapshotted at this frame's return (deferred close).
@@ -372,7 +394,11 @@ typedef struct Shape {
 } Shape;
 
 /* ─── Shape Registry (per-VM, stores every Shape ever created) ─── */
-#define SHAPE_REGISTRY_SIZE 256
+/* Large generated Lumen applications legitimately create hundreds of distinct
+ * response, state, and attribute layouts during startup. Keep enough interned
+ * layouts per VM that those applications retain shape sharing and cleanup
+ * ownership instead of falling off the registry's fixed-capacity fast path. */
+#define SHAPE_REGISTRY_SIZE 1024
 typedef struct {
     Shape *shapes[SHAPE_REGISTRY_SIZE];
     int count;
@@ -449,12 +475,18 @@ typedef struct {
     int scope_depth;     /* scope depth when loop started (for break/continue) */
 } LoopInfo;
 
+/* Opaque forward declaration — only Kiln's AOT pipeline (aot.c) and the one
+ * propagation point in vm.c's NODE_FN_DECL compilation actually dereference
+ * this; see suspend_analysis.h. NULL for ordinary interpreted compiles. */
+typedef struct SuspendAnalysis SuspendAnalysis;
+
 typedef struct Compiler Compiler;
 struct Compiler {
     Compiler *enclosing;   /* NULL for top-level/test functions */
     Arena *arena;
     Chunk *chunk;
     AstNode *program;
+    SuspendAnalysis *suspend_analysis; /* NULL unless Kiln release-compiling */
     int scope_depth;
     int local_count;
     char local_names[256][64];
@@ -481,6 +513,11 @@ struct Compiler {
 
 void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *program);
 bool compiler_compile(Compiler *compiler);
+/* Exposed so Kiln's SSA builder (ssa.c) can drive a throwaway Compiler purely
+ * for scope-correct local-slot numbering (see ssa.h) instead of re-deriving
+ * Varian's shadowing/scoping rules from scratch. */
+int compiler_add_local(Compiler *compiler, const char *name);
+int compiler_find_local(Compiler *compiler, const char *name);
 
 /* ─── Frame and Try support types ─── */
 #define MAX_TRY_NESTING 16
@@ -539,6 +576,8 @@ struct Task {
     void  *http_response_ssl; /* opaque to the VM (an OpenSSL SSL*, cast by lib_http.c) --
                                  companion to http_response_fd for a deferred handler on a
                                  TLS connection; NULL for plain HTTP. */
+    bool   http_stream_started; /* native chunked response state for this handler */
+    bool   http_stream_ended;
     void  *http_pending_conns; /* opaque to the VM -- owned and cast by lib_http.c.
                                   Holds the set of accepted-but-not-yet-fully-read or
                                   kept-alive connections this task's http.serve() is
@@ -613,6 +652,11 @@ typedef struct VM {
 
     Compiler *compiler;
     bool had_error;
+    /* Non-zero while a VARIAN_SSA_SHADOW_MODE reference run is in progress, so
+     * nested native wrappers delegate straight to their boxed bodies. Keeps the
+     * reference run genuinely all-boxed, and keeps its cost linear rather than
+     * exponential in call depth. Always zero in a normal build. */
+    int ssa_shadow_ref;
     bool suppress_error_print;
     char last_error[512];
     /* Method dispatch table: (type_name, method_name) → function Value */
@@ -709,7 +753,8 @@ void vm_init(VM *vm, Compiler *compiler);
    Returns true if no errors occurred during main execution AND all tests passed. */
 bool vm_run(VM *vm, bool run_tests);
 void close_upvalues(VM *vm, CallFrame *frame);
-int aot_compile(const char *source, const char *filename, const char *out_path);
+int aot_compile(const char *source, const char *filename, const char *out_path,
+                int user_source_offset, bool dump_suspend, bool dump_ssa);
 
 /* Execute a task's bytecode synchronously (used by native functions). */
 bool task_run(VM *vm, Task *task);

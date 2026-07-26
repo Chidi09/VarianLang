@@ -53,60 +53,42 @@ After both, users just search **Varian** in Extensions and click Install.
 Zed has no upload command — its registry is the **`zed-industries/extensions`**
 repo, and it **builds every extension from source in CI**. Two pieces:
 
-### `editors/zed-varian` (grammar, highlighting, themes, icons) — registry-ready
-No native code; Zed builds the tree-sitter grammar from `Chidi09/tree-sitter-varian`.
-To publish:
+### The extension lives in its own repo: https://github.com/Chidi09/zed-varian
 
-1. Fork `zed-industries/extensions`.
-2. Add this repo as a submodule under `extensions/varian` and an entry in
-   `extensions.toml`:
+It is **not** in this repo. `editors/zed-varian/` was removed on 2026-07-23 and
+moved out, because Zed's registry requires `extension.toml` at the repo root and
+consumes the extension as a git submodule. Keeping a second copy here would only
+let the two drift.
+
+That repo contains the grammar reference, highlight queries, themes, icons, and
+the Rust `vn lsp` adapter. Its README covers installing, pointing Zed at a
+specific `vn` build, and validating highlight queries.
+
+Also removed at the same time: the separate `zed-varian-lsp` extension. Zed
+loaded it (`Loaded language server: varian-lsp` appears in the remote-server
+log) but never once spawned `vn lsp` — no spawn attempt and no error, across
+every log on the box. A language server declared in one extension was not being
+matched to a language declared in another, so the server declaration now lives
+in the same extension as the languages.
+
+To publish to the registry:
+
+1. Fork `zed-industries/extensions` (already forked: `Chidi09/extensions`).
+2. Add `Chidi09/zed-varian` as a submodule under `extensions/varian`, plus an
+   entry in `extensions.toml`:
 
    ```toml
    [varian]
    submodule = "extensions/varian"
-   path = "editors/zed-varian"
    version = "0.1.0"
    ```
+
+   No `path` key — that is only needed when the extension sits in a
+   subdirectory of its repo, which it no longer does.
 3. Run their `./scripts/sort-extensions.sh`, commit, open a PR. Zed maintainers
-   review + merge; then it's installable from Zed's Extensions panel.
+   review + merge; then it is installable from Zed's Extensions panel.
 
-### `editors/zed-varian-lsp` (the `vn lsp` adapter) — needs Rust source first
-This extension currently ships only a prebuilt `extension.wasm`. Zed's registry
-**will not accept a checked-in wasm** — it compiles the adapter from Rust. Add a
-crate next to `extension.toml` (and drop the `wasm = { path = … }` line so Zed
-builds it):
-
-```toml
-# Cargo.toml
-[package]
-name = "zed_varian_lsp"
-version = "0.1.0"
-edition = "2021"
-[lib]
-crate-type = ["cdylib"]
-[dependencies]
-zed_extension_api = "0.2"   # pin to the version current Zed expects
-```
-
-```rust
-// src/lib.rs
-use zed_extension_api as zed;
-struct Varian;
-impl zed::Extension for Varian {
-    fn new() -> Self { Varian }
-    fn language_server_command(
-        &mut self, _id: &zed::LanguageServerId, _wt: &zed::Worktree,
-    ) -> zed::Result<zed::Command> {
-        Ok(zed::Command { command: "vn".into(), args: vec!["lsp".into()], env: vec![] })
-    }
-}
-zed::register_extension!(Varian);
-```
-
-Verify locally with the Zed toolchain (`zed: install dev extension`) before the
-registry PR, since `zed_extension_api` versions change. Until then, the LSP
-works as a one-time dev-extension install.
-
-> Until the registry PRs merge, both Zed extensions install via the command
-> palette → **`zed: install dev extension`** → pick `editors/zed-varian` then
-> `editors/zed-varian-lsp`.
+> Until that PR merges, install via the command palette →
+> **`zed: install dev extension`** → pick a clone of `Chidi09/zed-varian`.
+> If you previously installed `varian-lsp`, **uninstall it first** — two
+> extensions declaring the same server name will conflict.

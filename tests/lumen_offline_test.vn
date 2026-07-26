@@ -1,0 +1,36 @@
+test "offline registration is exact opt-in browser behavior" {
+    let marker = lumen_offline("/lumen-sw.js", "/app/")
+    let actions = _lumen_scan_directives(marker)
+    assert_eq(actions.len(), 1)
+    assert_eq(actions[0], "offline")
+    let js = _lumen_client_js_with_manifest(actions)
+    assert_ne(js.index_of("serviceWorker.register"), -1)
+    assert_ne(marker.index_of("data-lumen-scope=\"/app/\""), -1)
+    assert_eq(_lumen_scan_directives("<main>online</main>").len(), 0)
+}
+
+test "offline worker is versioned explicit and navigation safe" {
+    let js = _lumen_offline_worker_source("v7", ["/app.css", "/logo.svg", "/app.css"], "/offline")
+    assert_ne(js.index_of("lumen:v7"), -1)
+    assert_eq(lumen_test_count(js, "/app.css"), 1)
+    assert_ne(js.index_of("r.mode==='navigate'"), -1)
+    assert_ne(js.index_of("fetch(r).catch(()=>caches.match(F))"), -1)
+    assert_ne(js.index_of("k.startsWith('lumen:')&&k!==C"), -1)
+    assert_throws(| | { _lumen_offline_worker_source("v1", ["https://example.com/x"], "/offline") })
+    assert_throws(| | { lumen_offline("//evil.test/sw.js", "/") })
+}
+
+test "offline worker mount serves JavaScript without generated assets" {
+    let app = new_app()
+    let path = lumen_mount_offline(app, "/lumen-sw.js", "build-42", ["/app.css"], "/offline")
+    assert_eq(path, "/lumen-sw.js")
+    let response = app.handle(http.create_struct(
+        ["method", "path", "query", "body", "json", "headers", "scheme", "host"],
+        ["GET", "/lumen-sw.js", "", "", null, http.create_struct([], []), "https", "example.test"]
+    ))
+    assert_eq(response.status, 200)
+    assert_eq(response.content_type, "application/javascript; charset=utf-8")
+    assert_ne(response.body.index_of("lumen:build-42"), -1)
+    assert_eq(_validate.get_field(response.headers, "Cache-Control"), "no-cache")
+    assert_eq(_validate.get_field(response.headers, "Service-Worker-Allowed"), "/")
+}

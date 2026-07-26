@@ -1,0 +1,70 @@
+<template>
+<Page>
+  <Nav />
+  <Section>
+    <Container size="sm">
+      <Stack gap="6">
+        <Heading size="4xl" as="h1">Checkout</Heading>
+        <Card>
+          <Stack gap="4">
+            <Heading size="lg" as="h2">Shipping Information</Heading>
+            <input class="field" id="co-name" placeholder="Full Name" required />
+            <input class="field" id="co-email" type="email" placeholder="Email" required />
+            <input class="field" id="co-address" placeholder="Address" required />
+            <Row gap="3">
+              <input class="field" id="co-city" placeholder="City" style="flex:1" required />
+              <input class="field" id="co-zip" placeholder="ZIP" style="flex:1" required />
+            </Row>
+          </Stack>
+        </Card>
+        <Card>
+          <Stack gap="4">
+            <Heading size="lg" as="h2">Payment</Heading>
+            <input class="field" id="co-card" placeholder="Card Number" required />
+            <Row gap="3">
+              <input class="field" id="co-exp" placeholder="MM/YY" style="flex:1" required />
+              <input class="field" id="co-cvc" placeholder="CVC" style="flex:1" required />
+            </Row>
+          </Stack>
+        </Card>
+        <Button onclick="doCheckout(event)">Place Order</Button>
+      </Stack>
+    </Container>
+  </Section>
+  <Footer />
+</Page>
+</template>
+
+<script>
+fn state() { return {} }
+
+</script>
+<client>
+window.doCheckout = async function(event) {
+  event.preventDefault();
+  let name = document.getElementById('co-name').value;
+  let email = document.getElementById('co-email').value;
+  if (!name || !email) return alert('Name and Email are required.');
+  let btn = event.target;
+  let original = btn.textContent;
+  btn.textContent = 'Processing...';
+  try {
+    let res = await fetch('/api/checkout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: name, email: email })
+    });
+    if (res.ok) {
+      btn.textContent = 'Success!';
+      window.dispatchEvent(new CustomEvent('cart-updated'));
+      setTimeout(() => window.location.href = '/account', 1000);
+    } else {
+      btn.textContent = 'Error';
+      setTimeout(() => btn.textContent = original, 2000);
+    }
+  } catch(e) {
+    btn.textContent = 'Error';
+    setTimeout(() => btn.textContent = original, 2000);
+  }
+};
+</client>

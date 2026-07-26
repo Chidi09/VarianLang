@@ -1,0 +1,96 @@
+<template>
+<Page>
+  <Nav />
+  <div class="hero-section">
+    <div class="hero-inner">
+      <h1 class="hero-title">Text us to shop.</h1>
+      <p class="hero-subtitle">Meet your new AI shopping assistant. Find exactly what you need, just by chatting.</p>
+      <a href="/chat" class="cta-button">Start Chatting</a>
+    </div>
+  </div>
+  <section class="aurora-featured">
+    <div class="featured-inner">
+      <h2 class="section-title">Featured Products</h2>
+      <div class="product-grid">
+        {{#each products as p}}
+          <a href="/catalog" class="product-card-link">
+            <ProductCard id="{{ p.id }}" name="{{ p.name }}" price="{{ p.price }}" stock="{{ p.stock }}" image="{{ p.image }}" />
+          </a>
+        {{/each}}
+      </div>
+    </div>
+  </section>
+  <Footer />
+</Page>
+</template>
+
+<style scoped>
+.hero-section {
+  padding: 6rem 1.25rem;
+  text-align: center;
+  background: var(--lumen-surface);
+  border-bottom: 1px solid var(--lumen-border);
+}
+.hero-inner {
+  max-width: 800px;
+  margin: 0 auto;
+}
+.hero-title {
+  font-size: 3.5rem;
+  font-family: var(--font-display);
+  font-weight: 800;
+  margin: 0 0 1rem;
+  color: var(--lumen-fg);
+  letter-spacing: -0.02em;
+}
+.hero-subtitle {
+  font-size: 1.25rem;
+  color: var(--lumen-muted-fg);
+  margin: 0 0 2rem;
+}
+.cta-button {
+  display: inline-block;
+  padding: 0.75rem 1.5rem;
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: 12px;
+  background: var(--lumen-primary);
+  color: var(--lumen-primary-fg);
+  text-decoration: none;
+  transition: opacity 0.2s ease;
+}
+.cta-button:hover {
+  opacity: 0.9;
+}
+.aurora-featured {
+  padding: 4rem 1.25rem 6rem;
+}
+.featured-inner {
+  max-width: 1040px;
+  margin: 0 auto;
+}
+.section-title {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin: 0 0 2rem;
+  color: var(--lumen-fg);
+}
+.product-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+.product-card-link {
+  text-decoration: none;
+  color: inherit;
+}
+@media(max-width:768px) {
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+}
+</style>
+
+<script>
+fn state() { return { products: [] } }
+</script>

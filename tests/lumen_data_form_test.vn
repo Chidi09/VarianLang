@@ -1,0 +1,117 @@
+fn _form_fields() {
+    return [
+        { name: "name", label: "Display <name>", validator: validate.str().trim().min(2), required: true, autocomplete: "name" },
+        { name: "age", label: "Age", "type": "number", validator: validate.num().min(18) },
+        { name: "role", label: "Role", "type": "select", "options": [
+            { value: "author", label: "Author" }, { value: "reader", label: "Reader" }
+        ] },
+        { name: "terms", label: "Terms", "type": "checkbox", validator: validate.bool() }
+    ]
+}
+
+test "headless data form preserves passthrough fields and typed values" {
+    let submitted = [null]
+    let form = data_form({
+        fields: _form_fields(),
+        initial_values: { name: "Ada", age: 20, role: "reader", terms: false },
+        on_submit: |values| {
+            submitted[0] = values
+            return { ok: true, message: "Profile updated" }
+        }
+    })
+    let _ = (form.set_field)("name", "  Grace  ")
+    let _ = (form.set_field)("age", "42")
+    let _ = (form.set_field)("role", "author")
+    let _ = (form.set_field)("terms", "true")
+    let _ = (form.submit)()
+    assert_eq((form.status)(), "saved")
+    assert_eq((form.message)(), "Profile updated")
+    assert_eq(submitted[0].name, "Grace")
+    assert_eq(submitted[0].age, 42)
+    assert_eq(submitted[0].role, "author")
+    assert_eq(submitted[0].terms, true)
+
+    let _ = (form.reset)()
+    assert_eq((form.values)().name, "Ada")
+    assert_eq((form.status)(), "idle")
+}
+
+test "structured submit failures expose field and form errors" {
+    let form = data_form({
+        fields: _form_fields(), initial_values: { name: "Ada", age: 20, role: "reader", terms: true },
+        on_submit: |values| { return { ok: false, message: "Please review", errors: { name: "Already used" } } }
+    })
+    let _ = (form.submit)()
+    assert_eq((form.status)(), "error")
+    assert_eq((form.message)(), "Please review")
+    assert_eq((form.errors)().name, "Already used")
+}
+
+test "form renderer is accessible native HTML with exact enhancement" {
+    let form = data_form({
+        fields: _form_fields(), action: "/profiles", method: "post",
+        initial_values: { name: "Ada", age: 20, role: "reader", terms: true }
+    })
+    let html = _data_form_html(form)
+    assert_ne(html.index_of("method=\"post\" action=\"/profiles\""), -1)
+    assert_ne(html.index_of("name=\"name\""), -1)
+    assert_ne(html.index_of("for=\"lmn-field-name\""), -1)
+    assert_ne(html.index_of("Display &lt;name&gt;"), -1)
+    assert_ne(html.index_of("<select id=\"lmn-field-role\""), -1)
+    assert_ne(html.index_of("value=\"reader\" selected"), -1)
+    assert_ne(html.index_of("type=\"checkbox\""), -1)
+    assert_ne(html.index_of(" checked"), -1)
+    let manifest = _lumen_scan_directives(html)
+    assert_eq(manifest.len(), 1)
+    assert_eq(manifest[0], "events")
+
+    let native = data_form({ fields: _form_fields(), action: "/profiles", enhance: false })
+    let native_html = _data_form_html(native)
+    assert_eq(native_html.index_of("data-lumen-submit"), -1)
+    assert_eq(native_html.index_of("data-lumen-input"), -1)
+    assert_eq(native_html.index_of("data-lumen-change"), -1)
+    assert_eq(_lumen_scan_directives(native_html).len(), 0)
+}
+
+test "live component submit accepts authoritative FormData payload" {
+    let captured = [null]
+    let component = data_form_component({
+        fields: _form_fields(),
+        on_submit: |values| { captured[0] = values; return { ok: true, message: "Created" } }
+    })
+    let state = (component.state_fn)()
+    let result = lumen_test_event(component, state, "df_submit", {
+        name: "Katherine", age: "35", role: "author", terms: true
+    })
+    assert_eq(result.state.status, "saved")
+    assert_eq(result.state.message, "Created")
+    assert_eq(captured[0].age, 35)
+    assert_eq(captured[0].role, "author")
+}
+
+test "authoritative FormData clears an omitted unchecked checkbox" {
+    let captured = [null]
+    let component = data_form_component({
+        fields: _form_fields(),
+        initial_values: { name: "Ada", age: 20, role: "reader", terms: true },
+        on_submit: |values| { captured[0] = values; return { ok: true } }
+    })
+    let state = (component.state_fn)()
+    let result = lumen_test_event(component, state, "df_submit", {
+        name: "Ada", age: "20", role: "reader"
+    })
+    assert_eq(result.state.status, "saved")
+    assert_eq(captured[0].terms, false)
+}
+
+test "form contracts reject duplicate unsafe and unsupported fields" {
+    assert_throws(| | { data_form({ fields: [{ name: "bad-name" }] }) })
+    assert_throws(| | { data_form({ fields: [{ name: "same" }, { name: "same" }] }) })
+    assert_throws(| | { data_form({ fields: [{ name: "avatar", "type": "file" }] }) })
+    assert_throws(| | { data_form({ fields: [{ name: "role", "type": "select" }] }) })
+    assert_throws(| | { data_form({ fields: [], method: "delete" }) })
+    assert_throws(| | { data_form({ fields: "not-an-array" }) })
+    assert_throws(| | { data_form({ fields: [], enhance: "yes" }) })
+    assert_throws(| | { data_form({ fields: [], initial_values: [] }) })
+    assert_throws(| | { data_form({ fields: [], action: "/save\nInjected" }) })
+}

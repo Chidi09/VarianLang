@@ -62,7 +62,7 @@ typedef struct {
     char *method_names[256];
     int method_count;
     /* Plain function signature registry (for named arguments) */
-    FunctionSig functions[256];
+    FunctionSig functions[1024];
     int function_count;
 } Parser;
 

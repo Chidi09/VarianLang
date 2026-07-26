@@ -8,6 +8,7 @@
 #include "vnb.h"
 #include "lint.h"
 #include "lsp.h"
+#include "semantic.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,7 @@
  * cluster worker threads can independently re-load the same script. */
 const char *g_varian_script_path = NULL;
 static int g_prelude_line_count = 0;
+static int g_prelude_byte_count = 0;
 
 static uint64_t fnv1a_hash(const char *str, size_t len) {
     uint64_t hash = 0xcbf29ce484222325ULL;
@@ -264,32 +266,46 @@ static const char *resolve_vn_modules_dir(void) {
 }
 
 /* ─── Read source with module prelude from vn_modules/ ─── */
+static int s_module_depth = 0;
+
 char *read_file_with_modules(const char *path) {
+    s_module_depth++;
     char *main_source = read_file(path);
-    if (!main_source) return NULL;
+    if (!main_source) { s_module_depth--; return NULL; }
 
     const char *mod_dir = resolve_vn_modules_dir();
     char *prelude = mod_dir ? read_directory_sources(mod_dir) : NULL;
     if (!prelude) {
-        g_prelude_line_count = 0;
+        if (s_module_depth == 1) {
+            g_prelude_line_count = 0;
+            g_prelude_byte_count = 0;
+        }
+        s_module_depth--;
         return main_source;
     }
 
     size_t prelude_len = strlen(prelude);
-    g_prelude_line_count = 1; // Since we append a newline below
+    int prelude_lines = 0;
     for (size_t i = 0; i < prelude_len; i++) {
-        if (prelude[i] == '\n') g_prelude_line_count++;
+        if (prelude[i] == '\n') prelude_lines++;
+    }
+    prelude_lines++; /* +1 for the separator '\n' between prelude and main_source */
+
+    if (s_module_depth == 1) {
+        g_prelude_line_count = prelude_lines;
+        g_prelude_byte_count = (int)prelude_len + 1;
     }
 
     size_t main_len = strlen(main_source);
     char *combined = (char *)malloc(prelude_len + 1 + main_len + 1);
-    if (!combined) { free(prelude); return main_source; }
+    if (!combined) { free(prelude); s_module_depth--; return main_source; }
     memcpy(combined, prelude, prelude_len);
     combined[prelude_len] = '\n';
     memcpy(combined + prelude_len + 1, main_source, main_len);
     combined[prelude_len + 1 + main_len] = '\0';
     free(prelude);
     free(main_source);
+    s_module_depth--;
     return combined;
 }
 
@@ -306,10 +322,24 @@ static void print_source_caret(const char *source, int line, int col) {
     fprintf(stderr, "^\n");
 }
 
+static void user_loc_from_offset(const char *source, int user_offset, int offset,
+                                 int *line_out, int *col_out) {
+    int line = 1, col = 1;
+    if (offset < user_offset) offset = user_offset;
+    for (int i = user_offset; source[i] && i < offset; i++) {
+        if (source[i] == '\n') { line++; col = 1; }
+        else col++;
+    }
+    *line_out = line;
+    *col_out = col;
+}
+
 /* ─── Run source string ─── */
-static int run_source(const char *source, const char *filename) {
+static int run_source(const char *source, const char *filename, int prelude_line_count) {
+    int user_byte_offset = prelude_line_count > 0 ? g_prelude_byte_count : 0;
     Lexer lexer;
     lexer_init(&lexer, source, filename);
+    lexer_set_user_source_offset(&lexer, user_byte_offset);
 
     Arena *arena = arena_create(0);
     Parser parser;
@@ -321,7 +351,7 @@ static int run_source(const char *source, const char *filename) {
         int line = 0, col = 0;
         int adjusted_line = 0;
         if (sscanf(msg, "[%d:%d]", &line, &col) == 2) {
-            adjusted_line = line - g_prelude_line_count;
+            adjusted_line = line - prelude_line_count;
             if (adjusted_line <= 0) adjusted_line = line; // fallback
             fprintf(stderr, "Parse error in %s:%d:%d\n", filename ? filename : "<script>", adjusted_line, col);
         } else {
@@ -342,6 +372,28 @@ static int run_source(const char *source, const char *filename) {
         arena_destroy(arena);
         return 1;
     }
+
+    SemanticResult *sem = semantic_analyze(program);
+    int user_errors = 0;
+    for (int i = 0; i < sem->count; i++) {
+        SemanticDiagnostic *diag = &sem->diagnostics[i];
+        if (!diag->filename || strcmp(diag->filename, "<prelude>") != 0) {
+            int user_line, user_col;
+            user_loc_from_offset(source, user_byte_offset, diag->offset,
+                                 &user_line, &user_col);
+            fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                    filename ? filename : "<script>", user_line, user_col,
+                    diag->code, diag->message);
+            print_source_caret(source + user_byte_offset, user_line, user_col);
+            user_errors++;
+        }
+    }
+    if (user_errors > 0) {
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        return 1;
+    }
+    semantic_result_free(sem);
 
     if (getenv("VN_DEBUG_AST")) {
         printf("=== AST ===\n");
@@ -430,10 +482,78 @@ static int lumen_build(const char *pages, const char *out, const char *port) {
     char *bsrc = read_file_with_modules(boot);
     if (!bsrc) { remove(boot); return 1; }
     g_varian_script_path = boot;
-    int r = run_source(bsrc, boot);
+    int r = run_source(bsrc, boot, g_prelude_line_count);
     free(bsrc);
     remove(boot);
     return r;
+}
+
+/* Compile pages as a mount function instead of a standalone server. Aurora
+ * prepends this generated module to main.vn, whose single Zenith app owns API,
+ * page, live, and static routes on one listener. */
+static int lumen_build_aurora(const char *pages, const char *out, const char *port) {
+    const char *boot = ".lumen-aurora-boot.vn";
+    FILE *bf = fopen(boot, "wb");
+    if (!bf) { fprintf(stderr, "aurora: cannot create %s\n", boot); return 1; }
+    fprintf(bf, "_lumen_build_aurora_dir(\"%s\", \"%s\", %s)\n", pages, out, port);
+    fclose(bf);
+    char *bsrc = read_file_with_modules(boot);
+    if (!bsrc) { remove(boot); return 1; }
+    g_varian_script_path = boot;
+    int r = run_source(bsrc, boot, g_prelude_line_count);
+    free(bsrc);
+    remove(boot);
+    return r;
+}
+
+static bool lumen_project_is_aurora(void) {
+    struct stat st;
+    if (stat("constellation.toml", &st) != 0) return false;
+    ConstellationManifest manifest;
+    return pkg_manifest_load(&manifest, "constellation.toml") &&
+           manifest.kind == MANIFEST_KIND_AURORA;
+}
+
+static int lumen_compose_aurora(const char *routes_path, const char *entry_path,
+                                const char *out_path) {
+    char *routes = read_file(routes_path);
+    char *entry = read_file(entry_path);
+    if (!routes || !entry) {
+        fprintf(stderr, "aurora: cannot compose %s with %s\n", routes_path, entry_path);
+        free(routes); free(entry);
+        return 1;
+    }
+    FILE *out = fopen(out_path, "wb");
+    if (!out) { free(routes); free(entry); return 1; }
+    fputs("// AUTO-GENERATED Aurora integration — do not edit.\n", out);
+    fputs(routes, out);
+    fputc('\n', out);
+    fputs(entry, out);
+    int failed = ferror(out);
+    fclose(out);
+    free(routes); free(entry);
+    return failed ? 1 : 0;
+}
+
+static int lumen_prepare_dev_app(const char *pages, const char *app,
+                                 const char *port, bool aurora) {
+    if (!aurora) return lumen_build(pages, app, port);
+    const char *routes = ".lumen-aurora-routes.vn";
+    if (lumen_build_aurora(pages, routes, port) != 0) return 1;
+    int r = lumen_compose_aurora(routes, "main.vn", app);
+    remove(routes);
+    return r;
+}
+
+static long lumen_pages_fingerprint(const char *dir);
+
+static long lumen_dev_fingerprint(const char *pages, bool aurora) {
+    long fingerprint = lumen_pages_fingerprint(pages);
+    if (aurora) {
+        struct stat st;
+        if (stat("main.vn", &st) == 0) fingerprint += (long)st.st_mtime + (long)st.st_size;
+    }
+    return fingerprint;
 }
 
 /* Recursively copy a directory tree (used to drop public/ into the static
@@ -480,17 +600,43 @@ static int lumen_export(const char *pages, const char *out_dir, const char *base
     char *bsrc = read_file_with_modules(boot);
     if (!bsrc) { remove(boot); return 1; }
     g_varian_script_path = boot;
-    int r = run_source(bsrc, boot);
+    int r = run_source(bsrc, boot, g_prelude_line_count);
     free(bsrc);
     remove(boot);
     if (r != 0) { remove(render); return r; }
 
-    char *rsrc = read_file_with_modules(render);
-    if (!rsrc) { remove(render); return 1; }
-    g_varian_script_path = render;
-    r = run_source(rsrc, render);
-    free(rsrc);
+    char count_path[2100];
+    snprintf(count_path, sizeof(count_path), "%s.count", render);
+    char *count_text = read_file(count_path);
+    int page_count = count_text ? atoi(count_text) : 0;
+    free(count_text);
+    if (page_count < 1 || page_count > 100000) {
+        fprintf(stderr, "lumen: invalid static render page count\n");
+        remove(render); remove(count_path);
+        return 1;
+    }
+    for (int page = 0; page < page_count; page++) {
+        char index[32];
+        snprintf(index, sizeof(index), "%d", page);
+#ifdef _WIN32
+        _putenv_s("LUMEN_SSG_PAGE", index);
+#else
+        setenv("LUMEN_SSG_PAGE", index, 1);
+#endif
+        char *rsrc = read_file_with_modules(render);
+        if (!rsrc) { r = 1; break; }
+        g_varian_script_path = render;
+        r = run_source(rsrc, render, g_prelude_line_count);
+        free(rsrc);
+        if (r != 0) break;
+    }
+#ifdef _WIN32
+    _putenv_s("LUMEN_SSG_PAGE", "");
+#else
+    unsetenv("LUMEN_SSG_PAGE");
+#endif
     remove(render);
+    remove(count_path);
     if (r != 0) return r;
 
     struct stat st_pub;
@@ -695,8 +841,9 @@ static int lumen_copy_assets(const char *public_dir) {
  * running and prints the error, rather than dropping the page. */
 static int lumen_dev(const char *pages, const char *port) {
     const char *app = ".lumen-build.vn";
+    bool aurora = lumen_project_is_aurora();
     double t0 = lumen_now_ms();
-    if (lumen_build(pages, app, port) != 0) {
+    if (lumen_prepare_dev_app(pages, app, port, aurora) != 0) {
         fprintf(stderr, "lumen: build failed.\n");
         return 1;
     }
@@ -707,7 +854,7 @@ static int lumen_dev(const char *pages, const char *port) {
         char *asrc = read_file_with_modules(app);
         if (!asrc) return 1;
         g_varian_script_path = app;
-        int r = run_source(asrc, app);
+        int r = run_source(asrc, app, g_prelude_line_count);
         free(asrc);
         return r;
     }
@@ -722,17 +869,17 @@ static int lumen_dev(const char *pages, const char *port) {
     const char *RED= color ? "\033[38;5;203m" : "";
     const char *R  = color ? LUM_RESET  : "";
 
-    long last = lumen_pages_fingerprint(pages);
+    long last = lumen_dev_fingerprint(pages, aurora);
 #ifdef _WIN32
     HANDLE hChild = (HANDLE)(intptr_t)child;
     for (;;) {
         Sleep(400);
         if (WaitForSingleObject(hChild, 0) == WAIT_OBJECT_0) break;
-        long now = lumen_pages_fingerprint(pages);
+        long now = lumen_dev_fingerprint(pages, aurora);
         if (now != last && now != -1) {
             last = now;
             double rt0 = lumen_now_ms();
-            if (lumen_build(pages, app, port) == 0) {
+            if (lumen_prepare_dev_app(pages, app, port, aurora) == 0) {
                 TerminateProcess(hChild, 0);
                 WaitForSingleObject(hChild, INFINITE);
                 CloseHandle(hChild);
@@ -752,11 +899,11 @@ static int lumen_dev(const char *pages, const char *port) {
         nanosleep(&poll, NULL);
         int status;
         if (waitpid(child, &status, WNOHANG) == child) break;
-        long now = lumen_pages_fingerprint(pages);
+        long now = lumen_dev_fingerprint(pages, aurora);
         if (now != last && now != -1) {
             last = now;
             double rt0 = lumen_now_ms();
-            if (lumen_build(pages, app, port) == 0) {
+            if (lumen_prepare_dev_app(pages, app, port, aurora) == 0) {
                 kill(child, SIGTERM);
                 waitpid(child, NULL, 0);
                 child = lumen_spawn_server(app);
@@ -816,16 +963,15 @@ static int lumen_new(const char *name) {
     if (mf) {
         fputs("// Aurora — fullstack Varian app.\n", mf);
         fputs("//\n", mf);
-        fputs("// Your Lumen UI lives in pages/ and is served by `vn dev` (development)\n", mf);
-        fputs("// and `vn build` (production). main.vn is the Zenith backend half:\n", mf);
-        fputs("// the custom JSON / API endpoints your frontend calls. Run it with:\n", mf);
-        fputs("//   vn run main.vn\n\n", mf);
+        fputs("// `vn dev` and `vn build main.vn` generate aurora_mount_pages(app)\n", mf);
+        fputs("// from pages/ and compose it with this backend on one Zenith app.\n\n", mf);
         fputs("let app = new_app()\n\n", mf);
         fputs("// Example API route. Add your own below; the frontend fetches these.\n", mf);
         fputs("app.get(\"/api/health\", |_req| {\n", mf);
-        fputs("  return Response { status: 200, body: \"{\\\"ok\\\":true}\", content_type: \"application/json\" }\n", mf);
+        fputs("  return json_response({ ok: true }, 200)\n", mf);
         fputs("}, \"Health check\", null)\n\n", mf);
-        fputs("app.listen(8091)\n", mf);
+        fputs("aurora_mount_pages(app)\n", mf);
+        fputs("app.listen(8090)\n", mf);
         fclose(mf);
     }
 
@@ -838,7 +984,7 @@ static int lumen_new(const char *name) {
         fputs("// environment and provide safe local fallbacks here. `use \"lib/config.vn\"`\n", lf);
         fputs("// from main.vn to share these across the backend.\n\n", lf);
         fprintf(lf, "let APP_NAME = \"%s\"\n", base);
-        fputs("let API_PORT = 8091\n", lf);
+        fputs("let API_PORT = 8090\n", lf);
         fclose(lf);
     }
 
@@ -1679,7 +1825,7 @@ static void repl(void) {
             break;
 
         if (strlen(line) > 0) {
-            run_source(line, "<repl>");
+            run_source(line, "<repl>", 0);
         }
     }
 }
@@ -2060,15 +2206,69 @@ int main(int argc, char *argv[]) {
         return pkg_wrap(argv[2]);
     }
 
-    if (strcmp(argv[1], "compile") == 0) {
+    if (strcmp(argv[1], "check") == 0) {
         if (argc < 3) {
-            fprintf(stderr, "Usage: %s compile <file.vn> [output.c]\n", argv[0]);
+            fprintf(stderr, "Usage: %s check <file.vn>\n", argv[0]);
             return 1;
         }
-        const char *out_path = (argc >= 4) ? argv[3] : "aot_output.c";
         char *source = read_file_with_modules(argv[2]);
         if (!source) return 1;
-        int result = aot_compile(source, argv[2], out_path);
+        Lexer lexer;
+        lexer_init(&lexer, source, argv[2]);
+        lexer_set_user_source_offset(&lexer, g_prelude_byte_count);
+        Arena *arena = arena_create(0);
+        Parser parser;
+        parser_init(&parser, &lexer, arena);
+        AstNode *program = parser_parse(&parser);
+        if (parser.had_error) {
+            fprintf(stderr, "Parse error: %s\n", parser_get_error(&parser));
+            arena_destroy(arena);
+            free(source);
+            return 1;
+        }
+        SemanticResult *sem = semantic_analyze(program);
+        int user_errors = 0;
+        for (int i = 0; i < sem->count; i++) {
+            SemanticDiagnostic *diag = &sem->diagnostics[i];
+            if (!diag->filename || strcmp(diag->filename, "<prelude>") != 0) {
+                int user_line, user_col;
+                user_loc_from_offset(source, g_prelude_byte_count, diag->offset,
+                                     &user_line, &user_col);
+                fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                        argv[2], user_line, user_col, diag->code, diag->message);
+                print_source_caret(source + g_prelude_byte_count, user_line, user_col);
+                user_errors++;
+            }
+        }
+        int res = 0;
+        if (user_errors > 0) {
+            res = 1;
+        } else {
+            printf("No semantic errors found in %s.\n", argv[2]);
+        }
+        semantic_result_free(sem);
+        arena_destroy(arena);
+        free(source);
+        return res;
+    }
+
+    if (strcmp(argv[1], "compile") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "Usage: %s compile <file.vn> [output.c] [--dump-suspend] [--dump-ssa]\n",
+                    argv[0]);
+            return 1;
+        }
+        const char *out_path = "aot_output.c";
+        bool dump_suspend = false;
+        bool dump_ssa = false;
+        for (int i = 3; i < argc; i++) {
+            if (strcmp(argv[i], "--dump-suspend") == 0) dump_suspend = true;
+            else if (strcmp(argv[i], "--dump-ssa") == 0) dump_ssa = true;
+            else out_path = argv[i];
+        }
+        char *source = read_file_with_modules(argv[2]);
+        if (!source) return 1;
+        int result = aot_compile(source, argv[2], out_path, g_prelude_byte_count, dump_suspend, dump_ssa);
         free(source);
         return result;
     }
@@ -2099,7 +2299,7 @@ int main(int argc, char *argv[]) {
         char *source = read_file_with_modules(target);
         if (!source) return 1;
         g_varian_script_path = target;
-        int result = run_source(source, target);
+        int result = run_source(source, target, g_prelude_line_count);
         free(source);
         return result;
     }
@@ -2113,15 +2313,27 @@ int main(int argc, char *argv[]) {
         const char *out_basename = "app";
         bool release = false;
         bool static_link = false;
+        bool dump_suspend = false;
+        bool dump_ssa = false;
+        /* Verification build: makes every natively-compiled function also run
+         * its boxed reference body and abort on any divergence. Never on by
+         * default — same spirit as a sanitizer build. See aot_native.h. */
+        bool ssa_shadow = false;
         const char *cc_compiler = getenv("CC");
         if (!cc_compiler) cc_compiler = "cc";
         const char *target_triple = NULL;
-        
+
         for (int i = 3; i < argc; i++) {
             if (strcmp(argv[i], "--release") == 0) {
                 release = true;
             } else if (strcmp(argv[i], "--static") == 0) {
                 static_link = true;
+            } else if (strcmp(argv[i], "--dump-suspend") == 0) {
+                dump_suspend = true;
+            } else if (strcmp(argv[i], "--dump-ssa") == 0) {
+                dump_ssa = true;
+            } else if (strcmp(argv[i], "--ssa-shadow") == 0) {
+                ssa_shadow = true;
             } else if (strncmp(argv[i], "--cc=", 5) == 0) {
                 cc_compiler = argv[i] + 5;
             } else if (strncmp(argv[i], "--target=", 9) == 0) {
@@ -2173,7 +2385,16 @@ int main(int argc, char *argv[]) {
             } else {
                 printf("[Kiln] Detected Lumen project (pages/ directory present). Pre-compiling routes...\n");
             }
-            if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
+            if (is_aurora) {
+                const char *routes = ".lumen-aurora-routes.vn";
+                if (lumen_build_aurora("pages", routes, "8090") != 0 ||
+                    lumen_compose_aurora(routes, entry, ".lumen-build.vn") != 0) {
+                    remove(routes);
+                    fprintf(stderr, "[Kiln] Aurora route composition failed.\n");
+                    return 1;
+                }
+                remove(routes);
+            } else if (lumen_build("pages", ".lumen-build.vn", "8090") != 0) {
                 fprintf(stderr, "[Kiln] Pre-compilation of Lumen pages failed.\n");
                 return 1;
             }
@@ -2187,7 +2408,9 @@ int main(int argc, char *argv[]) {
             return 1;
         }
         
-        // Scan public/ directory and collect assets
+        // Scan deploy-time asset directories. Email templates use the same
+        // VM asset lookup as public files so a built bundle/native binary does
+        // not depend on the source tree remaining beside it.
         VMAsset *assets = NULL;
         int asset_count = 0;
         int asset_capacity = 0;
@@ -2196,11 +2419,18 @@ int main(int argc, char *argv[]) {
             printf("[Kiln] Embedding public/ assets...\n");
             collect_assets_recursive("public", &assets, &asset_count, &asset_capacity);
         }
+        struct stat st_email_templates;
+        if (stat("email_templates", &st_email_templates) == 0 &&
+            S_ISDIR(st_email_templates.st_mode)) {
+            printf("[Kiln] Embedding email_templates/ assets...\n");
+            collect_assets_recursive("email_templates", &assets, &asset_count, &asset_capacity);
+        }
         
         // Cache lookup (incorporates source + release flag + asset contents)
         uint64_t hash_val = fnv1a_hash(source, strlen(source));
         hash_val = fnv1a_hash((const char *)&release, sizeof(bool)) ^ hash_val;
         hash_val = fnv1a_hash((const char *)&static_link, sizeof(bool)) ^ hash_val;
+        hash_val = fnv1a_hash((const char *)&ssa_shadow, sizeof(bool)) ^ hash_val;
         if (cc_compiler) hash_val ^= fnv1a_hash(cc_compiler, strlen(cc_compiler));
         if (target_triple) hash_val ^= fnv1a_hash(target_triple, strlen(target_triple));
         for (int i = 0; i < asset_count; i++) {
@@ -2244,7 +2474,7 @@ int main(int argc, char *argv[]) {
         if (release) {
             char out_c[256];
             snprintf(out_c, sizeof(out_c), "%s.c", out_basename);
-            int res = aot_compile(source, build_entry, out_c);
+            int res = aot_compile(source, build_entry, out_c, g_prelude_byte_count, dump_suspend, dump_ssa);
             free(source);
             if (temp_lumen_entry) remove(build_entry);
             if (res != 0) {
@@ -2287,6 +2517,10 @@ int main(int argc, char *argv[]) {
                 fprintf(f, "  ObjFunction *main_fn = varian_aot_load(&vm);\n"
                            "  vm.main_fn = main_fn;\n"
                            "  int res = vm_run(&vm, false) ? 0 : 1;\n"
+                           "  for (int i = 0; i < vm.asset_count; i++) free(vm.assets[i].path);\n"
+                           "  free(vm.assets);\n"
+                           "  vm.assets = NULL;\n"
+                           "  vm.asset_count = 0;\n"
                            "  vm_free(&vm);\n"
                            "  return res;\n"
                            "}\n");
@@ -2320,7 +2554,8 @@ int main(int argc, char *argv[]) {
                 snprintf(target_flag, sizeof(target_flag), "-target %s", target_triple);
             }
             const char *static_flag = static_link ? "-static" : "";
-            snprintf(cmd, sizeof(cmd), "%s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring", cc_compiler, static_flag, target_flag, exe_dir, out_c, out_basename, exe_dir);
+            const char *shadow_flag = ssa_shadow ? "-DVARIAN_SSA_SHADOW_MODE" : "";
+            snprintf(cmd, sizeof(cmd), "%s %s %s %s -O2 -I%s/include %s -o %s %s/libvarian.a -lm -lffi -ldl -lcurl -lpq -lcrypto -lssl -lsqlite3 -lhiredis -lpthread -luring -lz", cc_compiler, static_flag, target_flag, shadow_flag, exe_dir, out_c, out_basename, exe_dir);
             printf("Compiling native binary: %s\n", cmd);
             res = system(cmd);
             if (res == 0) {
@@ -2342,6 +2577,7 @@ int main(int argc, char *argv[]) {
         } else {
             Lexer lexer;
             lexer_init(&lexer, source, build_entry);
+            lexer_set_user_source_offset(&lexer, g_prelude_byte_count);
             Arena *arena = arena_create(0);
             Parser parser;
             parser_init(&parser, &lexer, arena);
@@ -2358,6 +2594,25 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             
+            SemanticResult *sem = semantic_analyze(program);
+            if (sem->had_error) {
+                for (int i = 0; i < sem->count; i++) {
+                    fprintf(stderr, "Semantic error in %s:%d:%d [%s]: %s\n",
+                            build_entry, sem->diagnostics[i].line, sem->diagnostics[i].column,
+                            sem->diagnostics[i].code, sem->diagnostics[i].message);
+                }
+                semantic_result_free(sem);
+                arena_destroy(arena);
+                free(source);
+                if (temp_lumen_entry) remove(build_entry);
+                if (assets) {
+                    for (int i = 0; i < asset_count; i++) { free(assets[i].path); free(assets[i].data); }
+                    free(assets);
+                }
+                return 1;
+            }
+            semantic_result_free(sem);
+
             Chunk chunk;
             chunk_init(&chunk);
             Compiler compiler;
@@ -2463,7 +2718,7 @@ int main(int argc, char *argv[]) {
         }
         
         g_varian_script_path = argv[1];
-        int result = run_source(source, argv[1]);
+        int result = run_source(source, argv[1], g_prelude_line_count);
         free(source);
         return result;
     }

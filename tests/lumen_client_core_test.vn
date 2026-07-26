@@ -1,0 +1,26 @@
+// LumenJS event-action regressions. Form handling is emitted only when a page
+// declares a data-lumen-* browser event.
+
+test "submit events serialize successful form controls" {
+    let js = _lumen_module("events")
+    assert_ne(js.index_of("new FormData(e)"), -1)
+    assert_ne(js.index_of("f.forEach"), -1)
+    assert_ne(js.index_of("hasOwnProperty.call(o,k)"), -1)
+    assert_ne(js.index_of("o[k]=[o[k]]"), -1)
+    assert_ne(js.index_of("input[type=checkbox][name]"), -1)
+    assert_ne(js.index_of("o[x.name]=x.checked"), -1)
+    assert_ne(js.index_of("window.__lumen_dispatch"), -1)
+}
+
+test "field events preserve browser control semantics" {
+    let js = _lumen_module("events")
+    assert_ne(js.index_of("e.type==='checkbox'"), -1)
+    assert_ne(js.index_of("e.type==='radio'"), -1)
+    assert_ne(js.index_of("e.multiple&&e.options"), -1)
+}
+
+test "file fields send metadata instead of empty JSON objects" {
+    let js = _lumen_module("events")
+    assert_ne(js.index_of("v instanceof File"), -1)
+    assert_ne(js.index_of("name:v.name,size:v.size,type:v.type"), -1)
+}

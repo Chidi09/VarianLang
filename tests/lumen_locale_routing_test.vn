@@ -1,0 +1,35 @@
+test "locale routing prioritizes explicit prefixes and strips them" {
+    let req = { path: "/fr/docs/start", headers: { accept_language: "de,en;q=0.8" } }
+    let route = lumen_locale_route(req, ["en", "fr", "de"], "en")
+    assert_eq(route.locale, "fr")
+    assert_eq(route.path, "/docs/start")
+    assert_eq(route.canonical_path, "/fr/docs/start")
+    assert_eq(route.prefixed, true)
+    assert_eq(route.source, "path")
+}
+
+test "locale routing negotiates quality regional fallback and default" {
+    let negotiated = lumen_locale_route(
+        { path: "/docs", headers: { accept_language: "es;q=0.4, fr-CA;q=0.9, en;q=0.8" } },
+        ["en", "fr", "de"], "en"
+    )
+    assert_eq(negotiated.locale, "fr")
+    assert_eq(negotiated.source, "header")
+    assert_eq(negotiated.canonical_path, "/fr/docs")
+
+    let fallback = lumen_locale_route({ path: "/", headers: {} }, ["en", "fr"], "en")
+    assert_eq(fallback.locale, "en")
+    assert_eq(fallback.source, "default")
+    assert_eq(fallback.canonical_path, "/en")
+}
+
+test "locale alternates are deterministic escaped and zero JS" {
+    let html = lumen_locale_alternates("docs?a=1&b=2", ["en", "fr"], "en")
+    assert_eq(lumen_test_count(html, "rel=\"alternate\""), 3)
+    assert_ne(html.index_of("hreflang=\"fr\""), -1)
+    assert_ne(html.index_of("hreflang=\"x-default\""), -1)
+    assert_ne(html.index_of("a=1&amp;b=2"), -1)
+    assert_eq(_lumen_scan_directives(html).len(), 0)
+    assert_throws(| | { lumen_locale_route({ path: "/" }, [], "en") })
+    assert_throws(| | { lumen_locale_route({ path: "/" }, ["fr"], "en") })
+}

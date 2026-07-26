@@ -35,6 +35,11 @@ attempt = attempt + 1
 `null`. Strings are immutable. There is no separate `byte`/`rune` runtime distinction
 yet even though those type-annotation keywords exist.
 
+`type_of(value)` returns the runtime category as a string. Primitive results are `nil`,
+`bool`, `int`, `float`, and `string`; collections and callables report categories such as
+`array`, `tuple`, `struct`, `function`, and `closure`. This is intended for schema,
+serialization, and boundary code—not as a replacement for ordinary polymorphism.
+
 ## Functions
 
 ```varian

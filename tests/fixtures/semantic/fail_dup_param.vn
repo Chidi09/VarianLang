@@ -1,0 +1,3 @@
+fn test_dup_param(a, a) {
+    return a
+}

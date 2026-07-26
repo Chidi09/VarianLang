@@ -1,0 +1,35 @@
+// lib/db.vn — Database connection and schema initialization
+// Defines the SQLite tables and structure.
+
+fn db_connect(db_path) {
+    let conn = sqlite.connect(db_path)
+
+    // Create users table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE, pass_hash TEXT NOT NULL, name TEXT NOT NULL DEFAULT '', created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create sessions table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS sessions (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER REFERENCES users(id), session_token TEXT UNIQUE, expires_at INTEGER, created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create scrapers table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS scrapers (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, prompt TEXT NOT NULL, created_by INTEGER REFERENCES users(id), created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create jobs table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, scraper_id INTEGER REFERENCES scrapers(id), target_url TEXT NOT NULL, depth INTEGER DEFAULT 1, status TEXT NOT NULL DEFAULT 'pending', progress INTEGER DEFAULT 0, started_at TEXT, finished_at TEXT, created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create datasets table (scraped pages and extracted data)
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS datasets (id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER REFERENCES jobs(id), url TEXT NOT NULL, title TEXT, status TEXT, extracted_json TEXT, created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create webhooks table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS webhooks (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, url TEXT NOT NULL, events TEXT, created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create api_keys table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS api_keys (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, token TEXT NOT NULL UNIQUE, user_id INTEGER REFERENCES users(id), created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create settings table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    // Create workflows table
+    sqlite.query(conn, "CREATE TABLE IF NOT EXISTS workflows (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, definition TEXT NOT NULL, schedule TEXT, last_run TEXT, created TEXT NOT NULL DEFAULT (datetime('now')))")
+
+    return conn
+}

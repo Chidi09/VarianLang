@@ -1,0 +1,20 @@
+use "lib/app_config.vn"
+use "lib/app_db.vn"
+use "lib/app_middleware.vn"
+use "lib/app_misc.vn"
+use "lib/app_products.vn"
+use "lib/app_cart.vn"
+use "lib/app_chat.vn"
+use "lib/app_orders.vn"
+use "lib/app_auth.vn"
+use "lib/pages.vn"
+use ".gen/pages.vn"
+let c = cfg()
+let conn = db_init(c.db_path)
+run_migrations(conn)
+print("STEP after migrations")
+let app = new_app()
+let bus = app_bus()
+print("STEP after app_bus")
+install_middleware(app, c)
+print("STEP after install_middleware")

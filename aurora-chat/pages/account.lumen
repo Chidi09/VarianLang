@@ -1,0 +1,82 @@
+<template>
+<Page>
+  <Nav />
+  <Section>
+    <Container size="md">
+      {{#if loggedIn}}
+        <Stack gap="6">
+          <Heading size="4xl" as="h1">My Account</Heading>
+          <Text muted={true}>Welcome back, {{! name }}!</Text>
+          <Card>
+            <Stack gap="4">
+              <Heading size="lg" as="h2">Order History</Heading>
+              {{#if hasOrders}}
+                {{#each orders as order}}
+                  <Card>
+                    <Row justify="space-between" align="center">
+                      <Stack gap="1">
+                        <Text>Order #{{! order.id }}</Text>
+                        <Text size="sm" muted={true}>{{! order.created }}</Text>
+                      </Stack>
+                      <Badge tone="success">{{! order.status }}</Badge>
+                    </Row>
+                  </Card>
+                {{/each}}
+              {{else}}
+                <div class="empty-state">
+                  <span class="material-symbols-rounded empty-icon">receipt_long</span>
+                  <Text>No orders yet.</Text>
+                </div>
+              {{/if}}
+            </Stack>
+          </Card>
+          <Button variant="outline" onclick="doLogout(event)">Sign Out</Button>
+        </Stack>
+      {{else}}
+        <Stack gap="6" align="center" style="text-align:center; margin-top:4rem;">
+          <span class="material-symbols-rounded empty-icon" style="font-size:4rem; color:var(--lumen-primary);">account_circle</span>
+          <Heading size="4xl" as="h1">My Account</Heading>
+          <Text muted={true}>Please sign in to view your account.</Text>
+          <Button href="/login">Sign In</Button>
+        </Stack>
+      {{/if}}
+    </Container>
+  </Section>
+  <Footer />
+</Page>
+</template>
+
+<style scoped>
+.empty-state {
+  padding:3rem 1rem;
+  text-align:center;
+  background:var(--lumen-surface);
+  border:1px dashed var(--lumen-border);
+  border-radius:12px;
+}
+.empty-icon {
+  font-size:2.5rem;
+  color:var(--lumen-muted-fg);
+  margin-bottom:0.5rem;
+  opacity:0.5;
+}
+</style>
+
+<script>
+fn state() { return { loggedIn: false, name: "", hasOrders: false, orders: [] } }
+
+</script>
+<client>
+window.doLogout = async function(event) {
+  event.preventDefault();
+  let btn = event.target;
+  let original = btn.textContent;
+  btn.textContent = 'Signing Out...';
+  try {
+    await fetch('/api/logout', { method: 'POST' });
+    window.location.href = '/';
+  } catch(e) {
+    btn.textContent = 'Error'; setTimeout(() => btn.textContent = original, 2000);
+  }
+};
+</client>

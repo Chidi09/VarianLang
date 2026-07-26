@@ -1,0 +1,1 @@
+let m = map.new(); m.set("Cookie", "test"); print(m["Cookie"])

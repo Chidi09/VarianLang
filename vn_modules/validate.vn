@@ -116,14 +116,17 @@ impl Validator {
 
         // Type verification
         if (self._type_check == "string") {
-            if (!_validate_is_string(v)) {
+            if (type_of(v) != "string") {
                 return http.create_struct(["success", "error"], [false, "Expected string"])
             }
         } else if (self._type_check == "number") {
-            try {
-                let dummy = v + 0
-            } catch e {
+            let value_type = type_of(v)
+            if (value_type != "int" and value_type != "float") {
                 return http.create_struct(["success", "error"], [false, "Expected number"])
+            }
+        } else if (self._type_check == "boolean") {
+            if (type_of(v) != "bool") {
+                return http.create_struct(["success", "error"], [false, "Expected boolean"])
             }
         }
 
@@ -207,10 +210,11 @@ impl ObjectValidator {
 }
 
 let validate = http.create_struct(
-    ["str", "num", "object"],
+    ["str", "num", "bool", "object"],
     [
         | | { return Validator { _type_check: "string", _checks: [], _transforms: [], _optional: false } },
         | | { return Validator { _type_check: "number", _checks: [], _transforms: [], _optional: false } },
+        | | { return Validator { _type_check: "boolean", _checks: [], _transforms: [], _optional: false } },
         |fields| { return ObjectValidator { _fields: fields, _optional: false } }
     ]
 )

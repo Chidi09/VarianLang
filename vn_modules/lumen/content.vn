@@ -1,0 +1,180 @@
+// ─── Lumen typed content collections ───
+// Build-time/server-side content discovery for docs, blogs, and catalogs.
+// Nothing in this file emits browser JavaScript.
+
+fn _lumen_content_string_before(a, b) {
+    let limit = a.len()
+    if b.len() < limit { limit = b.len() }
+    for i in 0..limit {
+        let ac = a.code_at(i)
+        let bc = b.code_at(i)
+        if ac < bc { return true }
+        if ac > bc { return false }
+    }
+    return a.len() < b.len()
+}
+
+fn _lumen_content_sort_strings(values) {
+    let out = []
+    for i in 0..values.len() {
+        let value = values[i]
+        let at = out.len()
+        for j in 0..out.len() {
+            if at == out.len() and _lumen_content_string_before(value, out[j]) { at = j }
+        }
+        out = out.push(value)
+        let k = out.len() - 1
+        while k > at {
+            out[k] = out[k - 1]
+            k = k - 1
+        }
+        out[at] = value
+    }
+    return out
+}
+
+fn _lumen_content_paths(dir, prefix) {
+    let names = io.list_dir(dir)
+    if names == null { return [] }
+    names = _lumen_content_sort_strings(names)
+    let paths = []
+    for i in 0..names.len() {
+        let name = names[i]
+        if name.starts_with(".") { continue }
+        let full = dir + "/" + name
+        let rel = name
+        if prefix != "" { rel = prefix + "/" + name }
+        if io.list_dir(full) != null {
+            let nested = _lumen_content_paths(full, rel)
+            for j in 0..nested.len() { paths = paths.push(nested[j]) }
+        } else if name.ends_with(".md") or name.ends_with(".json") {
+            paths = paths.push(http.create_struct(["path", "relative"], [full, rel]))
+        }
+    }
+    return paths
+}
+
+fn _lumen_content_scalar(raw) {
+    let value = _sanitize.trim(raw)
+    if value == "" { return "" }
+    try { return json_decode(value) } catch e {}
+    if value.starts_with("\"") and value.ends_with("\"") {
+        return value.substring(1, value.len() - 1)
+    }
+    if value.starts_with("'") and value.ends_with("'") {
+        return value.substring(1, value.len() - 1)
+    }
+    return value
+}
+
+fn _lumen_content_frontmatter(source) {
+    let data = http.create_struct([], [])
+    let body = source
+    if source.starts_with("---\n") == false {
+        return http.create_struct(["data", "body"], [data, body])
+    }
+    let close = source.index_of("\n---\n", 4)
+    if close < 0 { throw("Lumen content: unclosed frontmatter") }
+    let header = source.substring(4, close)
+    body = source.substring(close + 5, source.len())
+    let lines = header.split("\n")
+    for i in 0..lines.len() {
+        let line = _sanitize.trim(lines[i])
+        if line == "" or line.starts_with("#") { continue }
+        let colon = line.index_of(":")
+        if colon <= 0 { throw("Lumen content: invalid frontmatter line '" + line + "'") }
+        let key = _sanitize.trim(line.substring(0, colon))
+        let raw = line.substring(colon + 1, line.len())
+        data = _tpl_bind(data, key, _lumen_content_scalar(raw))
+    }
+    return http.create_struct(["data", "body"], [data, body])
+}
+
+fn _lumen_markdown_inline(text) {
+    // Escaping is mandatory. Rich inline transforms can be added only when
+    // they preserve this safe-by-default ordering.
+    return _sanitize.escape_html(text)
+}
+
+fn lumen_markdown(markdown) {
+    let lines = markdown.split("\n")
+    let html = ""
+    let in_code = false
+    let in_list = false
+    for i in 0..lines.len() {
+        let line = lines[i]
+        if line.starts_with("```") {
+            if in_list { html = html + "</ul>"; in_list = false }
+            if in_code { html = html + "</code></pre>" } else { html = html + "<pre><code>" }
+            in_code = in_code == false
+        } else if in_code {
+            html = html + _sanitize.escape_html(line) + "\n"
+        } else if line.starts_with("### ") {
+            if in_list { html = html + "</ul>"; in_list = false }
+            html = html + "<h3>" + _lumen_markdown_inline(line.substring(4, line.len())) + "</h3>"
+        } else if line.starts_with("## ") {
+            if in_list { html = html + "</ul>"; in_list = false }
+            html = html + "<h2>" + _lumen_markdown_inline(line.substring(3, line.len())) + "</h2>"
+        } else if line.starts_with("# ") {
+            if in_list { html = html + "</ul>"; in_list = false }
+            html = html + "<h1>" + _lumen_markdown_inline(line.substring(2, line.len())) + "</h1>"
+        } else if line.starts_with("- ") {
+            if in_list == false { html = html + "<ul>"; in_list = true }
+            html = html + "<li>" + _lumen_markdown_inline(line.substring(2, line.len())) + "</li>"
+        } else if _sanitize.trim(line) == "" {
+            if in_list { html = html + "</ul>"; in_list = false }
+        } else {
+            if in_list { html = html + "</ul>"; in_list = false }
+            html = html + "<p>" + _lumen_markdown_inline(line) + "</p>"
+        }
+    }
+    if in_list { html = html + "</ul>" }
+    if in_code { html = html + "</code></pre>" }
+    return html
+}
+
+fn _lumen_content_slug(relative) {
+    let slug = relative
+    if slug.ends_with(".json") { slug = slug.substring(0, slug.len() - 5) }
+    if slug.ends_with(".md") { slug = slug.substring(0, slug.len() - 3) }
+    if slug == "index" { return "" }
+    if slug.ends_with("/index") { slug = slug.substring(0, slug.len() - 6) }
+    return slug
+}
+
+fn lumen_content_collection(dir, schema) {
+    let files = _lumen_content_paths(dir, "")
+    let entries = []
+    for i in 0..files.len() {
+        let file = files[i]
+        let source = io.read_text(file.path)
+        if source == null { throw("Lumen content: could not read " + file.path) }
+        let data = null
+        let body = ""
+        let html = ""
+        if file.relative.ends_with(".json") {
+            try { data = json_decode(source) } catch e { throw("Lumen content: invalid JSON in " + file.path + ": " + e) }
+        } else {
+            let parsed = _lumen_content_frontmatter(source)
+            data = parsed.data
+            body = parsed.body
+            html = lumen_markdown(body)
+        }
+        if schema != null {
+            let result = _validate_parse(schema, data)
+            if result.success == false { throw("Lumen content: " + file.path + ": " + result.error) }
+            data = result.data
+        }
+        let slug = _lumen_content_slug(file.relative)
+        entries = entries.push(http.create_struct(
+            ["id", "slug", "path", "data", "body", "html"],
+            [file.relative, slug, file.path, data, body, html]
+        ))
+    }
+    let get = |slug| {
+        for i in 0..entries.len() { if entries[i].slug == slug { return entries[i] } }
+        return null
+    }
+    let all = | | { return entries }
+    return http.create_struct(["entries", "get", "all"], [entries, get, all])
+}

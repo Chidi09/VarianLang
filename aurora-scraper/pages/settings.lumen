@@ -1,0 +1,106 @@
+<template>
+<Page class="flex min-h-screen bg-[#051424]">
+  <Sidebar />
+
+  <div class="flex-1 flex flex-col min-h-screen overflow-x-hidden relative pb-12">
+    <div class="fixed inset-0 z-[-1] pointer-events-none">
+      <div class="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-[#3b82f6]/10 rounded-full blur-[150px]"></div>
+      <div class="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] bg-[#1d4ed8]/10 rounded-full blur-[150px]"></div>
+    </div>
+
+    <Header />
+
+    <main class="flex-grow pt-24 px-10 max-w-[1000px] mx-auto w-full flex flex-col gap-6 animate-fade-in">
+      <div class="border-b border-[#3b494b]/20 pb-4">
+        <h2 class="font-bold text-2xl text-white">System Settings</h2>
+        <p class="text-xs text-[#b9cacb] mt-1">Configure global server configurations and API integrations.</p>
+      </div>
+
+      <div class="glass-panel rounded-xl p-6 flex flex-col gap-6">
+        <!-- Gemini Settings -->
+        <div class="flex flex-col gap-4 border-b border-[#3b494b]/20 pb-6">
+          <h3 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="material-symbols-outlined text-[#3b82f6]">psychology</span>
+            Google Gemini API Settings
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="flex flex-col gap-2">
+              <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Gemini Model</label>
+              <select id="gemini-model" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2.5 text-white text-xs input-glow">
+                <option value="gemini-2.5-flash" {{#if gemini_model == 'gemini-2.5-flash'}}selected{{/if}}>Gemini 2.5 Flash (Default)</option>
+                <option value="gemini-2.5-pro" {{#if gemini_model == 'gemini-2.5-pro'}}selected{{/if}}>Gemini 2.5 Pro</option>
+              </select>
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-[10px] font-bold text-[#b9cacb] uppercase">API Key Status</label>
+              <div class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2.5 text-xs flex justify-between items-center text-[#b9cacb]">
+                <span>Loaded from server environment</span>
+                <span class="w-2.5 h-2.5 rounded-full bg-green-400"></span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Crawler Configuration -->
+        <div class="flex flex-col gap-4 border-b border-[#3b494b]/20 pb-6">
+          <h3 class="font-bold text-white text-sm flex items-center gap-2">
+            <span class="material-symbols-outlined text-[#3b82f6]">network_ping</span>
+            Network & Crawler Settings
+          </h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="flex flex-col gap-2">
+              <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Network Timeout (ms)</label>
+              <input id="crawler-timeout" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2.5 text-white text-xs input-glow" type="number" value="{{ crawler_timeout }}" />
+            </div>
+            <div class="flex flex-col gap-2">
+              <label class="text-[10px] font-bold text-[#b9cacb] uppercase">Max Parallel Threads</label>
+              <input id="crawler-threads" class="bg-[#020617] border border-[#3b494b]/50 rounded-lg px-4 py-2.5 text-white text-xs input-glow" type="number" value="{{ crawler_threads }}" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Save Button -->
+        <div class="flex justify-end">
+          <button class="btn-gradient text-white text-xs font-semibold px-6 py-3 rounded-lg shadow-md" onclick="saveSettings()">
+            Save Configuration
+          </button>
+        </div>
+      </div>
+    </main>
+  </div>
+</Page>
+</template>
+
+<script>
+fn state() { return { gemini_model: "gemini-2.5-flash", crawler_timeout: "5000", crawler_threads: "8" } }
+</script>
+
+<client>
+window.saveSettings = async function() {
+    let model = document.getElementById("gemini-model").value;
+    let timeout = document.getElementById("crawler-timeout").value;
+    let threads = document.getElementById("crawler-threads").value;
+
+    try {
+        let res = await fetch("/api/settings", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                gemini_model: model,
+                crawler_timeout: timeout,
+                crawler_threads: threads
+            })
+        });
+
+        if (res.ok) {
+            // Toast logic
+            alert("Settings saved successfully!");
+        } else {
+            let data = await res.json();
+            alert("Error: " + data.error);
+        }
+    } catch(e) {
+        alert("Failed to save settings: " + e);
+    }
+};
+</client>

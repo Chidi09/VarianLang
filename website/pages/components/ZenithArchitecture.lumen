@@ -40,7 +40,7 @@
 
   <div class="hint-box hint-performance">
     <h4>⚡ High-Performance Execution Sandbox</h4>
-    <p>Zenith handles requests using a cooperative thread pool where each worker operates its own Varian virtual machine (VM). A <strong>per-request struct arena</strong> allocates strings, request cookies, and parameters using a fast bump allocator. Once a request completes, the arena is reset instantly, bypassing the garbage collector and eliminating heap fragmentation.</p>
+    <p>Within a worker process, Zenith handles request tasks on Varian's cooperative single-threaded scheduler. Multi-core deployments opt into <code>listen_cluster</code>, which forks isolated worker processes around a shared listener. A <strong>per-task struct arena</strong> allocates request and response structures using a bump allocator and is reclaimed when the task completes.</p>
   </div>
 </section>
 

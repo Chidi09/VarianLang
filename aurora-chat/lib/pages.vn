@@ -1,0 +1,119 @@
+// pages.vn — Mount compiled Lumen page components on the app.
+// Wires each route to its compiled .lumen page with DB-backed data providers.
+
+fn mount_pages(app, conn, c) {
+    // The live data-table components need a method-API handle (db.connect ->
+    // conn.query); the rest of the app uses the sqlite.connect handle `conn`.
+    // Both point at the same SQLite file.
+    let lconn = db.connect("sqlite", c.db_path)
+
+    let index_comp = _lumen_get_component("Index")
+    if index_comp != null {
+        lumen_mount_data(app, "/", index_comp, |req| {
+            let rows = sqlite.query(conn, "SELECT * FROM products WHERE featured = 1 ORDER BY id LIMIT 8")
+            let items = []
+            for i in 0..rows.len() {
+                let p = rows[i]
+                items = items.push(http.create_struct(
+                    ["id", "name", "price", "stock", "image", "category"],
+                    [p.id, _sanitize.escape_html(p.name), format_price(p.price_cents), p.stock, p.image, p.category]
+                ))
+            }
+            return http.create_struct(["products", "hasProducts"], [items, items.len() > 0])
+        })
+    }
+
+    // Catalog: live, windowed VIRTUAL-scroll table over all 1200 products —
+    // ships only the rows in view (the "TanStack-class" feature). Renders its
+    // own full page, so it mounts directly (no .lumen shell).
+    let catalog_tbl = data_table_virtual_component({
+        conn: lconn, table: "products",
+        columns: [
+            { name: "name",        label: "Name",     sortable: true },
+            { name: "category",    label: "Category", sortable: true },
+            { name: "price_cents", label: "Price",    sortable: true },
+            { name: "stock",       label: "Stock",    sortable: true }
+        ],
+        order_by: "id", order_dir: "asc",
+        row_height: 40, viewport_height: 560
+    })
+    lumen_mount(app, "/catalog", catalog_tbl)
+
+    let cart_comp = _lumen_get_component("Cart")
+    if cart_comp != null {
+        lumen_mount_data(app, "/cart", cart_comp, |req| {
+            let sk = cart_session_key(req, c)
+            let ci = cart_items(conn, c, sk)
+            let items = []
+            for i in 0..ci.items.len() {
+                let it = ci.items[i]
+                items = items.push(http.create_struct(
+                    ["product_id", "name", "price", "qty", "lineTotal", "image"],
+                    [it.product_id, _sanitize.escape_html(it.name), format_price(it.price_cents), it.qty, format_price(it.line_cents), it.image]
+                ))
+            }
+            return http.create_struct(
+                ["hasItems", "items", "total"],
+                [items.len() > 0, items, format_price(ci.total_cents)]
+            )
+        })
+    }
+
+    let checkout_comp = _lumen_get_component("Checkout")
+    if checkout_comp != null {
+        lumen_mount_data(app, "/checkout", checkout_comp, |req| {
+            return http.create_struct(["page_seo"], [page_seo("Checkout", "Complete your purchase at Aurora Chat Shop")])
+        })
+    }
+
+    let account_comp = _lumen_get_component("Account")
+    if account_comp != null {
+        lumen_mount_data(app, "/account", account_comp, |req| {
+            let session = session_get(req, c.secret_key)
+            let uid = _validate.get_field(session, "uid")
+            let name = _validate.get_field(session, "name")
+            if uid == null {
+                return http.create_struct(["loggedIn", "name", "hasOrders", "orders"], [false, "", false, []])
+            }
+            let rows = sqlite.query(conn, "SELECT * FROM orders WHERE user_id = ? ORDER BY id DESC", [uid])
+            let orders = []
+            for i in 0..rows.len() {
+                let o = rows[i]
+                orders = orders.push(http.create_struct(
+                    ["id", "total_cents", "status", "created"],
+                    [o.id, o.total_cents, o.status, o.created]
+                ))
+            }
+            let display_name = name
+            if display_name == null { display_name = "" }
+            return http.create_struct(
+                ["loggedIn", "name", "hasOrders", "orders"],
+                [true, display_name, orders.len() > 0, orders]
+            )
+        })
+    }
+
+    let login_comp = _lumen_get_component("Login")
+    if login_comp != null {
+        lumen_mount(app, "/login", login_comp)
+    }
+
+    let chat_comp = _lumen_get_component("Chat")
+    if chat_comp != null {
+        lumen_mount(app, "/chat", chat_comp)
+    }
+
+    // Admin orders: live PAGINATED + sortable table (page_size 25 over ~50 orders).
+    let orders_tbl = data_table_component({
+        conn: lconn, table: "orders",
+        columns: [
+            { name: "id",          label: "ID",      sortable: true },
+            { name: "session_key", label: "Session", sortable: true },
+            { name: "total_cents", label: "Total",   sortable: true },
+            { name: "status",      label: "Status",  sortable: true },
+            { name: "created",     label: "Created", sortable: true }
+        ],
+        page_size: 25, order_by: "id", order_dir: "desc"
+    })
+    lumen_mount(app, "/orders", orders_tbl)
+}

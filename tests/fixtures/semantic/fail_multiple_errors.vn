@@ -1,0 +1,7 @@
+fn sample() {
+    let x = 10
+    let x = 20
+    break
+    return 100
+}
+return 50

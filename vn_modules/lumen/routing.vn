@@ -1,0 +1,494 @@
+// Lumen file routing, dev-app generation, and static-site emission.
+// Loaded by the ambient facade; generated static pages remain zero-JS.
+
+// ─── File-based routing (the `vn dev` tool, à la Next/Nuxt) ───
+// A pages/ directory maps file names to routes and component names:
+//   pages/index.lumen      → "/"        component "Index"
+//   pages/about.lumen      → "/about"   component "About"
+//   pages/user-card.lumen  → "/user-card" component "UserCard"
+
+fn _lumen_pascal(base) {
+    let out = ""
+    let cap = true
+    let i = 0
+    let n = base.len()
+    while i < n {
+        let c = base.substring(i, i + 1)
+        if c == "-" or c == "_" or c == " " {
+            cap = true
+        } else {
+            if cap { out = out + c.upper() } else { out = out + c }
+            cap = false
+        }
+        i = i + 1
+    }
+    return out
+}
+
+fn _lumen_route(base) {
+    if base == "index" { return "/" }
+    return "/" + base
+}
+
+fn _lumen_route_component_valid(name) {
+    if _lumen_is_simple_ident(name) == false { return false }
+    let first = name.code_at(0)
+    if first >= 48 and first <= 57 { return false }
+    return true
+}
+
+fn _lumen_generated_string(value) {
+    return _lumen_escape_string("" + value)
+}
+
+fn _lumen_ssg_base_url_valid(base_url) {
+    if base_url == null or base_url == "" { return true }
+    if base_url.index_of("\r") >= 0 or base_url.index_of("\n") >= 0 { return false }
+    if base_url.index_of("?") >= 0 or base_url.index_of("#") >= 0 { return false }
+    return base_url.starts_with("https://") or base_url.starts_with("http://")
+}
+
+// Recursively collect .lumen page info from a directory tree.
+// Returns an array of {path, route, comp, param} structs (one per .lumen page).
+// Files named [param].lumen produce a dynamic :param route segment and set the
+// param field so lumen_mount can inject req.params[param] into component state.
+fn _lumen_collect_pages(dir, route_prefix, comp_prefix, parent_layouts, parent_layout_paths, parent_loading, parent_loading_path, parent_error, parent_error_path) {
+    if parent_layouts == null { parent_layouts = [] }
+    if parent_layout_paths == null { parent_layout_paths = [] }
+    if parent_loading == null { parent_loading = "" }
+    if parent_loading_path == null { parent_loading_path = "" }
+    if parent_error == null { parent_error = "" }
+    if parent_error_path == null { parent_error_path = "" }
+    let names = io.list_dir(dir)
+    if names == null { return [] }
+    let results = []
+
+    let has_layout = false
+    let has_loading = false
+    let has_error = false
+    for ni in 0..names.len() {
+        if names[ni] == "layout.lumen" { has_layout = true }
+        if names[ni] == "loading.lumen" { has_loading = true }
+        if names[ni] == "error.lumen" { has_error = true }
+    }
+
+    let current_layouts = parent_layouts
+    let current_layout_paths = parent_layout_paths
+    if has_layout {
+        let layout_comp = comp_prefix + "Layout"
+        let layout_path = dir + "/layout.lumen"
+        current_layouts = parent_layouts.push(layout_comp)
+        current_layout_paths = parent_layout_paths.push(layout_path)
+    }
+
+    let current_loading = parent_loading
+    let current_loading_path = parent_loading_path
+    if has_loading {
+        current_loading = comp_prefix + "Loading"
+        current_loading_path = dir + "/loading.lumen"
+    }
+
+    let current_error = parent_error
+    let current_error_path = parent_error_path
+    if has_error {
+        current_error = comp_prefix + "Error"
+        current_error_path = dir + "/error.lumen"
+    }
+
+    for ni in 0..names.len() {
+        let name = names[ni]
+        if name == "components" or name == "layout.lumen" or name == "loading.lumen" or name == "error.lumen" { continue }
+        let child = dir + "/" + name
+        if io.list_dir(child) != null {
+            let sub = _lumen_collect_pages(child, route_prefix + "/" + name, comp_prefix + _lumen_pascal(name), current_layouts, current_layout_paths, current_loading, current_loading_path, current_error, current_error_path)
+            for si in 0..sub.len() {
+                results.append(sub[si])
+            }
+        } else if name.ends_with(".lumen") {
+            let base = name.substring(0, name.len() - 6)
+            let param = ""
+            let seg = base
+            if base.starts_with("[") and base.ends_with("]") {
+                param = base.substring(1, base.len() - 1)
+                seg = ":" + param
+            }
+            let route = ""
+            if route_prefix == "" and base == "index" {
+                route = "/"
+            } else if base == "index" {
+                route = route_prefix
+            } else {
+                route = route_prefix + "/" + seg
+            }
+            let comp_base = base
+            if param != "" { comp_base = param }
+            let comp = comp_prefix + _lumen_pascal(comp_base)
+            if _lumen_route_component_valid(comp) == false {
+                throw("Lumen: page and directory names must produce a valid component identifier: " + child)
+            }
+            results.append(http.create_struct(
+                ["path","route","comp","param","layouts","layout_paths","loading","loading_path","error","error_path"],
+                [child, route, comp, param, current_layouts, current_layout_paths, current_loading, current_loading_path, current_error, current_error_path]
+            ))
+        }
+    }
+    return results
+}
+
+// Discover +guard.vn files in parent-before-child order. Guards are compiled
+// into the generated application and registered against their directory route;
+// no source file is read or executed while handling a request.
+fn _lumen_collect_guards(dir, route_prefix) {
+    let names = io.list_dir(dir)
+    if names == null { return [] }
+    let guards = []
+    if io.read_text(dir + "/+guard.vn") != null {
+        let prefix = route_prefix
+        if prefix == "" { prefix = "/" }
+        guards.append(http.create_struct(["path", "prefix"], [dir + "/+guard.vn", prefix]))
+    }
+    for i in 0..names.len() {
+        let name = names[i]
+        if name == "components" or name.starts_with("+") { continue }
+        let child = dir + "/" + name
+        if io.list_dir(child) == null { continue }
+        let segment = name
+        if name.starts_with("[") and name.ends_with("]") {
+            segment = ":" + name.substring(1, name.len() - 1)
+        }
+        let nested = _lumen_collect_guards(child, route_prefix + "/" + segment)
+        for ni in 0..nested.len() { guards.append(nested[ni]) }
+    }
+    return guards
+}
+
+// Scan a pages directory, compile every .lumen file, and emit ONE runnable
+// Varian app that registers each component and mounts it at its file route.
+// (No eval in the language, so the dev command runs this generated file in a
+// second pass — see `vn dev` in main.c.) Returns the page count.
+fn _lumen_list_has(lst, x) {
+    for i in 0..lst.len() {
+        if lst[i] == x { return true }
+    }
+    return false
+}
+
+// Resolve an import path (`./x`, `../x`, `x`) against the importing file's dir.
+fn _lumen_join_path(base_dir, rel) {
+    let r = rel
+    while r.starts_with("./") { r = r.substring(2, r.len()) }
+    let b = base_dir
+    while r.starts_with("../") {
+        let slash = b.last_index_of("/")
+        if slash >= 0 { b = b.substring(0, slash) } else { b = "" }
+        r = r.substring(3, r.len())
+    }
+    if b == "" { return r }
+    return b + "/" + r
+}
+
+// Component name for an imported file path: PascalCase of its basename.
+fn _lumen_name_for_path(path) {
+    let slash = path.last_index_of("/")
+    let file = path
+    if slash >= 0 { file = path.substring(slash + 1, path.len()) }
+    if file.ends_with(".lumen") { file = file.substring(0, file.len() - 6) }
+    return _lumen_pascal(file)
+}
+
+fn _lumen_build_dir_mode(pages_dir, out_path, port, standalone) {
+    if type_of(port) != "int" or port < 1 or port > 65535 {
+        throw("Lumen: dev server port must be an integer from 1 to 65535")
+    }
+    let files = io.list_dir(pages_dir)
+    if files == null {
+        throw("Lumen: pages directory not found: " + pages_dir)
+    }
+    let combined = "// Auto-generated by `vn dev` from " + pages_dir + " — do not edit.\n"
+
+    // Names already compiled (dedup) and a worklist of (path, base_dir) pairs of
+    // imported .lumen files still to compile — the dependency graph, resolved
+    // transitively so a component can import another component, and so on.
+    let compiled = []
+    let work_paths = []
+    let work_bases = []
+
+    let guard_mounts = ""
+    let guards = _lumen_collect_guards(pages_dir, "")
+    for gi in 0..guards.len() {
+        let guard_info = guards[gi]
+        let guard_source = io.read_text(guard_info.path)
+        let definitions = regex.find_all("fn[[:space:]]+guard[[:space:]]*\\(", guard_source)
+        if definitions.len() != 1 {
+            throw("Lumen: " + guard_info.path + " must define exactly one fn guard(req)")
+        }
+        let guard_name = "_lumen_file_guard_" + gi
+        let renamed = regex.replace(
+            "fn[[:space:]]+guard[[:space:]]*\\(", guard_source, "fn " + guard_name + "("
+        )
+        combined = combined + renamed + "\n"
+        guard_mounts = guard_mounts + "app.add_guard(\"" + _lumen_generated_string(guard_info.prefix) + "\", " + guard_name + ")\n"
+    }
+
+    // Compile every component in pages/components/ (kept for back-compat: an
+    // un-imported component here still resolves), recording its name + scanning
+    // its imports.
+    let comp_dir = pages_dir + "/components"
+    let comp_files = io.list_dir(comp_dir)
+    if comp_files != null {
+        for i in 0..comp_files.len() {
+            let f = comp_files[i]
+            if f.ends_with(".lumen") {
+                let comp_name = _lumen_pascal(f.substring(0, f.len() - 6))
+                let src = io.read_text(comp_dir + "/" + f)
+                if src != null and _lumen_list_has(compiled, comp_name) == false {
+                    combined = combined + lumen_compile_source(comp_name, src) + "\n"
+                    compiled = compiled.push(comp_name)
+                    work_paths = work_paths.push(comp_dir + "/" + f)
+                    work_bases = work_bases.push(comp_dir)
+                }
+            }
+        }
+    }
+
+    let mounts = ""
+    let count = 0
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
+    for pi in 0..pages.len() {
+        let p = pages[pi]
+        let src = io.read_text(p.path)
+        if src != null {
+            for li in 0..p.layouts.len() {
+                let lay_comp = p.layouts[li]
+                let lay_path = p.layout_paths[li]
+                if _lumen_list_has(compiled, lay_comp) == false {
+                    let lay_src = io.read_text(lay_path)
+                    if lay_src != null {
+                        combined = combined + lumen_compile_source(lay_comp, lay_src) + "\n"
+                        compiled = compiled.push(lay_comp)
+                        work_paths = work_paths.push(lay_path)
+                        let lslash = lay_path.last_index_of("/")
+                        let ldir = pages_dir
+                        if lslash >= 0 { ldir = lay_path.substring(0, lslash) }
+                        work_bases = work_bases.push(ldir)
+                    }
+                }
+            }
+            if p.loading != null and p.loading != "" {
+                let lod_comp = p.loading
+                let lod_path = p.loading_path
+                if _lumen_list_has(compiled, lod_comp) == false {
+                    let lod_src = io.read_text(lod_path)
+                    if lod_src != null {
+                        combined = combined + lumen_compile_source(lod_comp, lod_src) + "\n"
+                        compiled = compiled.push(lod_comp)
+                        work_paths = work_paths.push(lod_path)
+                        let lslash = lod_path.last_index_of("/")
+                        let ldir = pages_dir
+                        if lslash >= 0 { ldir = lod_path.substring(0, lslash) }
+                        work_bases = work_bases.push(ldir)
+                    }
+                }
+            }
+            if p.error != null and p.error != "" {
+                let err_comp = p.error
+                let err_path = p.error_path
+                if _lumen_list_has(compiled, err_comp) == false {
+                    let err_src = io.read_text(err_path)
+                    if err_src != null {
+                        combined = combined + lumen_compile_source(err_comp, err_src) + "\n"
+                        compiled = compiled.push(err_comp)
+                        work_paths = work_paths.push(err_path)
+                        let eslash = err_path.last_index_of("/")
+                        let edir = pages_dir
+                        if eslash >= 0 { edir = err_path.substring(0, eslash) }
+                        work_bases = work_bases.push(edir)
+                    }
+                }
+            }
+            if _lumen_list_has(compiled, p.comp) == false {
+                combined = combined + lumen_compile_source(p.comp, src) + "\n"
+                compiled = compiled.push(p.comp)
+                work_paths = work_paths.push(p.path)
+                let pslash = p.path.last_index_of("/")
+                let pdir = pages_dir
+                if pslash >= 0 { pdir = p.path.substring(0, pslash) }
+                work_bases = work_bases.push(pdir)
+            }
+            if p.param != null and p.param != "" {
+                mounts = mounts + "lumen_mount_dynamic(app, \"" + _lumen_generated_string(p.route) + "\", _lumen_get_component(\"" + _lumen_generated_string(p.comp) + "\"), \"" + _lumen_generated_string(p.param) + "\")\n"
+            } else {
+                mounts = mounts + "lumen_mount(app, \"" + _lumen_generated_string(p.route) + "\", _lumen_get_component(\"" + _lumen_generated_string(p.comp) + "\"))\n"
+            }
+            count = count + 1
+        }
+    }
+    if count == 0 {
+        throw("Lumen: no .lumen files found in " + pages_dir)
+    }
+
+    // Resolve the import graph: walk each compiled file's `import` directives,
+    // compile any local .lumen dependency not already compiled (transitively),
+    // and validate `lumen/ui` imports against the built-in registry. A relative
+    // import that doesn't resolve to a real file is a hard, clear error — the
+    // whole point of imports over the old magic-global model.
+    let wi = 0
+    while wi < work_paths.len() {
+        let fpath = work_paths[wi]
+        let fbase = work_bases[wi]
+        wi = wi + 1
+        let fsrc = io.read_text(fpath)
+        if fsrc == null { continue }
+        let imps = _lumen_extract_imports(fsrc).imports
+        for k in 0..imps.len() {
+            let imp = imps[k]
+            let path = imp.path
+            let names = imp.names
+            if path == "lumen/ui" or path == "lumen" {
+                // Built-in vocabulary: validate each imported name exists.
+                for n in 0..names.len() {
+                    if _lumen_get_component(names[n]) == null {
+                        throw("Lumen: '" + names[n] + "' is not a built-in lumen/ui component (imported in " + fpath + ")")
+                    }
+                }
+            } else if path.ends_with(".lumen") {
+                let dep_path = _lumen_join_path(fbase, path)
+                let dep_name = _lumen_name_for_path(dep_path)
+                if _lumen_list_has(compiled, dep_name) == false {
+                    let dep_src = io.read_text(dep_path)
+                    if dep_src == null {
+                        throw("Lumen: cannot resolve import \"" + path + "\" -> " + dep_path + " (in " + fpath + ")")
+                    }
+                    combined = combined + lumen_compile_source(dep_name, dep_src) + "\n"
+                    compiled = compiled.push(dep_name)
+                    // queue the dependency so ITS imports resolve too
+                    let dep_dir = pages_dir
+                    let ds = dep_path.last_index_of("/")
+                    if ds >= 0 { dep_dir = dep_path.substring(0, ds) }
+                    work_paths = work_paths.push(dep_path)
+                    work_bases = work_bases.push(dep_dir)
+                }
+            }
+        }
+    }
+    // Serve the project's /public dir (favicons, manifest, user assets). Static
+    // mounts are consulted only AFTER routing, so page routes always win and a
+    // missing file just 404s — mounting at "/" is safe.
+    let statics = "app.serve_static(\"/\", \"public\")\n"
+    // Serve directly via http.serve (not app.listen) so the framework's own
+    // startup line is suppressed — `vn dev` prints its own Lumen console.
+    let program = combined + "\n"
+    if standalone {
+        program = program + "let app = new_app()\n" + guard_mounts + mounts + statics +
+                  "http.serve(" + port + ", |req| \{ return app.handle(req) \})\n"
+    } else {
+        program = program + "fn aurora_mount_pages(app) \{\n" + guard_mounts + mounts + statics + "    return app\n\}\n"
+    }
+    io.write_text(out_path, program)
+    return count
+}
+
+fn _lumen_build_dir(pages_dir, out_path, port) {
+    return _lumen_build_dir_mode(pages_dir, out_path, port, true)
+}
+
+fn _lumen_build_aurora_dir(pages_dir, out_path, port) {
+    return _lumen_build_dir_mode(pages_dir, out_path, port, false)
+}
+
+// Emit a complete, runnable SSG program that registers every component and
+// renders each page to a static .html file, plus sitemap.xml/robots.txt.
+//
+// Why two phases: components only exist once their compiled source RUNS (it
+// calls lumen_register_component). So we can't render in this same VM — we
+// generate a self-contained program (component registrations + a render+write
+// per page) and write it to `build_path`; the caller then runs it with the
+// prelude, which registers the components and writes the HTML. This mirrors how
+// `vn dev` generates `.lumen-build.vn` and then runs it.
+fn _lumen_emit_static_program(pages_dir, out_dir, base_url, build_path) {
+    if _lumen_ssg_base_url_valid(base_url) == false {
+        throw("Lumen SSG: base_url must be an http(s) URL without line breaks")
+    }
+    let pages = _lumen_collect_pages(pages_dir, "", "", [], [], "", "", "", "")
+    if pages.len() == 0 {
+        throw("Lumen SSG: no .lumen files found in " + pages_dir)
+    }
+    let protected_routes = _lumen_collect_guards(pages_dir, "")
+    if protected_routes.len() > 0 {
+        throw("Lumen SSG: protected +guard.vn routes cannot be exported as public static HTML")
+    }
+    // Create the output dir now (mkdir -p): the render program re-creates it in
+    // phase 2, but sitemap.xml/robots.txt are written below in THIS phase and
+    // would silently fail if the dir didn't exist yet.
+    let _mkdir_now = io.mkdir(out_dir)
+    // Compile every component (shared components first, then each page).
+    let compiled = []
+    let compiled_src = ""
+    let comp_dir = pages_dir + "/components"
+    let comp_files = io.list_dir(comp_dir)
+    if comp_files != null {
+        for i in 0..comp_files.len() {
+            let f = comp_files[i]
+            if f.ends_with(".lumen") {
+                let name = _lumen_pascal(f.substring(0, f.len() - 6))
+                let src = io.read_text(comp_dir + "/" + f)
+                if src != null and _lumen_list_has(compiled, name) == false {
+                    compiled_src = compiled_src + lumen_compile_source(name, src) + "\n"
+                    compiled = compiled.push(name)
+                }
+            }
+        }
+    }
+    for pi in 0..pages.len() {
+        let p = pages[pi]
+        let src = io.read_text(p.path)
+        if src != null and _lumen_list_has(compiled, p.comp) == false {
+            compiled_src = compiled_src + lumen_compile_source(p.comp, src) + "\n"
+            compiled = compiled.push(p.comp)
+        }
+    }
+
+    // Build the runnable render program. Inside the string literals, real braces
+    // for the generated code are escaped as \{ \} so they aren't interpolated.
+    let prog = "// AUTO-GENERATED Lumen SSG render program — do not edit.\n"
+    prog = prog + compiled_src + "\n"
+    prog = prog + "let _ssg_out = io.mkdir(\"" + _lumen_generated_string(out_dir) + "\")\n"
+    prog = prog + "let _ssg_page = env.get(\"LUMEN_SSG_PAGE\")\n"
+    let pi2 = 0
+    while pi2 < pages.len() {
+        let p = pages[pi2]
+        let full_path = out_dir + p.route
+        if p.route.ends_with("/") { full_path = full_path + "index.html" }
+        else { full_path = full_path + ".html" }
+        prog = prog + "if _ssg_page == \"" + pi2 + "\" \{\n"
+        prog = prog + "let _c = _lumen_get_component(\"" + _lumen_generated_string(p.comp) + "\")\n"
+        prog = prog + "if _c != null \{\n"
+        prog = prog + "    _lumen_active_child_states = \{\}\n"
+        prog = prog + "    let _st = (_c.state_fn)()\n"
+        prog = prog + "    let _html = (_c.render_fn)(_st)\n"
+        prog = prog + "    let _w = io.write_text(\"" + _lumen_generated_string(full_path) + "\", _html)\n"
+        prog = prog + "    print(\"  rendered " + _lumen_generated_string(p.route) + " -> " + _lumen_generated_string(full_path) + "\")\n"
+        prog = prog + "\} else \{ print(\"  MISSING component " + _lumen_generated_string(p.comp) + "\") \}\n"
+        prog = prog + "\}\n"
+        pi2 = pi2 + 1
+    }
+    let _bw = io.write_text(build_path, prog)
+    let _cw = io.write_text(build_path + ".count", "" + pages.len())
+
+    // sitemap.xml + robots.txt need no rendering — write them now.
+    if base_url != null and base_url != "" {
+        let sitemap = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<urlset xmlns=\"http://www.sitemaps.org/schemas/sitemap/0.9\">\n"
+        for pi in 0..pages.len() {
+            let p = pages[pi]
+            let loc = base_url
+            if loc.ends_with("/") == false { loc = loc + "/" }
+            if p.route.len() > 1 { loc = loc + p.route.substring(1, p.route.len()) }
+            sitemap = sitemap + "  <url><loc>" + _sanitize.escape_html(loc) + "</loc></url>\n"
+        }
+        sitemap = sitemap + "</urlset>"
+        let _sm = io.write_text(out_dir + "/sitemap.xml", sitemap)
+        let _rb = io.write_text(out_dir + "/robots.txt",
+            "User-agent: *\nAllow: /\nSitemap: " + base_url + "/sitemap.xml\n")
+    }
+    return pages.len()
+}

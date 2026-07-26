@@ -1,0 +1,54 @@
+// tests/scraper_test.vn — Unit tests for DB schema, configuration loader, and crawler backend logic.
+
+use "lib/config.vn"
+use "lib/db.vn"
+
+test "config loader loads default config values" {
+    let c = get_config()
+    assert_eq(c.db_path, "aurora-scraper.db")
+    assert_eq(c.port, 8090)
+    assert_eq(c.session_secret, "default-aurora-scraper-secret-key-12345")
+    assert_eq(c.gemini_model, "gemini-2.5-flash")
+}
+
+test "database connection initializes all tables successfully" {
+    let test_db = "test-aurora.db"
+    if io.exists(test_db) {
+        io.delete(test_db)
+    }
+
+    let conn = db_connect(test_db)
+    assert_ne(conn, null)
+
+    // Insert into users
+    sqlite.query(conn, "INSERT INTO users (email, pass_hash, name) VALUES (?, ?, ?)", ["test@test.com", "hash", "Tester"])
+    let user_rows = sqlite.query(conn, "SELECT * FROM users")
+    assert_eq(user_rows.len(), 1)
+
+    // Insert into sessions
+    sqlite.query(conn, "INSERT INTO sessions (user_id, session_token, expires_at) VALUES (?, ?, ?)", [1, "tok123", 9999999999])
+    assert_eq(sqlite.query(conn, "SELECT * FROM sessions").len(), 1)
+
+    // Insert into scrapers
+    sqlite.query(conn, "INSERT INTO scrapers (name, prompt, created_by) VALUES (?, ?, ?)", ["Agent 1", "Get data", 1])
+    let sc_rows = sqlite.query(conn, "SELECT * FROM scrapers")
+    assert_eq(sc_rows.len(), 1)
+
+    // Insert into workflows
+    sqlite.query(conn, "INSERT INTO workflows (name, definition, schedule) VALUES (?, ?, ?)", ["Flow 1", "empty", "0 0 * * *"])
+    assert_eq(sqlite.query(conn, "SELECT * FROM workflows").len(), 1)
+
+    // Insert into settings
+    sqlite.query(conn, "INSERT INTO settings (key, value) VALUES (?, ?)", ["crawler_timeout", "10000"])
+    assert_eq(sqlite.query(conn, "SELECT * FROM settings").len(), 1)
+
+    // Insert into jobs
+    sqlite.query(conn, "INSERT INTO jobs (scraper_id, target_url, depth, status) VALUES (?, ?, ?, ?)", [sc_rows[0].id, "https://example.com", 2, "pending"])
+    let job_rows = sqlite.query(conn, "SELECT * FROM jobs")
+    assert_eq(job_rows.len(), 1)
+    assert_eq(job_rows[0].target_url, "https://example.com")
+
+    // Clean up test file
+    sqlite.close(conn)
+    io.delete(test_db)
+}

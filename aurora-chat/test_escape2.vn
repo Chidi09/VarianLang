@@ -1,0 +1,2 @@
+let s4 = "<<ACTION:\{\"tool\":\"search\",\"query\":\"Lamp\",\"product_id\":0,\"qty\":1\}>>"
+print("s4: " + s4)

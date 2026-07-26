@@ -1,0 +1,39 @@
+test "queue persists named jobs and exposes completion state" {
+    queue_configure(":memory:", 3)
+    let seen = [""]
+    queue_register_job("email", |payload| { seen[0] = payload })
+    let id = queue_submit_job("email", "welcome")
+    assert_eq(queue_job(id).status, "pending")
+    assert_eq(queue_process_one(), true)
+    assert_eq(seen[0], "welcome")
+    assert_eq(queue_job(id).status, "completed")
+    assert_eq(queue_job(id).attempts, 1)
+}
+
+test "queue retries failures up to its configured bound" {
+    queue_configure(":memory:", 2)
+    queue_register_job("broken", |payload| { throw("nope") })
+    let id = queue_submit_job("broken", "x")
+    assert_eq(queue_process_one(), true)
+    assert_eq(queue_job(id).status, "pending")
+    assert_eq(queue_process_one(), true)
+    assert_eq(queue_job(id).status, "failed")
+    assert_eq(queue_job(id).attempts, 2)
+    assert_eq(queue_retry(id), true)
+    assert_eq(queue_job(id).status, "pending")
+    assert_eq(queue_job(id).attempts, 0)
+}
+
+test "queue contracts reject ambiguous configuration and payloads" {
+    assert_throws(| | { queue_configure("", 3) })
+    assert_throws(| | { queue_configure(":memory:", 0) })
+    assert_throws(| | { queue_submit_job("", "payload") })
+    assert_throws(| | { queue_submit_job("job", {}) })
+    let noop = |payload| { return null }
+    assert_throws(| | { queue_register_job("", noop) })
+    assert_throws(| | { queue_register_job("job", 4) })
+    assert_throws(| | { queue_job(0) })
+    let worker_pool = new_worker_pool()
+    assert_throws(| | { worker_pool.spawn(0) })
+    assert_throws(| | { worker_pool.submit("not callable") })
+}

@@ -1,0 +1,56 @@
+test "infinite resource flattens cached cursor pages and stops at null" {
+    let calls = [0]
+    let fetch = |cursor| {
+        calls[0] = calls[0] + 1
+        if cursor == null { return { items: [1, 2], next_cursor: "two" } }
+        return { items: [3], next_cursor: null }
+    }
+    let a = lumen_infinite_resource(["feed", 901], fetch, { stale_ms: 60000 })
+    assert_eq((a.state)().items.len(), 2)
+    assert_eq((a.state)().has_next, true)
+    let second = (a.fetch_next)()
+    assert_eq(second.pages.len(), 2)
+    assert_eq(second.items.len(), 3)
+    assert_eq(second.items[2], 3)
+    assert_eq(second.has_next, false)
+    let terminal = (a.fetch_next)()
+    assert_eq(terminal.items.len(), 3)
+    assert_eq(calls[0], 2)
+
+    let b = lumen_infinite_resource(["feed", 901], fetch, { stale_ms: 60000 })
+    let _ = (b.fetch_next)()
+    assert_eq(calls[0], 2)
+}
+
+test "infinite resource preserves pages across retryable errors" {
+    let fail = [true]
+    let fetch = |cursor| {
+        if cursor == null { return { items: ["first"], next_cursor: "next" } }
+        if fail[0] { fail[0] = false; throw("offline") }
+        return { items: ["second"], next_cursor: null }
+    }
+    let r = lumen_infinite_resource(["retry-feed", 902], fetch, { stale_ms: 0 })
+    let failed = (r.fetch_next)()
+    assert_eq(failed.status, "error")
+    assert_eq(failed.items.len(), 1)
+    assert_eq(failed.has_next, true)
+    let recovered = (r.fetch_next)()
+    assert_eq(recovered.status, "success")
+    assert_eq(recovered.items.len(), 2)
+}
+
+test "infinite resource validates pages and reset refetches from the start" {
+    let calls = [0]
+    let r = lumen_infinite_resource(["reset-feed", 903], |cursor| {
+        calls[0] = calls[0] + 1
+        return { items: [calls[0]], next_cursor: null }
+    }, { stale_ms: 60000 })
+    assert_eq((r.state)().items[0], 1)
+    assert_eq((r.reset)().items[0], 2)
+
+    let invalid = lumen_infinite_resource(["invalid-feed", 904], |cursor| {
+        return { next_cursor: null }
+    }, { stale_ms: 60000 })
+    assert_eq((invalid.state)().status, "error")
+    assert_ne((invalid.state)().error.index_of("items array"), -1)
+}

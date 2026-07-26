@@ -103,7 +103,8 @@
 
     // Store user metadata inside a signed session cookie
     <span class="token-keyword">let</span> session_data <span class="token-keyword">=</span> \{ user: <span class="token-string">"admin"</span>, role: <span class="token-string">"superuser"</span>, active: <span class="token-keyword">true</span> \}
-    <span class="token-keyword">return</span> <span class="token-function">session_set</span>(resp, session_data, APP_SECRET, <span class="token-number">86400</span>)
+    <span class="token-keyword">let</span> cookie_opts <span class="token-keyword">=</span> http.<span class="token-function">create_struct</span>([<span class="token-string">"max_age"</span>, <span class="token-string">"secure"</span>], [<span class="token-number">86400</span>, <span class="token-keyword">true</span>])
+    <span class="token-keyword">return</span> <span class="token-function">session_set</span>(resp, session_data, APP_SECRET, cookie_opts)
     \}
 
     <span class="token-keyword">return</span> <span class="token-function">json_response</span>(\{ error: <span class="token-string">"Invalid credentials"</span> \}, <span class="token-number">401</span>)

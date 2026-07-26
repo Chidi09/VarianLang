@@ -1,0 +1,14 @@
+struct Point {
+    x: int,
+    y: int
+}
+enum Option<T> {
+    Some(T),
+    None
+}
+let p = Point { x: 10, y: 20 }
+let opt = Option::Some(42)
+match opt {
+    Option::Some(v) => print(v),
+    Option::None => print(0)
+}

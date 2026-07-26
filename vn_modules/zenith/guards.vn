@@ -1,0 +1,12 @@
+// Compiled route-guard matching for Zenith and Aurora file routes.
+
+fn _zenith_guard_matches(prefix, path) {
+    if prefix == "/" { return true }
+    let wanted = _split_path(prefix)
+    let actual = _split_path(path)
+    if actual.len() < wanted.len() { return false }
+    for i in 0..wanted.len() {
+        if !wanted[i].starts_with(":") and wanted[i] != actual[i] { return false }
+    }
+    return true
+}

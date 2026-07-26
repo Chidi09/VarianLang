@@ -6,7 +6,7 @@
 
 Lumen is Varian's server-driven **frontend** framework — the `React` to Aurora's `Next.js`.
 Components render to HTML **on the server** (on top of Zenith WebSocket routes). **Lumen JS**
-— a tiny (~2 KB) client runtime — forwards events over a WebSocket; the server re-renders
+— a sub-4.1 KB mandatory runtime plus only the detected browser actions — forwards events over a WebSocket; the server re-renders
 and morphs the new HTML into the live DOM. No page reload, no client state, no Varian in
 the browser, and — because the server is the only place state lives and renders — **no
 hydration mismatch**.
@@ -19,11 +19,11 @@ Lumen + batteries).
 
 | Concern | React / Vue / Svelte | Lumen |
 |---|---|---|
-| **Rendering model** | Client VDOM + hydration — 50–400 KB framework | Server-driven HTML over WebSocket — **~2 KB inline Lumen JS** |
+| **Rendering model** | Client VDOM + hydration — 50–400 KB framework | Server-driven HTML over WebSocket — **<4.1 KB mandatory JS + detected actions** |
 | **Hydration mismatch** | Common bug | **Impossible** — server owns all state and rendering |
 | **UI components** | None built-in (need MUI, Chakra, Shadcn) | **28 built-in** — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, etc. |
 | **State management** | External (Zustand, Pinia, stores) | **Built-in** `lumen_store()` |
-| **Async data** | External (React Query, TanStack Query) | **Built-in** `lumen_resource()`, `lumen_async_resource()` |
+| **Async data** | External (React Query, TanStack Query) | **Built-in** keyed resources plus `lumen_mutation()` lifecycle/rollback |
 | **Form validation** | External (Zod, VeeValidate, yup) | **Built-in** `lumen_form()` — Zod-style |
 | **Pub-sub / broadcast** | External library or manual WebSocket | **Built-in** `lumen_publish()`, `lumen_subscribe()`, `lumen_broadcast_store()` |
 | **CSS scoping** | Compiler plugin or CSS modules | **Built-in** `data-lumen-css` attribute rewrite |
@@ -100,6 +100,36 @@ fn pulse(s, v) {
 }
 ```
 
+For `@submit`, `value` is a struct containing the form's successful named controls, so
+validation and business logic remain in Varian:
+
+```html
+<form @submit="signup">
+  <input name="email" type="email">
+  <label><input name="topics" type="checkbox" value="news"> News</label>
+  <button type="submit">Create account</button>
+</form>
+```
+
+```varian
+fn signup(s, values) {
+  let result = signup_form.validate(values)
+  return s.set("errors", result.errors)
+}
+```
+
+Repeated names become arrays. Checkbox changes send booleans, radio changes send the
+selected value, and multi-select changes send arrays. File fields send metadata
+(`name`, `size`, and MIME `type`) rather than bytes. For file contents, submit a standard
+`multipart/form-data` request to a Zenith route and read it with `uploaded_file()` or
+`uploaded_files()`; WebSocket event JSON is intentionally not a file transport.
+
+Applications using `shield.csrf()` do not need to hand-wire tokens into native forms.
+The middleware adds its double-submit token to same-origin POST forms in HTML responses,
+accepts that `_csrf` field on ordinary submissions, and accepts `x_csrf_token` from an
+enhanced transport. GET forms, cross-origin actions, and forms that already supply a
+token are left unchanged.
+
 The scaffolded starter wires `{{ color }}` into an SVG `fill`, so each click recomputes a
 colour server-side and Lumen morphs **only the changed attribute** into the DOM — a live
 demonstration of the model with zero client code.
@@ -113,6 +143,58 @@ demonstration of the model with zero client code.
 | `pages/index.lumen` | `/` |
 | `pages/about.lumen` | `/about` |
 | `pages/user-card.lumen` | `/user-card` (component name PascalCased to `UserCard`) |
+
+Directories form a route tree. `layout.lumen` wraps descendant pages (outermost to
+innermost), `loading.lumen` supplies the nearest pending view, and `error.lumen` catches
+loader or render failures at the nearest boundary while retaining parent layouts. A page
+may export a `load(req)` handler; its returned fields merge into initial server state.
+Layouts may export the same handler. Lumen runs loaders outer-layout first, then inward,
+then the page, so each loader can read accumulated values with `lumen_parent_data(req)`.
+Return `lumen_load(data, ["dependency:key"])` to declare stable invalidation keys;
+`lumen_load_dependencies(req)` exposes the deduplicated keys already declared by parents.
+This aggregation is server-native and adds no browser JavaScript.
+Returning `lumen_redirect(location, status)` from any layout or page loader immediately
+short-circuits descendant loaders and rendering, producing a validated 301/302/303/307/308
+response with `Location` and no client redirect script.
+Handled initial-render failures return HTTP 500 with the boundary HTML rather than a
+successful status or a raw stack trace.
+
+Place `+guard.vn` in `pages/` or any nested route directory to protect that subtree:
+
+```vn
+fn guard(req) {
+    if request_context(req, "user", null) == null {
+        return redirect_with("/login", 303)
+    }
+    return null
+}
+```
+
+The build renames and compiles each guard into the generated application. Parent guards
+run before child guards; dynamic directories such as `[team]/+guard.vn` match their real
+route segment. Returning `null` continues, while any normal response short-circuits the
+page. Production requests never read guard source, create temporary files, or launch a
+compiler subprocess.
+Static export rejects a tree containing guards instead of accidentally publishing
+protected page output as public HTML.
+
+Keyed resources accept both `stale_ms` and `gc_ms`. Access refreshes an entry's inactivity
+clock; `lumen_resource_cache_gc(age_ms)` evicts inactive, non-fetching entries and their
+version metadata, while cache statistics report cumulative `evicted` entries. Mutations
+offer both blocking `mutate(value)` and cooperative `mutate_async(value)`; the latter sets
+optimistic pending state immediately and notifies live renders when its task settles.
+
+For ordered deferred server work, `lumen_stream_html(chunks, headers)` accepts HTML
+strings and zero-argument functions. Strings flush immediately; each function runs only
+when its position is reached and its returned HTML becomes the next TLS-aware HTTP chunk.
+The primitive emits no client script, making it suitable for streamed documents and large
+server-rendered results where replacement-style fallback boundaries are unnecessary.
+
+Where a visible fallback should be replaced later, place
+`lumen_defer(id, fallback_html, resolver, error_html)` among the chunks. Lumen flushes all
+fallbacks with the surrounding document, resolves them afterward, and streams replacement
+templates as each resolver completes. Only pages using a deferred boundary receive the
+single deduplicated `defer` browser action; ordinary ordered streams remain zero-JS.
 
 ### The interactive dev console
 
@@ -181,11 +263,141 @@ reconstructs `prev[0:s] + d + prev[len-e:]` and morphs. Invisible to authors.
 ### Client islands (M8)
 
 For a genuinely client-only widget (chart, canvas, map), add a `<client>` block of real
-browser JS. It's embedded as a `<script>` that runs once on first paint and is left
-untouched by the morph (`cloneNode`/`innerHTML` never re-run scripts). This is the *honest*
-island — real client code where you ask for it, the rest still server-driven. Lumen
-deliberately does **not** compile Varian to a browser bundle; that's exactly what
-reintroduces hydration-mismatch bugs.
+browser JS. A plain `<client>` runs once on first paint; an explicit activation policy
+can defer it until the browser can use it:
+
+```html
+<client when="idle">mountEditor()</client>
+<client when="visible" target="#map">mountMap()</client>
+<client when="media" media="(min-width: 60rem)">mountWideChart()</client>
+```
+
+`visible` observes `target`, or the preceding rendered element when omitted. `idle`
+uses `requestIdleCallback` with a timer fallback. `media` runs once when the query first
+matches. Each policy emits only its small activation wrapper; unrelated policy code is
+absent, and a component without `<client>` emits no island JavaScript. Multiple blocks
+retain independent policies. Invalid policies and missing media queries fail during
+compilation.
+
+The body is emitted verbatim and may declare `lang="js"` or `lang="javascript"`.
+Lumen deliberately rejects `lang="ts"`: it does not disguise regular-expression removal
+as a TypeScript compiler. Precompile external TypeScript to JavaScript, then embed or serve
+the resulting JavaScript explicitly.
+
+The generated script runs once and is left untouched by morphing (`cloneNode` and
+`innerHTML` do not re-run scripts). This is the *honest* island—real client code where
+you ask for it, while the rest remains server-driven. Lumen deliberately does **not**
+compile Varian to a browser bundle; that would reintroduce hydration-mismatch bugs.
+
+### Typed content collections
+
+`lumen_content_collection(directory, schema)` discovers Markdown and JSON recursively,
+sorts entries deterministically by relative path, and returns `{ entries, get, all }`.
+Each entry exposes `{ id, slug, path, data, body, html }`; `index.md` maps to the empty
+slug and nested `index.md` files map to their parent path. Markdown frontmatter and JSON
+data can be parsed through existing Varian validation schemas, so invalid content fails
+with its source path before a response is rendered.
+
+```vn
+let posts = lumen_content_collection("content/posts", validate.object({
+    title: validate.str().min(1),
+    draft: validate.bool().optional()
+}))
+let guide = (posts.get)("guides/getting-started")
+```
+
+The built-in Markdown subset escapes HTML before rendering headings, paragraphs, lists,
+and fenced code. Content collection work is entirely server/build-side and adds zero
+browser JavaScript.
+
+### Cursor and infinite resources
+
+`lumen_infinite_resource(key, fetch_page, options)` loads cursor pages into the
+shared deterministic resource cache. A page fetcher returns
+`{ items: [...], next_cursor: value | null }`; the resource exposes flattened
+`items`, the original `pages`, `has_next`, `fetching_next`, and retry-safe error
+state through `state()`, plus `fetch_next()`, `invalidate()`, and `reset()`.
+Calling `fetch_next()` from a normal Varian handler keeps fetching and cache
+ownership on the server and adds zero browser JavaScript.
+
+### Opt-in browser directives
+
+LumenJS includes a curated set of browser-only behaviors. The compiler scans each
+template and emits only the modules that page uses; a page without these attributes
+ships the transport core alone. These directives contain presentation or browser API
+work only—validation, authorization, data fetching, prices, filtering, and other
+business rules still belong in Varian handlers.
+
+| Attribute | Browser behavior |
+| --- | --- |
+| `data-lumen-copy="text"` or a selector | Copy text through the Clipboard API |
+| `data-lumen-focus` | Focus an element when the page mounts |
+| `data-lumen-scroll="into-view\|lock\|restore"` | Browser scroll management; `restore` persists positions per path and query across history navigation |
+| `data-lumen-persist="key"` | Persist a control in local storage; prefix with `session:` for session storage |
+| `data-lumen-time="relative\|countdown"` | Update relative times or countdowns locally |
+| `data-lumen-media="lazy\|lightbox\|autoplay"` | Browser-native media behavior |
+| `data-lumen-window="online\|theme\|resize"` | Reflect browser/window state as classes or CSS variables |
+| `data-lumen-nav` | Native same-origin navigation with best-effort intent reporting to the server; links are never intercepted |
+| `data-lumen-prefetch` | Prefetch a same-origin document on pointer or keyboard intent without intercepting navigation |
+| `data-lumen-offline` | Register an explicitly mounted Lumen service worker |
+| `data-lumen-transition="name"` | Apply `name-enter` / `name-enter-active` transition classes |
+| `data-lumen-anchor="#target"` | Position a popover below an anchor element |
+| `data-lumen-inview="load_more"` | Report viewport entry to a Varian handler |
+| `data-lumen-sortable="reorder"` | Locally drag items marked with `data-lumen-sort-item`, then send their final IDs to Varian |
+| `data-lumen-toast` | Include the ephemeral toast presenter |
+| `data-lumen-key="Escape:close"` | Map browser key presses to Varian handlers |
+| `data-lumen-toggle="#target"` | Presentation-only local show/hide with `aria-expanded` |
+
+`data-lumen-toggle` must never hide protected data or enforce permissions; it is a
+latency escape hatch for tabs, accordions, and menus. Server state remains authoritative.
+Event-producing directives share the core's reconnect-safe delivery behavior, so an event
+raised during a short socket interruption is queued and flushed after reconnection.
+
+For known likely destinations, `lumen_prefetch(href)` emits a native
+`<link rel="prefetch" as="document">` and adds zero JavaScript. For contextual links,
+`lumen_prefetch_link(href, content)` preserves an ordinary resilient anchor and emits the
+small intent-prefetch action only when such a link appears. Repeated hover/focus intent is
+deduplicated and cross-origin destinations are left entirely to normal navigation.
+
+### Native document transitions
+
+`lumen_view_transitions()` enables same-origin cross-document View Transitions
+with the browser's native `@view-transition { navigation: auto }` rule. It falls
+back to ordinary navigation in unsupported browsers, disables generated animation
+for reduced-motion users, and ships zero JavaScript. Wrap matching elements on the
+old and new documents with `lumen_view_transition(name, content)` for validated,
+stable shared-element names.
+
+### Locale-aware routing
+
+`lumen_locale_route(request, supported, default_locale)` resolves an explicit
+`/locale/...` prefix first, negotiates weighted `Accept-Language` preferences
+second (including regional-to-base fallback), and otherwise selects the declared
+default. It returns the locale, prefix-free application path, canonical localized
+path, and selection source. `lumen_locale_alternates(path, supported, default)`
+emits deterministic `hreflang` and `x-default` links. Both are entirely server-side
+and add zero browser JavaScript.
+
+### Explicit offline resilience
+
+`lumen_mount_offline(app, worker_path, cache_name, assets, fallback)` serves a
+versioned service worker directly from Varian configuration, so no generated worker
+asset needs to be committed. It precaches only declared same-origin paths, removes
+older Lumen cache versions, uses network-first document navigation with the declared
+offline fallback, and leaves non-GET requests untouched. Rendering
+`lumen_offline(worker_path, scope)` opts a page into the small registration action;
+pages without that marker ship no service-worker code and install nothing.
+
+### Responsive image delivery
+
+`lumen_image(src, alt, options)` requires intrinsic `width` and `height`, defaults
+to native lazy loading and asynchronous decoding, validates loading/fetch-priority
+combinations, and supports ordered width-descriptor `srcset` plus `sizes`.
+`lumen_picture(src, alt, options)` adds ordered AVIF/WebP (or conventional image)
+sources before the fallback image. Both helpers escape URLs and alternative text,
+prevent ambiguous candidate widths, rely on browser-native selection, and add zero
+JavaScript. They describe already-produced variants; they do not claim to transform
+source files during rendering.
 
 ### Lumen UI (Component Registry)
 
@@ -242,6 +454,17 @@ Mount a live component on a Zenith app at `path`. Registers two routes:
   (`data-lumen-root` container + embedded client script) and returns `text/html`.
 - **`GET <path>/live`** — WebSocket upgrade endpoint. Upgrades to RFC 6455, then enters
   the per-connection event loop until the socket closes.
+
+Live upgrades require the browser's `Origin` to exactly match the request scheme and
+host. This check is independent of CORS and runs before the WebSocket handshake. Behind
+a TLS-terminating reverse proxy, configure the public origin explicitly at startup:
+
+```varian
+lumen_trust_live_origins(["https://app.example.com"])
+```
+
+Origins are exact `http(s)` origins: wildcards, paths, missing/`null` origins, and
+cross-origin requests are rejected.
 
 ## Wire Protocol
 
@@ -317,17 +540,20 @@ Lumen ships all of this in one runtime, zero `npm install`:
 | Capability | React / Vue / Svelte | Lumen |
 |---|---|---|
 | UI components | None (MUI, Chakra, Shadcn) | **28** — `<Page>`, `<Grid>`, `<Card>`, `<Hero>`, `<Button>`, etc. |
-| Server-driven DOM engine | None (VDOM + hydration) | **Built-in** — splice-patch protocol, ~2 KB Lumen JS inline |
+| Server-driven DOM engine | None (VDOM + hydration) | **Built-in** — splice-patch protocol, <4.1 KB mandatory JS plus detected actions |
 | File-based routing | React Router, Vue Router | **Built-in** — `pages/index.lumen` → `/` |
 | Dynamic route params | External lib feature | **Built-in** — `[id].lumen` → `/:id` |
 | Scoped CSS | CSS modules, styled-components | **Built-in** — `data-lumen-css` attribute rewrite |
 | Reactive store | Zustand, Pinia | **Built-in** — `lumen_store()`, `lumen_broadcast_store()` |
-| Async data fetching | React Query, TanStack Query | **Built-in** — `lumen_resource()`, `lumen_async_resource()` |
+| Async data fetching | React Query, TanStack Query | **Built-in** — keyed resources plus mutations with optimistic context, rollback hooks, and invalidation |
+| Tables and virtualization | TanStack Table / Virtual | **Built-in** — headless server queries, live refetch, bounded DOM windows, optional measured scroll action |
 | Pub-sub / broadcast | Manual WebSocket | **Built-in** — `lumen_publish()`, `lumen_subscribe()` |
 | Form validation | Zod, VeeValidate, yup | **Built-in** — `lumen_form()` Zod-style |
+| Progressive forms | SvelteKit actions / React Hook Form | **Built-in** — native fallback, optional exact-JS enhancement, typed results and accessible controls |
 | SSG | next export, manual | **Built-in** — `lumen_build_static_dir()` |
+| Typed content | Astro collections | **Built-in** — deterministic Markdown/JSON collections validated by Varian schemas |
 | SEO metadata | next/head, react-helmet | **Built-in** — `lumen_meta()` |
-| Client islands | None / manual | **Built-in** — `<client>` blocks |
+| Client islands | None / manual | **Built-in** — exact-JS `<client>` blocks with load, idle, visible, and media activation |
 | Inline SVG icons | CDN or bundler | **Built-in** — Lucide icons, zero CDN |
 | Dark mode | Manual CSS | **Built-in** — CSS variable tokens |
 | Live reload | HMR plugin | **Built-in** — `vn dev` |

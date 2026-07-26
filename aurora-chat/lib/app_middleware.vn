@@ -1,0 +1,48 @@
+// app_middleware.vn — Install middleware chain.
+// shield (cors+csrf), ratelimit (per-IP cap on /api/chat), observer (metrics).
+
+
+let _req_count = 0
+
+fn install_middleware(app, c) {
+    app.add_middleware(|req, next| {
+        let start = time.now_ms()
+        let resp = next(req)
+        let ms = time.now_ms() - start
+
+        _req_count = _req_count + 1
+        log.info_with("Request", ["method", "path", "status", "ms"],
+            [req.method, req.path, "" + resp.status, "" + ms])
+        return resp
+    })
+
+    app.add_middleware(cors(["*"], ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"], ["*"]))
+
+    // CSRF guards browser form posts (e.g. /login). JSON /api/* routes are
+    // same-origin and token-free — the chatbot POSTs to /api/chat — so exempt them.
+    let csrf_mw = csrf()
+    app.add_middleware(|req, next| {
+        if req.path.starts_with("/api/") { return next(req) }
+        return csrf_mw(req, next)
+    })
+
+    app.add_middleware(rate_limit(c.rate_max, c.rate_window))
+
+    let rl = new_rate_limiter(null)
+    app.add_middleware(|req, next| {
+        if req.path == "/api/chat" {
+            let ip = req.ip
+            if ip == null { ip = "127.0.0.1" }
+            let allowed = rl.check(ip, c.rate_max, c.rate_window / 1000)
+            if !allowed {
+                return http.create_struct(
+                    ["status", "body", "content_type"],
+                    [429, json_encode(http.create_struct(["error"], ["Too many chat requests. Please wait."])), "application/json"]
+                )
+            }
+        }
+        return next(req)
+    })
+
+    log.info_with("Middleware installed", ["app"], ["aurora-chat"])
+}

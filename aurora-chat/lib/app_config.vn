@@ -1,0 +1,33 @@
+// app_config.vn — Centralized config. Reads .env (cwd) via load_config().
+// The Gemini API key powers the AI shopping assistant (ai.vn, provider "gemini").
+
+fn cfg() {
+    let c = load_config()
+    let secret = c.str("SESSION_SECRET", "")
+    if secret == "" {
+        secret = random_string(16)
+        log.warn("SESSION_SECRET not set — using ephemeral secret.")
+    }
+    let gkey = c.str("GEMINI_API_KEY", "")
+    if gkey == "" {
+        log.warn("GEMINI_API_KEY not set — chatbot will use the deterministic keyword fallback.")
+    }
+    return http.create_struct(
+        ["port", "db_path", "secret_key", "per_page",
+         "gemini_key", "gemini_model",
+         "rate_max", "rate_window",
+         "mail_host", "mail_port", "mail_user", "mail_pass"],
+        [c.get_int("PORT", 8099), c.str("DB_PATH", "aurora-chat.db"), secret,
+         c.get_int("PER_PAGE", 25),
+         gkey, c.str("GEMINI_MODEL", "gemini-2.5-flash"),
+         c.get_int("RATE_LIMIT_MAX", 60), c.get_int("RATE_LIMIT_WINDOW_MS", 60000),
+         c.str("SMTP_HOST", ""), c.get_int("SMTP_PORT", 587),
+         c.str("SMTP_USER", ""), c.str("SMTP_PASS", "")]
+    )
+}
+
+// True when a real Gemini key is configured (live LLM path available).
+fn cfg_has_ai(c) {
+    if c.gemini_key != null and c.gemini_key != "" { return true }
+    return false
+}

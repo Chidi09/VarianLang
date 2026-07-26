@@ -1,0 +1,28 @@
+fn _live_origin_req(origin, scheme, host) {
+    let headers = http.create_struct([], [])
+    if origin != null { headers = http.create_struct(["origin"], [origin]) }
+    return http.create_struct(["headers", "scheme", "host"], [headers, scheme, host])
+}
+
+test "live sockets require an exact same origin by default" {
+    lumen_trust_live_origins([])
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req("https://app.test", "https", "app.test")), true)
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req("https://evil.test", "https", "app.test")), false)
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req(null, "https", "app.test")), false)
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req("null", "https", "app.test")), false)
+}
+
+test "live sockets support explicit reverse proxy origins" {
+    lumen_trust_live_origins(["https://app.test:8443", "https://app.test:8443"])
+    assert_eq(_lumen_live_trusted_origins.len(), 1)
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req("https://app.test:8443", "http", "127.0.0.1:8080")), true)
+    assert_eq(_lumen_live_origin_allowed(_live_origin_req("https://other.test", "http", "127.0.0.1:8080")), false)
+    lumen_trust_live_origins([])
+}
+
+test "trusted live origins reject wildcard path and non-http policies" {
+    assert_throws(| | { lumen_trust_live_origins("https://app.test") })
+    assert_throws(| | { lumen_trust_live_origins(["*"]) })
+    assert_throws(| | { lumen_trust_live_origins(["https://app.test/path"]) })
+    assert_throws(| | { lumen_trust_live_origins(["javascript:alert(1)"]) })
+}

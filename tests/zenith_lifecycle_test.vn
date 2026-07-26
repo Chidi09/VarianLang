@@ -1,0 +1,197 @@
+fn _zenith_request(method, path, query) {
+    return http.create_struct(
+        ["method", "path", "query", "body", "json", "headers", "scheme", "host"],
+        [method, path, query, "", null, http.create_struct([], []), "https", "example.test"]
+    )
+}
+
+fn _zenith_request_with_headers(method, path, headers) {
+    return http.create_struct(
+        ["method", "path", "query", "body", "json", "headers", "scheme", "host"],
+        [method, path, "", "", null, headers, "https", "example.test"]
+    )
+}
+
+test "compression negotiates real gzip without corrupting response semantics" {
+    let app = new_app()
+    assert_throws(| | { app.compress(0) })
+    assert_throws(| | { app.compress("large") })
+    app.compress(16)
+    app.get("/text", |req| {
+        let raw = http.create_struct(["status", "body", "content_type"], [200, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "text/plain"])
+        let response = with_header(raw, "Vary", "Origin")
+        return with_header(response, "Content-Length", "48")
+    }, "text", null)
+    app.get("/image", |req| {
+        return http.create_struct(["status", "body", "content_type"], [200, "not really an image", "image/png"])
+    }, "image", null)
+
+    let gzip_headers = http.create_struct(["accept_encoding"], ["br, gzip;q=1"])
+    let compressed = app.handle(_zenith_request_with_headers("GET", "/text", gzip_headers))
+    assert_eq(_get_req_field(compressed.headers, "Content_Encoding", null), "gzip")
+    assert_eq(_get_req_field(compressed.headers, "Vary", null), "Origin, Accept-Encoding")
+    assert_eq(_get_req_field(compressed.headers, "Content_Length", null), null)
+    assert_eq(compressed.body.code_at(0), 31)
+    assert_eq(compressed.body.code_at(1), 139)
+
+    let disabled = http.create_struct(["accept_encoding"], ["gzip; q=0"])
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/text", disabled)).body.code_at(0), 97)
+    let explicit_disabled = http.create_struct(["accept_encoding"], ["*;q=1, gzip;q=0"])
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/text", explicit_disabled)).body.code_at(0), 97)
+    assert_eq(app.handle(_zenith_request_with_headers("GET", "/image", gzip_headers)).body, "not really an image")
+    assert_eq(app.handle(_zenith_request_with_headers("HEAD", "/text", gzip_headers)).body, "")
+}
+
+test "job dashboard is absent by default and explicitly opt in" {
+    let app = new_app()
+    assert_eq(app.handle(_zenith_request("GET", "/admin/jobs", "")).status, 404)
+    assert_throws(| | { app.enable_job_dashboard("admin/jobs") })
+    app.enable_job_dashboard("/operations/jobs")
+    assert_eq(app.handle(_zenith_request("GET", "/operations/jobs", "")).status, 200)
+}
+
+test "static MIME handling never pretends TypeScript is JavaScript" {
+    assert_eq(_mime_type_for_path("client.js"), "application/javascript")
+    assert_eq(_mime_type_for_path("client.mjs"), "application/javascript")
+    assert_eq(_mime_type_for_path("client.ts"), "text/plain")
+}
+
+test "compiled route guards inherit in order and short circuit" {
+    let app = new_app()
+    let calls = []
+    app.add_guard("/", |req| { calls.append("root"); return null })
+    app.add_guard("/teams/:team", |req| {
+        calls.append("team")
+        if req.params.team == "blocked" {
+            return http.create_struct(["status", "body", "content_type"], [403, "Denied", "text/plain"])
+        }
+        return null
+    })
+    app.get("/teams/:team/settings", |req| { calls.append("route"); return "ok" }, "settings", null)
+
+    let allowed = app.handle(_zenith_request("GET", "/teams/blue/settings", ""))
+    assert_eq(allowed.status, 200)
+    assert_eq(calls.join(","), "root,team,route")
+    let denied = app.handle(_zenith_request("GET", "/teams/blocked/settings", ""))
+    assert_eq(denied.status, 403)
+    assert_eq(calls.join(","), "root,team,route,root,team")
+}
+
+test "route guard contracts reject ambiguous registrations" {
+    let app = new_app()
+    assert_throws(| | { app.add_guard("private", |req| { return null }) })
+    assert_throws(| | { app.add_guard("/private", "not callable") })
+}
+
+test "middleware preserves request data context and onion ordering" {
+    let app = new_app()
+    let order = []
+    app.add_middleware(|req, next| {
+        order.append("outer-before")
+        let enriched = request_with_context(req, "trace_id", "trace-7")
+        let response = next(enriched)
+        order.append("outer-after")
+        return with_header(response, "X-Outer", "yes")
+    })
+    app.add_middleware(|req, next| {
+        order.append("inner-before")
+        let response = next(req)
+        order.append("inner-after")
+        return response
+    })
+    app.get("/users/:name", |req| {
+        assert_eq(req.query, "tab=profile")
+        assert_eq(req.scheme, "https")
+        assert_eq(req.host, "example.test")
+        assert_eq(request_context(req, "trace_id", "missing"), "trace-7")
+        return "hello " + req.params.name
+    }, "user", null)
+
+    let response = app.handle(_zenith_request("get", "/users/Ada%20Lovelace", "tab=profile"))
+    assert_eq(response.status, 200)
+    assert_eq(response.body, "hello Ada Lovelace")
+    assert_eq(_get_req_field(response.headers, "X_Outer", null), "yes")
+    assert_eq(order.join(","), "outer-before,inner-before,inner-after,outer-after")
+}
+
+test "middleware can short circuit without invoking an endpoint" {
+    let app = new_app()
+    let called = [false]
+    app.add_middleware(|req, next| {
+        return http.create_struct(["status", "body", "content_type"], [401, "Denied", "text/plain"])
+    })
+    app.get("/private", |req| { called[0] = true; return "secret" }, "private", null)
+    let response = app.handle(_zenith_request("GET", "/private", ""))
+    assert_eq(response.status, 401)
+    assert_eq(called[0], false)
+}
+
+test "method contracts provide HEAD OPTIONS and 405 Allow semantics" {
+    let app = new_app()
+    let middleware_calls = [0]
+    app.add_middleware(|req, next| { middleware_calls[0] = middleware_calls[0] + 1; return next(req) })
+    app.get("/items", |req| { return with_header(json_response([{ id: 1 }], 200), "X-Route", "items") }, "items", null)
+    app.head("/explicit-head", |req| { return "must be removed" }, "head", null)
+
+    let head = app.handle(_zenith_request("HEAD", "/items", ""))
+    assert_eq(head.status, 200)
+    assert_eq(head.body, "")
+    assert_eq(head.content_type, "application/json")
+    assert_eq(_get_req_field(head.headers, "X_Route", null), "items")
+    assert_eq(app.handle(_zenith_request("HEAD", "/explicit-head", "")).body, "")
+
+    let wrong = app.handle(_zenith_request("POST", "/items", ""))
+    assert_eq(wrong.status, 405)
+    assert_ne(_get_req_field(wrong.headers, "Allow", "").index_of("GET"), -1)
+    assert_ne(_get_req_field(wrong.headers, "Allow", "").index_of("HEAD"), -1)
+
+    let options = app.handle(_zenith_request("OPTIONS", "/items", ""))
+    assert_eq(options.status, 204)
+    assert_ne(_get_req_field(options.headers, "Allow", "").index_of("OPTIONS"), -1)
+    assert_eq(app.handle(_zenith_request("GET", "/missing", "")).status, 404)
+    assert_eq(middleware_calls[0], 5)
+}
+
+test "endpoint values normalize while errors stay controlled" {
+    let app = new_app()
+    app.get("/none", |req| { return null }, "none", null)
+    app.get("/data", |req| { return { answer: 42 } }, "data", null)
+    app.get("/boom", |req| { throw("database password must not leak") }, "boom", null)
+    assert_eq(app.handle(_zenith_request("GET", "/none", "")).status, 204)
+    let data = app.handle(_zenith_request("GET", "/data", ""))
+    assert_eq(data.content_type, "application/json")
+    assert_eq(json_decode(data.body).answer, 42)
+    let failed = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(failed.status, 500)
+    assert_eq(failed.body.index_of("password"), -1)
+}
+
+test "custom error handlers receive normalized request context" {
+    let app = new_app()
+    app.add_middleware(|req, next| { return next(request_with_context(req, "request_id", "r-9")) })
+    app.on_error(|info, req| {
+        return json_response({ handled: true, request_id: request_context(req, "request_id", "missing") }, 503)
+    })
+    app.get("/boom", |req| { throw("boom") }, "boom", null)
+    let response = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(response.status, 503)
+    assert_eq(json_decode(response.body).handled, true)
+    assert_eq(json_decode(response.body).request_id, "r-9")
+}
+
+test "a failing custom error handler falls back safely" {
+    let app = new_app()
+    app.on_error(|info, req| { throw("secondary secret") })
+    app.get("/boom", |req| { throw("primary secret") }, "boom", null)
+    let response = app.handle(_zenith_request("GET", "/boom", ""))
+    assert_eq(response.status, 500)
+    assert_eq(response.body.index_of("secret"), -1)
+}
+
+test "native stream primitives reject use outside a server response" {
+    assert_throws(| | { http.stream_start(200, "text/plain", {}) })
+    assert_throws(| | { http.stream_write("orphan") })
+    assert_throws(| | { http.stream_end() })
+    assert_throws(| | { http.connection_write("orphan") })
+    assert_throws(| | { http.connection_read(1) })
+}

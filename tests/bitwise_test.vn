@@ -1,0 +1,15 @@
+test "bitwise integer operators preserve integer semantics" {
+    assert_eq(6 & 3, 2)
+    assert_eq(6 | 3, 7)
+    assert_eq(6 ^ 3, 5)
+    assert_eq(3 << 4, 48)
+    assert_eq(48 >> 4, 3)
+    assert_eq(-8 >> 2, -2)
+}
+
+test "bitwise operators reject non integers and invalid shifts" {
+    assert_throws(| | { let bad = 1.5 & 1 })
+    assert_throws(| | { let bad = 1 | true })
+    assert_throws(| | { let bad = 1 << -1 })
+    assert_throws(| | { let bad = 1 >> 64 })
+}

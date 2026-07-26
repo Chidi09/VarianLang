@@ -64,7 +64,7 @@
       <CodeEditor title="queue.vn" lines="6">
         <span class="token-function">cron</span>(<span class="token-number">200</span>, || { <span class="token-function">print</span>(<span class="token-string">"tick"</span>) })
 
-        <span class="token-keyword">let</span> pool <span class="token-keyword">=</span> <span class="token-type">WorkerPool</span> { ch: <span class="token-function">task.channel</span>(<span class="token-number">1000</span>), count: <span class="token-number">0</span>, workers: <span class="token-number">0</span> }
+        <span class="token-keyword">let</span> pool <span class="token-keyword">=</span> <span class="token-type">WorkerPool</span> &#123; ch: <span class="token-function">task.channel</span>(<span class="token-number">1000</span>), count: <span class="token-number">0</span>, workers: <span class="token-number">0</span> &#125;
         pool.<span class="token-function">spawn</span>(<span class="token-number">3</span>)
         pool.<span class="token-function">submit</span>(|| { <span class="token-function">print</span>(<span class="token-string">"job"</span>) })
       </CodeEditor>

@@ -205,7 +205,7 @@
   </a>
 </div>
 
-<Text>Lumen (<code>vn_modules/lumen.vn</code>, <code>vn_modules/lumen_ui.vn</code>, and the LumenJS client) compiles <code>.lumen</code> files into component structs at runtime via <code>lumen_compile_source</code>. The compiler generates WebSocket route handlers that serve HTML and morph DOM diffs — <strong>no build step, no JavaScript framework, no hydration</strong>. The same <code>vn_modules/</code> prelude that auto-imports <code>ZenithApp</code> also makes <code>lumen_component</code>, <code>lumen_mount</code>, and the entire Lumen UI registry available in every <code>.lumen</code> file.</Text>
+<Text>Lumen's ambient facade (<code>vn_modules/lumen.vn</code>) loads modular browser-action, content, security, routing/build, forms, server-resource, and built-in UI package files from <code>vn_modules/lumen/</code>. It compiles <code>.lumen</code> files into component structs via <code>lumen_compile_source</code>. Generated routes serve server HTML and focused DOM patches; static pages ship no browser action code, while interactive pages emit only the actions their markup selects. The facade keeps <code>lumen_component</code>, <code>lumen_mount</code>, and the Lumen UI registry available without application imports.</Text>
 
 <!-- ============ WHY LUMEN ============ -->
 <Heading size="2xl" as="h2"><span class="material-symbols-outlined" style="font-size:24px;color:var(--accent);vertical-align:middle;margin-right:8px;">auto_awesome</span> Why Lumen?</Heading>
@@ -219,7 +219,7 @@
         <span class="material-symbols-outlined" style="color:var(--accent);font-size:20px;">wifi</span>
         <Heading size="base" as="h4">HTML-over-WebSocket</Heading>
       </div>
-      <Text style="color:var(--text-secondary);line-height:1.6;">A 5 KB client sends events; the server re-renders and morphs only the changed DOM nodes. No Varian in the browser, no VDOM, no serialization — just raw HTML diffs over a persistent connection.</Text>
+      <Text style="color:var(--text-secondary);line-height:1.6;">Static pages ship no JavaScript. Interactive pages receive only the browser actions selected by their directives; live events use a persistent connection and the server returns focused HTML patches. No Varian runtime, VDOM, or hydration step in the browser.</Text>
     </div>
 
     <div>
@@ -498,11 +498,14 @@ browser JS. It's embedded as a <code>&lt;script&gt;</code> that runs once on fir
 untouched by the morph (<code>cloneNode</code>/<code>innerHTML</code> never re-run scripts). This is the <em>honest</em>
 island — real client code where you ask for it, the rest still server-driven. Lumen
 deliberately does <strong>not</strong> compile Varian to a browser bundle; that's exactly what
-reintroduces hydration-mismatch bugs.</Text>
-<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS <Heading size="xl" as="h3">LumenJS &amp; event modifiersamp; event modifiers</Heading>
-<Text>Lumen ships a tiny (~2.5 KB gzipped) client-side JavaScript runtime called
+reintroduces hydration-mismatch bugs. Client bodies are emitted verbatim and accept
+<code>lang="js"</code> or <code>lang="javascript"</code>. Lumen rejects <code>lang="ts"</code> instead of
+pretending a regex rewrite is a TypeScript compiler; precompile TypeScript before embedding it.</Text>
+<Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">javascript</span> LumenJS &amp; event modifiers</Heading>
+<Text>When a page opts into live behavior, Lumen emits a small client-side action runtime called
 <strong>LumenJS</strong>. It is not a framework you write against — it is a transport layer
-that Lumen emits on your behalf. The user never writes JS; they write Varian.
+that Lumen emits on your behalf. Normal live components stay in Varian; JavaScript is an
+explicit escape hatch only for a requested client island.
 LumenJS handles WebSocket reconnect with exponential backoff, event delegation,
 DOM morphing, and a small set of opt-in browser API shims.</Text>
 <Text><strong>Event modifiers</strong> can be attached to any <code>@event</code> handler using the
@@ -674,7 +677,7 @@ baked directly into the runtime — zero CDN dependencies, zero layout shift
 <Heading size="xl" as="h3"><span class="material-symbols-outlined" style="font-size:20px;color:var(--accent);vertical-align:middle;margin-right:6px;">static</span> Static Site Generation (SSG)</Heading>
 <Text>Lumen can also generate a fully static HTML site — no server, no WebSocket,
 no runtime required:</Text>
-<pre><code class="language-sh">vn lumen build --static ./pages ./out_dir --base-url https://example.com
+<pre><code class="language-sh">vn lumen export ./pages ./out_dir https://example.com
 </code></pre>
 <Text>This produces:</Text>
 <ul>

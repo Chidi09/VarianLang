@@ -1,0 +1,273 @@
+// app_chat.vn — AI chatbot brain: Gemini LLM + deterministic keyword fallback.
+// Centerpiece of Aurora Chat Shop per CONTRACT §4.
+
+
+fn make_ai_client(c) {
+    if cfg_has_ai(c) {
+        return ai_client(http.create_struct(
+            ["provider", "api_key", "model"],
+            ["gemini", c.gemini_key, c.gemini_model]))
+    }
+    return null
+}
+
+fn _persist_chat(conn, session_key, role, content) {
+    let rows = sqlite.query(conn, "SELECT id FROM chat_sessions WHERE session_key = ?", [session_key])
+    if rows.len() == 0 {
+        sqlite.query(conn, "INSERT INTO chat_sessions (session_key) VALUES (?)", [session_key])
+    }
+    sqlite.query(conn, "INSERT INTO chat_messages (session_key, role, content) VALUES (?, ?, ?)", [session_key, role, content])
+}
+
+fn _build_system_prompt() {
+    return "You are Aurora, a friendly and knowledgeable shopping assistant for Aurora Chat Shop. Help customers find products, add them to their cart, view their cart, and check out. Keep replies to 1-2 short sentences.\n\nThe catalog has five categories and these product types:\n- electronics: Gadget, Device, Adapter, Screen, Charger, Cable, Sensor, Controller, Player, Hub\n- home: Lamp, Chair, Table, Vase, Rug, Clock, Frame, Mirror, Shelf, Organizer\n- apparel: Shirt, Pants, Jacket, Socks, Hat, Shoes, Scarf, Belt, Sweater, Gloves\n- books: Guide, Journal, Novel, Manual, Anthology, Chronicle, Logbook, Atlas, Tome, Planner\n- toys: Blocks, Puzzle, Figure, Robot, Doll, Train, Car, Ball, Boardgame, Kit\n\nWhen a customer wants to browse or buy, pick the closest product type above as the search query (e.g. a customer asking for a 'desk lamp' -> query 'Lamp'; 'sneakers' -> 'Shoes'; 'a gift for a kid' -> 'Toy' or a specific toy type).\n\nIMPORTANT: At the END of every response you MUST append exactly one line, and it must be valid JSON in EXACTLY this shape (no other variations):\n<<ACTION:\{\"tool\":\"search\",\"query\":\"Lamp\",\"product_id\":0,\"qty\":1\}>>\n\nTools (set \"tool\" to one of):\n- search: find products. Put the product type in \"query\". Always set a non-empty \"query\".\n- add_to_cart: set \"product_id\" to the numeric ID and \"qty\" to the quantity.\n- view_cart: show the cart. Other fields stay 0/empty.\n- checkout: begin checkout. Other fields stay 0/empty.\n- track_order: set \"product_id\" to the order ID.\n- none: no action this turn.\n\nAlways include all four keys (tool, query, product_id, qty). Never wrap the JSON in extra text or change the key names."
+}
+
+fn _parse_action(text) {
+    let none = http.create_struct(["tool", "query", "product_id", "qty", "clean_text"], ["none", "", 0, 0, _sanitize.trim(text)])
+    let marker = "<<ACTION:"
+    let idx = text.index_of(marker)
+
+    // Always strip the action region from the visible reply, even if we can't
+    // parse it -- the raw marker/JSON must never leak to the user.
+    let inner = ""
+    let clean = ""
+    if idx >= 0 {
+        let end = text.index_of(">>", idx)
+        if end < 0 {
+            inner = text.substring(idx + marker.len(), text.len())
+            clean = text.substring(0, idx)
+        } else {
+            inner = text.substring(idx + marker.len(), end)
+            clean = text.substring(0, idx) + text.substring(end + 2, text.len())
+        }
+    } else {
+        // Some models drop the <<ACTION:>> wrapper and just append bare JSON like
+        // {"tool":"add_to_cart","product_id":184,...}. Recover the trailing object.
+        let lb = text.last_index_of("{")
+        let rb = text.last_index_of("}")
+        if lb < 0 or rb <= lb { return none }
+        let cand = text.substring(lb, rb + 1)
+        if cand.index_of("\"tool\"") < 0 { return none }
+        inner = cand
+        clean = text.substring(0, lb)
+    }
+    clean = _sanitize.trim(clean)
+    inner = _sanitize.trim(inner)
+
+    // Tolerant parse. Models drift between the documented
+    //   {"tool":"search","query":"laptop"}
+    // and shorthand like  search:{"query":"laptop"}  or  search  -- so we pull
+    // any leading "tool:" prefix and decode whatever JSON object follows.
+    let prefix = ""
+    let brace = inner.index_of("{")
+    if brace > 0 { prefix = inner.substring(0, brace) }
+    else if brace < 0 { prefix = inner }
+    prefix = _sanitize.trim(prefix)
+    if prefix.ends_with(":") { prefix = _sanitize.trim(prefix.substring(0, prefix.len() - 1)) }
+
+    let obj = null
+    if brace >= 0 {
+        try { obj = json_decode(inner.substring(brace, inner.len())) } catch e { obj = null }
+    }
+    if obj == null {
+        try { obj = json_decode(inner) } catch e { obj = null }
+    }
+
+    let tool = "none"
+    let query = ""
+    let product_id = 0
+    let qty = 0
+    if obj != null {
+        let t = _validate.get_field(obj, "tool")
+        if t != null { tool = "" + t }
+        let q = _validate.get_field(obj, "query")
+        if q != null { query = "" + q }
+        let pid = _validate.get_field(obj, "product_id")
+        if pid != null { product_id = 0 + pid }
+        let qv = _validate.get_field(obj, "qty")
+        if qv != null { qty = 0 + qv }
+    }
+    // A leading prefix ("search", "add_to_cart", ...) wins when the JSON body
+    // omitted "tool" (the common shorthand case).
+    if tool == "none" and prefix != "" { tool = prefix }
+
+    return http.create_struct(["tool", "query", "product_id", "qty", "clean_text"], [tool, query, product_id, qty, clean])
+}
+
+fn _execute_action(conn, c, session_key, parsed) {
+    let tool = parsed.tool
+    let products = []
+    if tool == "search" {
+        let result = search_products(conn, parsed.query, "", 1, 10)
+        let rows = result.rows
+        if rows != null {
+            for i in 0..rows.len() {
+                products = products.push(rows[i])
+            }
+        }
+    } else if tool == "add_to_cart" {
+        let pid = parsed.product_id
+        if pid > 0 {
+            cart_add(conn, session_key, pid, parsed.qty)
+            let p = get_product(conn, pid)
+            if p != null { products = products.push(p) }
+        }
+    } else if tool == "view_cart" {
+        let ci = cart_items(conn, c, session_key)
+        let items = ci.items
+        for i in 0..items.len() {
+            let it = items[i]
+            let p = get_product(conn, it.product_id)
+            if p != null { products = products.push(p) }
+        }
+    } else if tool == "track_order" {
+        let order = track_order(conn, parsed.product_id)
+        if order != null {
+            products = products.push(http.create_struct(
+                ["id", "name", "price_cents", "stock", "image", "description", "category", "featured", "created", "slug"],
+                [order.id, "Order #" + order.id, order.total_cents, 0, "", "", "", 0, order.created, ""]
+            ))
+        }
+    }
+    return products
+}
+
+fn _keyword_reply(conn, c, session_key, user_text) {
+    let lower = user_text.lower()
+    let products = []
+    let reply = "I'm not sure how to help with that. Try asking about products, or say 'show me electronics' or 'add laptop to cart'."
+
+    if lower.index_of("buy") >= 0 or lower.index_of("order") >= 0 or lower.index_of("purchase") >= 0 {
+        reply = "To start shopping, tell me what kind of product you're looking for. For example: 'show me laptops' or 'I need headphones'."
+    } else if lower.index_of("add") >= 0 or lower.index_of("cart") >= 0 {
+        let words = ["electronics", "home", "apparel", "books", "toys", "laptop", "keyboard", "mouse", "headphone", "monitor", "desk", "lamp", "backpack", "charger", "phone", "watch", "camera"]
+        for i in 0..words.len() {
+            if lower.index_of(words[i]) >= 0 {
+                let result = search_products(conn, words[i], "", 1, 5)
+                products = result.rows
+                reply = "Here's what I found for \"" + words[i] + "\". Would you like to add any of these to your cart?"
+                break
+            }
+        }
+    } else if lower.index_of("show") >= 0 or lower.index_of("search") >= 0 or lower.index_of("find") >= 0 or lower.index_of("browse") >= 0 {
+        let categories = ["electronics", "home", "apparel", "books", "toys"]
+        let found_cat = ""
+        for i in 0..categories.len() {
+            if lower.index_of(categories[i]) >= 0 { found_cat = categories[i]; break }
+        }
+        let search_query = ""
+        if found_cat != "" {
+            search_query = found_cat
+        } else {
+            let remaining = user_text
+            let remove_words = ["show", "me", "search", "find", "browse", "i", "want", "need", "looking", "for", "a", "an", "the", "please", "can", "you"]
+            for i in 0..remove_words.len() {
+                remaining = remaining.replace(" " + remove_words[i] + " ", " ")
+                remaining = remaining.replace(remove_words[i] + " ", "")
+            }
+            search_query = _sanitize.trim(remaining)
+            if search_query == "" { search_query = "electronics" }
+        }
+        let result = search_products(conn, search_query, found_cat, 1, 5)
+        products = result.rows
+        reply = "Here are some products I found. Would you like to add anything to your cart?"
+    } else if lower.index_of("checkout") >= 0 {
+        reply = "Ready to checkout? Your cart will be processed. Just type 'checkout' to confirm!"
+    } else if lower.index_of("track") >= 0 or lower.index_of("order status") >= 0 {
+        reply = "To track an order, please provide the order ID. You can find it in your account page."
+    } else if lower.index_of("hi") >= 0 or lower.index_of("hello") >= 0 or lower.index_of("hey") >= 0 {
+        reply = "Hello! Welcome to Aurora Chat Shop. I can help you find products, add items to your cart, and check out. What are you looking for today?"
+    }
+
+    let action_tool = "none"
+    if products.len() > 0 { action_tool = "search" }
+
+    return http.create_struct(["reply", "products", "action"], [reply, products, action_tool])
+}
+
+fn chat_reply(conn, c, client, session_key, user_text) {
+    let safe_text = _sanitize.escape_html(user_text)
+    _persist_chat(conn, session_key, "user", safe_text)
+
+    let products = []
+    let reply = ""
+    let action_tool = "none"
+    let used_ai = false
+
+    if client != null {
+        let conv = ai_conversation(_build_system_prompt())
+        conv.add("user", user_text)
+        let resp = null
+        try {
+            resp = client.chat(conv, null)
+        } catch e {
+            resp = null
+        }
+        if resp != null and resp.message != null {
+            let ai_text = resp.message.content
+            if ai_text != null and ai_text != "" {
+                let parsed = _parse_action(ai_text)
+                reply = _sanitize.escape_html(parsed.clean_text)
+                action_tool = parsed.tool
+                products = _execute_action(conn, c, session_key, parsed)
+                used_ai = true
+            }
+        }
+    }
+
+    if !used_ai {
+        print("[chat] Falling back to keyword parser (no AI key or API error)")
+        let kw = _keyword_reply(conn, c, session_key, user_text)
+        reply = kw.reply
+        products = kw.products
+        action_tool = kw.action
+    }
+
+    _persist_chat(conn, session_key, "assistant", reply)
+    return http.create_struct(["reply", "products", "action"], [reply, products, action_tool])
+}
+
+fn register_chat_api(app, conn, c) {
+    let ai_client_inst = make_ai_client(c)
+
+    app.post("/api/chat", |req| {
+        let json = req.json
+        let message = _validate.get_field(json, "message")
+        if message == null or message == "" { return err_res("Missing message", 400) }
+        let sk = _validate.get_field(json, "session_key")
+        if sk == null or sk == "" {
+            sk = cart_session_key(req, c)
+        }
+        let result = chat_reply(conn, c, ai_client_inst, sk, message)
+        let resp = json_res(result, 200)
+        return resp
+    }, "Chat with AI assistant", http.create_struct(
+        ["request_schema", "response_schema", "response_status"],
+        ["object", "object", 200]
+    ))
+
+    app.get("/ws/chat", |req| {
+        let ws = ws_upgrade(req)
+        if ws == null { return err_res("WebSocket upgrade failed", 400) }
+        let key = _validate.get_field(req.headers, "sec_websocket_key")
+        let accept = auth.sha1_base64(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+        let handshake = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: " + accept + "\r\n\r\n"
+        http.write_socket(ws.fd, handshake)
+
+        let sk = crypto.random_string(16)
+
+        loop {
+            let msg = ws_recv(ws)
+            if msg == null { break }
+            let result = chat_reply(conn, c, ai_client_inst, sk, msg)
+            let json_str = json_encode(result)
+            ws_send(ws, json_str)
+        }
+        ws_close(ws, 1000, "")
+        return http.create_struct(
+            ["status", "body", "content_type"],
+            [101, "", "text/plain"]
+        )
+    }, "WebSocket chat", null)
+}

@@ -178,7 +178,7 @@ static const char *known_native_methods[] = {
     "totp_generate", "totp_secret", "totp_verify", "trim", "trunc",
     "try_receive", "upper", "variance", "verify_jwt", "verify_jwt_v2",
     "verify_password", "verify_password_v2", "where", "write_bytes",
-    "write_socket", "write_text", "yield",
+    "write_socket", "write_text", "stream_start", "stream_write", "stream_end", "yield",
 };
 #define KNOWN_NATIVE_METHOD_COUNT (sizeof(known_native_methods) / sizeof(known_native_methods[0]))
 
@@ -286,7 +286,6 @@ static void check_module_usages(LintWalker *walker, AstNode *node) {
         // Detect calls to `.register()` or `.register_up()` on Migrator objects.
         const char *method = node->dispatch_call.method_name;
         if (strcmp(method, "register") == 0 || strcmp(method, "register_up") == 0) {
-            int sql_idx = (strcmp(method, "register") == 0) ? 1 : 1; // up_sql is at 1 or we can check all arguments
             for (int i = 0; i < node->dispatch_call.arg_count; i++) {
                 AstNode *arg = node->dispatch_call.args[i];
                 if (arg && arg->kind == NODE_STRING_LITERAL) {
@@ -298,10 +297,9 @@ static void check_module_usages(LintWalker *walker, AstNode *node) {
             }
         }
 
-        // D. Insecure rate limiting calls (cors/rate_limit in clusters)
-        // TODO: Implement proper cross-module analysis. The naive approach
-        // of flagging every listen_cluster call produces too many false
-        // positives (e.g. when the rate limiter is redis-backed and safe).
+        /* Cluster-safety diagnostics require whole-program middleware dataflow.
+         * Do not fabricate a warning from an isolated method call: Zenith's
+         * Redis-backed limiter is explicitly multi-process safe. */
     }
 }
 
@@ -583,9 +581,6 @@ static void lint_walk(AstNode *node, LintWalker *walker) {
 
         case NODE_DISPATCH_CALL: {
             check_module_usages(walker, node);
-            // listen_cluster: rate-limiter-safe when backed by redis (which it is).
-            // A proper cross-module check would require full-program analysis.
-            if (0) {} // placeholder
             if (is_raw_query_function_name(node->dispatch_call.method_name)) {
                 if (walker->in_loop) {
                     report_lint(walker->ctx, node->loc, "performance", "N+1 query pattern detected: query in loop");
@@ -1138,12 +1133,6 @@ static void check_lmn_typo(LintContext *ctx, const char *text, int text_len, int
 }
 
 /* 1.3b: Hardcoded color (#rrggbb or rgb(...)) in style block */
-static bool is_lumen_color_token(const char *name, int name_len) {
-    if (name_len < 8) return false;
-    if (strncmp(name, "--lumen-", 8) != 0) return false;
-    return true;
-}
-
 static void check_hardcoded_color(LintContext *ctx, const char *text, int text_len, int base_line) {
     const char *end = text + text_len;
     const char *p = text;
@@ -1154,7 +1143,6 @@ static void check_hardcoded_color(LintContext *ctx, const char *text, int text_l
         }
         /* #rrggbb / #rgb */
         if (*p == '#' && (p + 7 <= end || p + 4 <= end)) {
-            bool is_hex = true;
             int hex_len = 0;
             const char *h = p + 1;
             while (h < end && ((*h >= '0' && *h <= '9') || (*h >= 'a' && *h <= 'f') || (*h >= 'A' && *h <= 'F'))) {
@@ -1241,8 +1229,11 @@ static void check_client_js_advisory(LintContext *ctx, const char *source, int s
     (void)base_line;
     const char *p = source;
     while (*p) {
-        if (strncmp(p, "<client>", 8) == 0) {
-            const char *block_start = p + 8;
+        if (strncmp(p, "<client", 7) == 0 &&
+            (p[7] == '>' || p[7] == ' ' || p[7] == '\t' || p[7] == '\r' || p[7] == '\n')) {
+            const char *tag_end = strchr(p, '>');
+            if (!tag_end) break;
+            const char *block_start = tag_end + 1;
             const char *block_end = strstr(block_start, "</client>");
             if (!block_end) break;
             bool only_fetch_or_dom = true;
@@ -1285,25 +1276,6 @@ static void check_client_js_advisory(LintContext *ctx, const char *source, int s
     }
 }
 
-static void check_no_js_extension(LintContext *ctx, const char *source, int source_len, int base_line) {
-    (void)source_len;
-    (void)base_line;
-    if (lint_strcasestr(source, ".js")) {
-        int line = 1;
-        const char *p = source;
-        const char *match = lint_strcasestr(source, ".js");
-        while (p < match) {
-            if (*p == '\n') line++;
-            p++;
-        }
-        SourceLoc loc;
-        loc.filename = NULL;
-        loc.line = line;
-        loc.column = 0;
-        report_lint(ctx, loc, "correctness", "Raw .js usages are not allowed in strictly TypeScript Aurora. Use .ts instead.");
-    }
-}
-
 static int lint_lumen_file(const char *source, const char *path, LintContext *ctx) {
     SfcBlock script = {0}, tblock = {0}, sblock = {0};
     bool has_script = find_sfc_block(source, "script", &script);
@@ -1326,7 +1298,6 @@ static int lint_lumen_file(const char *source, const char *path, LintContext *ct
         check_hardcoded_color(ctx, sblock.start, sblock.len, sblock.start_line);
     }
     check_client_js_advisory(ctx, source, (int)strlen(source), 1);
-    check_no_js_extension(ctx, source, (int)strlen(source), 1);
 
     ctx->line_offset = saved_offset;
     ctx->line_base = saved_base;

@@ -218,7 +218,7 @@
     <main>
       <!-- 4.1 Hero -->
       <section class="hero">
-        <div class="hero-badge">Varian v1.0 is live</div>
+        <div class="hero-badge">Varian is under active development</div>
         <h1>One language.<br><span class="gradient-text">The entire stack.</span></h1>
         <p>A fast, memory-safe language with native actors and channels, a batteries-included web framework (Zenith), a server-driven UI framework (Lumen), a build tool (Kiln), and a package registry (Constellation). Aurora is all of it, together.</p>
         <div class="button-group">
@@ -230,8 +230,8 @@
       <!-- Stats band -->
       <div class="stat-band">
         <div class="stat-item">
-          <div class="stat-number">147/147</div>
-          <div class="stat-label">Tests passing</div>
+          <div class="stat-number">Regression-tested</div>
+          <div class="stat-label">Full suite passing</div>
         </div>
         <div class="stat-item">
           <div class="stat-number">~10.5k</div>
@@ -242,8 +242,8 @@
           <div class="stat-label">Language, whole stack</div>
         </div>
         <div class="stat-item">
-          <div class="stat-number">v1.0</div>
-          <div class="stat-label">Shipped</div>
+          <div class="stat-number">0 deps</div>
+          <div class="stat-label">Core web stack</div>
         </div>
       </div>
 
@@ -285,7 +285,7 @@
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">bolt</span></div>
             <h3>Fast</h3>
-            <p>Compiled bytecode VM with computed-goto dispatch. ~10,500 req/s single-process Zenith, ~35k multi-worker. No hidden allocation tax.</p>
+            <p>Compiled bytecode VM with computed-goto dispatch. The checked-in plaintext benchmark records about 10,500 req/s for one Zenith process; multi-core scaling is explicit through isolated worker processes.</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">hub</span></div>
@@ -338,8 +338,8 @@
             <p class="tour-text">Varian structs don't have methods attached to them. Instead, you write functions that take the struct as the first parameter (conventionally named <code>self</code>), similar to Python. There's no inheritance, no vtables, no virtual dispatch, no diamond problem — just plain data on the GC heap, always passed by reference. If you've used Go or Rust, this will feel familiar. If you're coming from Java or C++, it takes some getting used to — but the simplicity pays off: no fragile class hierarchies, no <code>super()</code> calls to get wrong.</p>
             <div class="code-block">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">structs.vn</span></div>
-              <div class="code-block-body"><pre><span class="token-keyword">struct</span> <span class="token-type">Point</span> { x: <span class="token-type">int</span>, y: <span class="token-type">int</span> }
-<span class="token-keyword">let</span> p = <span class="token-type">Point</span> { x: <span class="token-number">10</span>, y: <span class="token-number">20</span> }
+              <div class="code-block-body"><pre><span class="token-keyword">struct</span> <span class="token-type">Point</span> &#123; x: <span class="token-type">int</span>, y: <span class="token-type">int</span> &#125;
+<span class="token-keyword">let</span> p = <span class="token-type">Point</span> &#123; x: <span class="token-number">10</span>, y: <span class="token-number">20</span> &#125;
 <span class="token-function">print</span>(p.x)</pre></div>
             </div>
           </div>
@@ -383,10 +383,10 @@ a.<span class="token-function">greet</span>()</pre></div>
             <p class="tour-text">Send to a channel with <code>ch <- value</code> and receive with <code><- ch</code>. If the buffer is full, the sender blocks until space frees up — automatic backpressure. Unlike Go, Varian channels are always buffered (there's no unbuffered equivalent). This eliminates a whole category of accidental deadlocks where both sides block waiting for each other. If you want the equivalent of a rendezvous, use a channel with buffer size 1.</p>
             <div class="code-block">
               <div class="code-block-header"><span class="code-block-dot red"></span><span class="code-block-dot yellow"></span><span class="code-block-dot green"></span><span style="margin-left:8px;color:var(--text-muted);font-size:12px;">channels.vn</span></div>
-              <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">sender</span>(ch) {
+              <div class="code-block-body"><pre><span class="token-keyword">fn</span> <span class="token-function">sender</span>(ch) &#123;
     ch <- <span class="token-number">42</span>
     <span class="token-function">print</span>(<span class="token-string">"sent"</span>)
-}
+&#125;
 <span class="token-keyword">let</span> ch = task.<span class="token-function">channel</span>(<span class="token-number">10</span>)
 task.<span class="token-function">spawn</span>(sender, [ch])
 <span class="token-function">print</span>(<- ch)</pre></div>
@@ -504,7 +504,7 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">swap_horiz</span></div>
             <h3>Actors & channels</h3>
-            <p>Green-thread concurrency with message-passing actors and buffered channels. No locks, no races. Spawn thousands of lightweight tasks in a single process — each one costs ~2 KB of memory, not megabytes. The cooperative scheduler multiplexes them across available CPU cores automatically.</p>
+            <p>Green-thread concurrency with message-passing actors and buffered channels. Spawn lightweight cooperative tasks without async/await ceremony. A scheduler runs tasks within each VM; Zenith can use independent worker VMs when an application needs multiple CPU cores.</p>
           </div>
           <div class="feature-card">
             <div class="feature-icon"><span class="material-symbols-outlined">verified</span></div>
@@ -605,7 +605,7 @@ app.<span class="token-function">listen</span>(<span class="token-number">8080</
             </p>
 
             <p style="font-size:var(--text-lg);color:var(--text-secondary);line-height:1.8;margin-bottom:var(--space-8);">
-              Database drivers for SQLite and Postgres are <strong style="color:var(--text-primary);">built into the runtime</strong> — no ORM dependency, no <code>package.json</code>, no <code>Cargo.toml</code>. Every route handler returns a <code>Response</code> struct. ~10,500 req/s single-process, ~35k with multiple workers. No async/await ceremony — Varian's green threads handle concurrency transparently.
+              Database drivers for SQLite and Postgres are <strong style="color:var(--text-primary);">built into the runtime</strong> — no ORM dependency, no <code>package.json</code>, no <code>Cargo.toml</code>. Every route handler normalizes to a <code>Response</code>. The checked-in plaintext benchmark records about 10,500 req/s for one process; <code>listen_cluster</code> provides explicit multi-process scaling.
             </p>
 
             <div class="code-block" style="margin-bottom:var(--space-4);">
@@ -886,11 +886,9 @@ fn state() {
 
 fn loadExample(s, v, name) {
   let examples = {
-    hello: 'let name = "Varian"\nprint("Hello, " + name)',
-    actors: 'actor Greeter {\n    name: string,\n    fn greet(self) {\n        print("Hello from actor!")\n    }\n}\nlet a = Greeter.spawn()\na.greet()',
-    fib: 'fn fib(n) {\n    if n <= 1 { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nprint(fib(10))',
-    structs: 'struct Point { x: int, y: int }\nlet p = Point { x: 10, y: 20 }\nprint(p.x)\nprint(p.y)',
-    channels: 'fn sender(ch) {\n    ch <- 42\n    print("sent")\n}\nlet ch = task.channel(10)\ntask.spawn(sender, [ch])\nprint(<- ch)'
+    hello: "let name = \"Varian\"\nprint(\"Hello, \" + name)",
+    actors: "actor Greeter {\n    name: string,\n    fn greet(self) {\n        print(\"Hello from actor!\")\n    }\n}\nlet a = Greeter.spawn()\na.greet()",
+    fib: "fn fib(n) {\n    if n <= 1 { return n }\n    return fib(n - 1) + fib(n - 2)\n}\nprint(fib(10))"
   }
   return s.set("code", examples[name]).set("activeTab", name).set("outputVisible", false)
 }

@@ -1,0 +1,76 @@
+// app_products.vn — Product search, detail, and API routes.
+// Uses pagination helper for page-based listing.
+
+
+fn search_products(conn, query, category, page, per_page) {
+    let pg = paginate(page, per_page)
+    let where_clauses = []
+    let params = []
+
+    if query != null and query != "" {
+        where_clauses = where_clauses.push("name LIKE ?")
+        params = params.push("%" + query + "%")
+    }
+    if category != null and category != "" {
+        where_clauses = where_clauses.push("category = ?")
+        params = params.push(category)
+    }
+
+    let where_sql = ""
+    if where_clauses.len() > 0 {
+        where_sql = " WHERE "
+        for i in 0..where_clauses.len() {
+            if i > 0 { where_sql = where_sql + " AND " }
+            where_sql = where_sql + where_clauses[i]
+        }
+    }
+
+    let count_rows = sqlite.query(conn, "SELECT COUNT(*) AS c FROM products" + where_sql, params)
+    let total = count_rows[0].c
+
+    let limit_params = params
+    limit_params = limit_params.push(per_page)
+    limit_params = limit_params.push(pg.offset)
+
+    let rows = sqlite.query(conn, "SELECT * FROM products" + where_sql + " ORDER BY id LIMIT ? OFFSET ?", limit_params)
+    return http.create_struct(["rows", "total"], [rows, total])
+}
+
+fn get_product(conn, id_or_slug) {
+    let rows = sqlite.query(conn, "SELECT * FROM products WHERE id = ?", [id_or_slug])
+    if rows.len() > 0 { return rows[0] }
+    let rows2 = sqlite.query(conn, "SELECT * FROM products WHERE slug = ?", [id_or_slug])
+    if rows2.len() > 0 { return rows2[0] }
+    return null
+}
+
+fn register_product_api(app, conn, c) {
+    app.get("/api/products", |req| {
+        let q = query(req, "q", "")
+        let cat = query(req, "category", "")
+        let pstr = query(req, "page", "1")
+        let page = 1
+        if pstr != null and pstr != "" {
+            try { page = json_decode(pstr) } catch e { page = 1 }
+        }
+        let result = search_products(conn, q, cat, page, c.per_page)
+        return json_res(http.create_struct(
+            ["data", "total", "page", "per_page"],
+            [result.rows, result.total, page, c.per_page]
+        ), 200)
+    }, "Search products", http.create_struct(
+        ["query_params", "response_schema", "response_status"],
+        [http.create_struct(["q", "category", "page"], ["string", "string", "integer"]), "object", 200]
+    ))
+
+    app.get("/api/products/:id", |req| {
+        let id = _validate.get_field(req.params, "id")
+        if id == null { return err_res("Missing id", 400) }
+        let product = get_product(conn, id)
+        if product == null { return err_res("Not found", 404) }
+        return json_res(product, 200)
+    }, "Get product", http.create_struct(
+        ["response_schema", "response_status", "error_status"],
+        ["object", 200, 404]
+    ))
+}

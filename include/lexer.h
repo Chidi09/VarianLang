@@ -49,6 +49,8 @@ typedef enum {
     TOKEN_QUESTION_DOT,               /* ?. */
     TOKEN_DOUBLE_COLON,              /* :: */
     TOKEN_LEFT_ARROW,                /* <- */
+    TOKEN_SHIFT_LEFT,                /* << */
+    TOKEN_SHIFT_RIGHT,               /* >> */
 
     /* Literals */
     TOKEN_IDENTIFIER,
@@ -116,10 +118,14 @@ typedef struct {
     bool had_error;
     char error_message[256];
     bool expr_start;     /* true if next token starts an expression */
+    int user_source_offset; /* byte offset where injected prelude ends; 0 if none */
 } Lexer;
 
 /* Initialize a lexer */
 void lexer_init(Lexer *lexer, const char *source, const char *filename);
+
+/* Mark the byte boundary between an injected prelude and user source. */
+void lexer_set_user_source_offset(Lexer *lexer, int offset);
 
 /* Scan the next token */
 Token lexer_next(Lexer *lexer);

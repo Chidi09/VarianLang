@@ -1,5 +1,6 @@
 #include "vm.h"
 #include "json.h"
+#include "suspend_analysis.h"
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
@@ -1165,6 +1166,7 @@ void compiler_init(Compiler *compiler, Arena *arena, Chunk *chunk, AstNode *prog
     compiler->arena = arena;
     compiler->chunk = chunk;
     compiler->program = program;
+    compiler->suspend_analysis = NULL;
     compiler->scope_depth = 0;
     compiler->local_count = 0;
     compiler->loop_count = 0;
@@ -1186,7 +1188,7 @@ static void compiler_error(Compiler *compiler, const char *fmt, ...) {
     compiler->had_error = true;
 }
 
-static int compiler_add_local(Compiler *compiler, const char *name) {
+int compiler_add_local(Compiler *compiler, const char *name) {
     if (compiler->local_count >= 256) {
         compiler_error(compiler, "Too many local variables");
         return 0;
@@ -1198,7 +1200,7 @@ static int compiler_add_local(Compiler *compiler, const char *name) {
     return idx;
 }
 
-static int compiler_find_local(Compiler *compiler, const char *name) {
+int compiler_find_local(Compiler *compiler, const char *name) {
     for (int i = compiler->local_count - 1; i >= 0; i--) {
         if (strcmp(compiler->local_names[i], name) == 0)
             return i;
@@ -1442,11 +1444,11 @@ static void compile_expression(Compiler *compiler, AstNode *node) {
                 case OP_GE:  emit_byte(compiler, BC_GREATER_EQUAL); break;
                 case OP_AND: emit_byte(compiler, BC_AND); break;
                 case OP_OR:  emit_byte(compiler, BC_OR); break;
-                case OP_BIT_AND: emit_byte(compiler, BC_AND); break;
-                case OP_BIT_OR:  emit_byte(compiler, BC_OR); break;
-                case OP_BIT_XOR: emit_byte(compiler, BC_EQUAL); break; /* placeholder: XOR */
-                case OP_SHL:     emit_byte(compiler, BC_MUL); break;  /* placeholder */
-                case OP_SHR:     emit_byte(compiler, BC_DIV); break;  /* placeholder */
+                case OP_BIT_AND: emit_byte(compiler, BC_BIT_AND); break;
+                case OP_BIT_OR:  emit_byte(compiler, BC_BIT_OR); break;
+                case OP_BIT_XOR: emit_byte(compiler, BC_BIT_XOR); break;
+                case OP_SHL:     emit_byte(compiler, BC_SHL); break;
+                case OP_SHR:     emit_byte(compiler, BC_SHR); break;
                 case OP_NIL_COALESCE: emit_byte(compiler, BC_NIL_COALESCE); break;
                 default: compiler_error(compiler, "Unknown binary operator"); break;
             }
@@ -1701,6 +1703,7 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler fn_compiler;
             fn_compiler.enclosing = compiler;
             fn_compiler.arena = compiler->arena;
+            fn_compiler.suspend_analysis = compiler->suspend_analysis;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
             fn_compiler.had_error = false;
@@ -1770,6 +1773,12 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_counts = fn_chunk.rle_counts;
             func->rle_count = fn_chunk.rle_count;
             func->metadata = val_nil();
+            /* NULL suspend_analysis (ordinary interpreted compile) => fail-safe
+             * "true" via suspend_analysis_get; only Kiln release compiles pass
+             * a real analysis and can prove a function eligible for native
+             * codegen (see suspend_analysis.h). */
+            func->suspends_maybe = suspend_analysis_get(compiler->suspend_analysis, node);
+            func->source_node = node;
 
             /* Compile decorators into metadata array: [key1, val1, key2, val2, ...] */
             if (node->fn_decl.decorator_count > 0) {
@@ -1852,6 +1861,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler fn_compiler;
             fn_compiler.enclosing = NULL;
             fn_compiler.arena = compiler->arena;
+            /* Must be propagated explicitly: this Compiler is built field by
+             * field rather than through compiler_init, so anything left unset
+             * is an indeterminate stack value, and a nested fn decl inside this
+             * body would read it. */
+            fn_compiler.suspend_analysis = compiler->suspend_analysis;
             fn_compiler.chunk = &fn_chunk;
             fn_compiler.scope_depth = 1;
             fn_compiler.had_error = false;
@@ -1884,6 +1898,11 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             func->rle_counts = fn_chunk.rle_counts;
             func->rle_count = fn_chunk.rle_count;
             func->metadata = val_nil();
+            /* Tests aren't collected by suspend_analyze; this always resolves
+             * to the fail-safe "true" default, which is fine since tests are
+             * never candidates for native AOT codegen. */
+            func->suspends_maybe = suspend_analysis_get(compiler->suspend_analysis, node);
+            func->source_node = NULL; /* a NODE_TEST, not a NODE_FN_DECL — never SSA-paired */
 
             /* Store in compiler's test registry (not emitted as global) */
             if (compiler->test_count < MAX_TESTS) {
@@ -2705,6 +2724,9 @@ static void compile_node(Compiler *compiler, AstNode *node) {
             Compiler tmp_comp;
             tmp_comp.enclosing = NULL;
             tmp_comp.arena = compiler->arena;
+            /* See the note at NODE_TEST: field-by-field init, so this must be
+             * set explicitly or a nested fn decl reads a garbage pointer. */
+            tmp_comp.suspend_analysis = compiler->suspend_analysis;
             tmp_comp.chunk = &tmp_chunk;
             tmp_comp.scope_depth = 0;
             tmp_comp.had_error = false;
@@ -2844,6 +2866,8 @@ Task *task_new(VM *vm) {
         t->wakeup_time = 0.0;
         t->http_response_fd = -1;
         t->http_response_ssl = NULL;
+        t->http_stream_started = false;
+        t->http_stream_ended = false;
         t->http_pending_conns = NULL;
         t->arena_base = saved_arena;
         t->arena_offset = 0;
@@ -2856,6 +2880,8 @@ Task *task_new(VM *vm) {
     t->http_listen_fd = -1;
     t->http_response_fd = -1;
     t->http_response_ssl = NULL;
+    t->http_stream_started = false;
+    t->http_stream_ended = false;
     t->http_pending_conns = NULL;
     t->wakeup_time = 0.0;
     t->arena_base = NULL;
@@ -3145,6 +3171,32 @@ static Value native_print(VM *vm, int arg_count, Value *args) {
     if (arg_count > 0) printf("\n");
     fflush(stdout);
     return val_nil();
+}
+
+static Value native_type_of(VM *vm, int arg_count, Value *args) {
+    (void)vm;
+    if (arg_count < 1) return val_string(copy_string("nil", 3));
+    const char *name = "unknown";
+    switch (args[0].type) {
+        case VAL_NIL:          name = "nil"; break;
+        case VAL_BOOL:         name = "bool"; break;
+        case VAL_INT:          name = "int"; break;
+        case VAL_FLOAT:        name = "float"; break;
+        case VAL_STRING:       name = "string"; break;
+        case VAL_ARRAY:        name = "array"; break;
+        case VAL_TUPLE:        name = "tuple"; break;
+        case VAL_FUNCTION:     name = "function"; break;
+        case VAL_CLOSURE:      name = "closure"; break;
+        case VAL_NATIVE_FN:    name = "native_function"; break;
+        case VAL_STRUCT:       name = "struct"; break;
+        case VAL_ENUM:         name = "enum"; break;
+        case VAL_MODULE:       name = "module"; break;
+        case VAL_TASK:         name = "task"; break;
+        case VAL_CHANNEL:      name = "channel"; break;
+        case VAL_ACTOR:        name = "actor"; break;
+        case VAL_BOUND_METHOD: name = "bound_method"; break;
+    }
+    return val_string(copy_string(name, (int)strlen(name)));
 }
 
 /* `__lumen_log_start()` — enable print capture and clear the buffer (Lumen dev).
@@ -3602,6 +3654,7 @@ bool vm_run(VM *vm, bool run_tests) {
     }
 
     define_global(vm, copy_string("print", 5), val_native_fn((void *)native_print));
+    define_global(vm, copy_string("type_of", 7), val_native_fn((void *)native_type_of));
     define_global(vm, copy_string("__test_enable_arena", 19), val_native_fn((void *)native_test_enable_arena));
     define_global(vm, copy_string("__test_recycle_arena", 20), val_native_fn((void *)native_test_recycle_arena));
     define_global(vm, copy_string("throw", 5), val_native_fn((void *)native_throw));
@@ -4036,6 +4089,11 @@ bool task_run(VM *vm, Task *task) {
         dispatch_table[BC_AND] = &&L_BC_AND;
         dispatch_table[BC_OR] = &&L_BC_OR;
         dispatch_table[BC_NIL_COALESCE] = &&L_BC_NIL_COALESCE;
+        dispatch_table[BC_BIT_AND] = &&L_BC_BIT_AND;
+        dispatch_table[BC_BIT_OR] = &&L_BC_BIT_OR;
+        dispatch_table[BC_BIT_XOR] = &&L_BC_BIT_XOR;
+        dispatch_table[BC_SHL] = &&L_BC_SHL;
+        dispatch_table[BC_SHR] = &&L_BC_SHR;
         dispatch_table[BC_DEFINE_GLOBAL] = &&L_BC_DEFINE_GLOBAL;
         dispatch_table[BC_GET_GLOBAL] = &&L_BC_GET_GLOBAL;
         dispatch_table[BC_SET_GLOBAL] = &&L_BC_SET_GLOBAL;
@@ -4426,6 +4484,39 @@ L_BC_LOOP_TOP:
             BINARY_OP_NUM(<=); DISPATCH();
             L_BC_GREATER_EQUAL:
             BINARY_OP_NUM(>=); DISPATCH();
+
+            L_BC_BIT_AND:
+            L_BC_BIT_OR:
+            L_BC_BIT_XOR:
+            {
+                Value b = POP();
+                Value a = POP();
+                if (a.type != VAL_INT || b.type != VAL_INT) {
+                    RAISE("Bitwise operands must be integers");
+                }
+                if (instruction == BC_BIT_AND) PUSH(val_int(a.as.integer & b.as.integer));
+                else if (instruction == BC_BIT_OR) PUSH(val_int(a.as.integer | b.as.integer));
+                else PUSH(val_int(a.as.integer ^ b.as.integer));
+                DISPATCH();
+            }
+            L_BC_SHL:
+            L_BC_SHR:
+            {
+                Value b = POP();
+                Value a = POP();
+                if (a.type != VAL_INT || b.type != VAL_INT) {
+                    RAISE("Shift operands must be integers");
+                }
+                if (b.as.integer < 0 || b.as.integer >= 64) {
+                    RAISE("Shift count must be between 0 and 63");
+                }
+                if (instruction == BC_SHL) {
+                    PUSH(val_int((int64_t)((uint64_t)a.as.integer << (uint64_t)b.as.integer)));
+                } else {
+                    PUSH(val_int(a.as.integer >> b.as.integer));
+                }
+                DISPATCH();
+            }
 
             L_BC_AND:
             {

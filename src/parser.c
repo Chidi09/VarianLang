@@ -216,7 +216,7 @@ static void parser_register_struct(Parser *parser, const char *name,
 
 /* ─── Function signature registry (named arguments) ─── */
 static FunctionSig *parser_find_function(Parser *parser, const char *name) {
-    for (int i = 0; i < parser->function_count; i++) {
+    for (int i = parser->function_count - 1; i >= 0; i--) {
         if (strcmp(parser->functions[i].name, name) == 0)
             return &parser->functions[i];
     }
@@ -225,7 +225,7 @@ static FunctionSig *parser_find_function(Parser *parser, const char *name) {
 
 static void parser_register_function(Parser *parser, const char *name,
                                       char **param_names, int param_count) {
-    if (parser->function_count >= 256) return;
+    if (parser->function_count >= 1024) return;
     FunctionSig *fs = &parser->functions[parser->function_count++];
     fs->name = (char *)malloc(strlen(name) + 1);
     strcpy(fs->name, name);
@@ -325,10 +325,14 @@ static bool match(Parser *parser, TokenType type) {
 
 static SourceLoc current_loc(Parser *parser) {
     SourceLoc loc;
-    loc.filename = parser->lexer->filename;
+    int offset = (int)(parser->previous.start - parser->lexer->source);
+    loc.filename = (parser->lexer->user_source_offset > 0 &&
+                    offset < parser->lexer->user_source_offset)
+                       ? "<prelude>"
+                       : parser->lexer->filename;
     loc.line = parser->previous.line;
     loc.column = parser->previous.column;
-    loc.offset = 0;
+    loc.offset = offset;
     return loc;
 }
 
@@ -582,6 +586,7 @@ static AstNode *parse_fn_decl(Parser *parser) {
     /* Parameters */
     char *param_names[64];
     Type *param_types[64];
+    bool param_type_explicit[64];
     int param_count = 0;
 
     consume(parser, TOKEN_LPAREN, "Expected '(' after function name");
@@ -603,8 +608,10 @@ static AstNode *parse_fn_decl(Parser *parser) {
             Type *pt = NULL;
             if (match(parser, TOKEN_COLON)) {
                 pt = parse_type(parser);
+                param_type_explicit[param_count] = true;
             } else {
                 pt = type_primitive(parser->arena, PRIMITIVE_INT); /* default */
+                param_type_explicit[param_count] = false;
             }
             param_types[param_count] = pt;
             param_count++;
@@ -666,7 +673,7 @@ static AstNode *parse_fn_decl(Parser *parser) {
     parser_register_function(parser, name, param_names, param_count);
 
     AstNode *fn_node = ast_fn_decl(parser->arena, loc, name, fn_type,
-                        param_names, param_count,
+                        param_names, param_count, param_type_explicit,
                         type_params, type_param_count,
                         body, false, false, false, NULL,
                         NULL, NULL, 0);
@@ -1231,6 +1238,7 @@ static AstNode *parse_actor_decl(Parser *parser) {
             consume(parser, TOKEN_LPAREN, "Expected '(' after method name");
             char *param_names[64];
             Type *param_types[64];
+            bool param_type_explicit[64];
             int param_count = 0;
 
             if (!check(parser, TOKEN_RPAREN)) {
@@ -1240,10 +1248,13 @@ static AstNode *parse_actor_decl(Parser *parser) {
                     advance(parser);
                     param_names[param_count] = token_strdup(&parser->previous);
                     Type *pt = NULL;
-                    if (match(parser, TOKEN_COLON))
+                    if (match(parser, TOKEN_COLON)) {
                         pt = parse_type(parser);
-                    else
+                        param_type_explicit[param_count] = true;
+                    } else {
                         pt = type_primitive(parser->arena, PRIMITIVE_INT);
+                        param_type_explicit[param_count] = false;
+                    }
                     param_types[param_count] = pt;
                     param_count++;
                 } while (match(parser, TOKEN_COMMA));
@@ -1283,7 +1294,7 @@ static AstNode *parse_actor_decl(Parser *parser) {
             }
 
             AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
-                                param_names, param_count, NULL, 0,
+                                param_names, param_count, param_type_explicit, NULL, 0,
                                 body, false, false, true, name,
                                 NULL, NULL, 0);
             for (int i = 0; i < param_count; i++)
@@ -1607,6 +1618,7 @@ static AstNode *parse_impl_block(Parser *parser) {
 
         char *param_names[64];
         Type *param_types[64];
+        bool param_type_explicit[64];
         int param_count = 0;
 
         if (!check(parser, TOKEN_RPAREN)) {
@@ -1616,10 +1628,13 @@ static AstNode *parse_impl_block(Parser *parser) {
                 advance(parser);
                 param_names[param_count] = token_strdup(&parser->previous);
                 Type *pt = NULL;
-                if (match(parser, TOKEN_COLON))
+                if (match(parser, TOKEN_COLON)) {
                     pt = parse_type(parser);
-                else
+                    param_type_explicit[param_count] = true;
+                } else {
                     pt = type_primitive(parser->arena, PRIMITIVE_INT);
+                    param_type_explicit[param_count] = false;
+                }
                 param_types[param_count] = pt;
                 param_count++;
             } while (match(parser, TOKEN_COMMA));
@@ -1660,7 +1675,7 @@ static AstNode *parse_impl_block(Parser *parser) {
         }
 
         AstNode *fn_node = ast_fn_decl(parser->arena, loc, method_name, fn_type,
-                            param_names, param_count, NULL, 0,
+                            param_names, param_count, param_type_explicit, NULL, 0,
                             body, false, false, true, type_name,
                             NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
@@ -1790,15 +1805,11 @@ static AstNode *parse_stmt(Parser *parser) {
     }
 
     if (match(parser, TOKEN_BREAK)) {
-        if (parser->loop_depth <= 0)
-            parser_error(parser, "break outside loop");
         match(parser, TOKEN_SEMICOLON);
         return ast_break(parser->arena, current_loc(parser));
     }
 
     if (match(parser, TOKEN_CONTINUE)) {
-        if (parser->loop_depth <= 0)
-            parser_error(parser, "continue outside loop");
         match(parser, TOKEN_SEMICOLON);
         return ast_continue(parser->arena, current_loc(parser));
     }
@@ -2076,8 +2087,17 @@ static AstNode *parse_bit_and(Parser *parser) {
 static AstNode *parse_shift(Parser *parser) {
     AstNode *expr = parse_term(parser);
 
-    /* Simulate shift operators, which we don't have as tokens yet */
-    /* We could add them later. For now, skip. */
+    while (true) {
+        if (match(parser, TOKEN_SHIFT_LEFT)) {
+            AstNode *right = parse_term(parser);
+            expr = ast_binary(parser->arena, current_loc(parser), OP_SHL, expr, right);
+        } else if (match(parser, TOKEN_SHIFT_RIGHT)) {
+            AstNode *right = parse_term(parser);
+            expr = ast_binary(parser->arena, current_loc(parser), OP_SHR, expr, right);
+        } else {
+            break;
+        }
+    }
 
     return expr;
 }
@@ -2629,7 +2649,7 @@ static AstNode *parse_primary(Parser *parser) {
         Type *fn_type = type_function(parser->arena, param_type_list, param_count, void_type);
 
         AstNode *fn = ast_fn_decl(parser->arena, loc, "__lambda__", fn_type,
-                                  param_names, param_count, NULL, 0,
+                                  param_names, param_count, NULL, NULL, 0,
                                   block, false, false, false, NULL,
                                   NULL, NULL, 0);
         for (int i = 0; i < param_count; i++)
@@ -2661,7 +2681,7 @@ void parser_init(Parser *parser, Lexer *lexer, Arena *arena) {
         const char *builtin_methods[] = {
             "len", "upper", "lower", "substring", "trim", "spawn",
             "serve", "serve_with_routes", "push", "append", "join", "split", "starts_with", "replace",
-            "write_socket", "close_socket", "read_socket", "code_at", "from_codes",
+            "write_socket", "close_socket", "read_socket", "stream_start", "stream_write", "stream_end", "code_at", "from_codes",
             "sha1_base64", "hash_password", "verify_password",
             "bit_and", "bit_or", "bit_xor", "index_of", "last_index_of",
             "contains", "ends_with",
@@ -2882,7 +2902,7 @@ AstNode *parser_parse(Parser *parser) {
 
                         /* Synthesize fn declaration */
                         AstNode *fn_decl_node = ast_fn_decl(parser->arena, loc, mangled_name, NULL,
-                                                           NULL, 0, NULL, 0,
+                                                           NULL, 0, NULL, NULL, 0,
                                                            body_block, false, false, false, NULL,
                                                            NULL, NULL, 0);
                         fn_decl_node->fn_decl.is_module_init = true;

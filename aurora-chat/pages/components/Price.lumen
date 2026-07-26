@@ -1,0 +1,14 @@
+<template>
+<span class="price-component">{{! value }}</span>
+</template>
+
+<style scoped>
+.price-component {
+  font-family: var(--lumen-font);
+  font-weight: 700;
+}
+</style>
+
+<script>
+fn state() { return { value: "$0.00" } }
+</script>

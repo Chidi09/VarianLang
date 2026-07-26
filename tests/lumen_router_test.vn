@@ -13,6 +13,16 @@ test "maps file bases to routes (index is root)" {
     assert_eq(_lumen_route("about"), "/about")
 }
 
+test "routing rejects unsafe generated identifiers ports and sitemap URLs" {
+    assert_eq(_lumen_route_component_valid("AdminUser"), true)
+    assert_eq(_lumen_route_component_valid("9Admin"), false)
+    assert_eq(_lumen_route_component_valid("Bad-Name"), false)
+    assert_throws(| | { _lumen_build_dir("_lumen_router_test_pages", "/tmp/nope.vn", 0) })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "javascript:alert(1)", "/tmp/nope.vn") })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "https://example.test\nInjected", "/tmp/nope.vn") })
+    assert_throws(| | { _lumen_emit_static_program("_lumen_router_test_pages", "/tmp/out", "https://example.test/?query=bad", "/tmp/nope.vn") })
+}
+
 test "build_dir compiles a pages directory into one runnable app" {
     let dir = "_lumen_router_test_pages"
     io.mkdir(dir)
@@ -35,4 +45,202 @@ test "build_dir compiles a pages directory into one runnable app" {
     // via http.serve directly so `vn dev` owns the only startup banner.
     assert_ne(app.index_of("app.serve_static(\"/\", \"public\")"), -1)
     assert_ne(app.index_of("http.serve(8099"), -1)
+}
+
+test "Aurora route builds compose into an existing Zenith app" {
+    let dir = "_lumen_aurora_route_pages"
+    io.mkdir(dir)
+    io.mkdir(dir + "/teams")
+    io.mkdir(dir + "/teams/[team]")
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Aurora</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/+guard.vn", "fn guard(req) \{ return null \}")
+    io.write_text(dir + "/teams/[team]/+guard.vn", "fn guard(req) \{ return null \}")
+    let out = "_lumen_aurora_routes.vn"
+    assert_eq(_lumen_build_aurora_dir(dir, out, 8090), 1)
+    let generated = io.read_text(out)
+    assert_ne(generated.index_of("fn aurora_mount_pages(app)"), -1)
+    assert_ne(generated.index_of("lumen_mount(app, \"/\""), -1)
+    assert_ne(generated.index_of("app.serve_static(\"/\", \"public\")"), -1)
+    assert_ne(generated.index_of("fn _lumen_file_guard_0(req)"), -1)
+    assert_ne(generated.index_of("fn _lumen_file_guard_1(req)"), -1)
+    assert_ne(generated.index_of("app.add_guard(\"/\", _lumen_file_guard_0)"), -1)
+    assert_ne(generated.index_of("app.add_guard(\"/teams/:team\", _lumen_file_guard_1)"), -1)
+    assert_eq(generated.index_of("temp_guard_"), -1)
+    assert_eq(generated.index_of("python.run"), -1)
+    assert_eq(generated.index_of("let app = new_app()"), -1)
+    assert_eq(generated.index_of("http.serve("), -1)
+}
+
+test "static render program selects one page per bounded VM pass" {
+    let dir = "_lumen_ssg_bounded_pages"
+    io.mkdir(dir)
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Home</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/about.lumen",
+        "<template><h1>About</h1></template><script>fn state() \{ return \{\} \}</script>")
+    let render = "/tmp/lumen-ssg-bounded-render.vn"
+    assert_eq(_lumen_emit_static_program(dir, "/tmp/lumen-ssg-bounded-out", "https://example.test", render), 2)
+    let program = io.read_text(render)
+    assert_ne(program.index_of("env.get(\"LUMEN_SSG_PAGE\")"), -1)
+    assert_ne(program.index_of("if _ssg_page == \"0\""), -1)
+    assert_ne(program.index_of("if _ssg_page == \"1\""), -1)
+    assert_eq(io.read_text(render + ".count"), "2")
+}
+
+test "static export refuses to publish guarded route trees" {
+    let dir = "_lumen_ssg_guarded_pages"
+    io.mkdir(dir)
+    io.write_text(dir + "/index.lumen",
+        "<template><h1>Private</h1></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/+guard.vn", "fn guard(req) \{ return null \}")
+    assert_throws(| | {
+        _lumen_emit_static_program(dir, "/tmp/lumen-guarded-out", "https://example.test", "/tmp/lumen-guarded.vn")
+    })
+}
+
+test "route collector inherits nested layout loading and error boundaries" {
+    let dir = "_lumen_router_boundaries"
+    io.mkdir(dir)
+    io.mkdir(dir + "/admin")
+    io.write_text(dir + "/layout.lumen", "<template><main>\{\{ children \}\}</main></template><script>fn state() \{ return \{ children: \"\" \} \}</script>")
+    io.write_text(dir + "/loading.lumen", "<template><p>Loading</p></template><script>fn state() \{ return \{\} \}</script>")
+    io.write_text(dir + "/error.lumen", "<template><p>\{\{ error \}\}</p></template><script>fn state() \{ return \{ error: \"\" \} \}</script>")
+    io.write_text(dir + "/admin/error.lumen", "<template><p>Admin \{\{ error \}\}</p></template><script>fn state() \{ return \{ error: \"\" \} \}</script>")
+    io.write_text(dir + "/admin/index.lumen", "<template><h1>Admin</h1></template><script>fn state() \{ return \{\} \}</script>")
+    let pages = _lumen_collect_pages(dir, "", "", [], [], "", "", "", "")
+    assert_eq(pages.len(), 1)
+    assert_eq(pages[0].route, "/admin")
+    assert_eq(pages[0].layouts[0], "Layout")
+    assert_eq(pages[0].loading, "Loading")
+    assert_eq(pages[0].error, "AdminError")
+    let out = "_lumen_router_boundaries_app.vn"
+    assert_eq(_lumen_build_dir(dir, out, 8100), 1)
+    let generated = io.read_text(out)
+    assert_ne(generated.index_of("lumen_register_component(\"Layout\""), -1)
+    assert_ne(generated.index_of("lumen_register_component(\"Loading\""), -1)
+    assert_ne(generated.index_of("lumen_register_component(\"AdminError\""), -1)
+}
+
+test "nearest error boundary catches loader failures inside layouts" {
+    let page = lumen_component(
+        | | { return {} },
+        |state| { return "<p>never</p>" },
+        ["load"],
+        [|req| { throw("loader exploded") }]
+    )
+    let boundary = lumen_component(
+        | | { return { error: "", status: 0 } },
+        |state| { return "<section>caught " + state.error + "</section>" },
+        [], []
+    )
+    let layout = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<main>" + state.children + "</main>" },
+        [], []
+    )
+    lumen_register_component("BoundaryUniqueError", boundary)
+    lumen_register_component("BoundaryUniqueLayout", layout)
+    let app = new_app()
+    lumen_mount(app, "/boundary-unique", page)
+    let response = app.handle(http.test_request("GET", "/boundary-unique", ""))
+    assert_eq(response.status, 500)
+    assert_ne(response.body.index_of("<main>"), -1)
+    assert_ne(response.body.index_of("caught"), -1)
+    assert_ne(response.body.index_of("loader exploded"), -1)
+}
+
+test "nested layout loaders aggregate data and dependency keys in order" {
+    let outer = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<outer>" + state.children + "</outer>" },
+        ["load"],
+        [|req| { return lumen_load({ shared: "outer", tenant: "acme" }, ["tenant:acme", "shared"]) }]
+    )
+    let inner = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<inner>" + state.children + "</inner>" },
+        ["load"],
+        [|req| {
+            let parent = lumen_parent_data(req)
+            return lumen_load({ shared: "inner", inherited: parent.tenant }, ["shared", "project:7"])
+        }]
+    )
+    let page = lumen_component(
+        | | { return { shared: "initial", tenant: "", inherited: "", seen: "" } },
+        |state| { return "<p>" + state.shared + ":" + state.inherited + ":" + state.seen + "</p>" },
+        ["load"],
+        [|req| {
+            let parent = lumen_parent_data(req)
+            let deps = lumen_load_dependencies(req)
+            return lumen_load({ shared: "page", seen: parent.shared + "/" + deps.join("|") }, ["page:1"])
+        }]
+    )
+    lumen_register_component("LoaderUniqueLayout", outer)
+    lumen_register_component("LoaderUniqueChildLayout", inner)
+    let rendered = _lumen_render_route(page, (page.state_fn)(), "/loader-unique/child", http.test_request("GET", "/loader-unique/child", ""))
+    assert_eq(rendered.state.shared, "page")
+    assert_eq(rendered.state.inherited, "acme")
+    assert_eq(rendered.state.seen, "inner/tenant:acme|shared|project:7")
+    assert_eq(rendered.dependencies.len(), 4)
+    assert_eq(rendered.dependencies[0], "tenant:acme")
+    assert_eq(rendered.dependencies[1], "shared")
+    assert_eq(rendered.dependencies[2], "project:7")
+    assert_eq(rendered.dependencies[3], "page:1")
+    assert_ne(rendered.html.index_of("<outer><inner><p>page:acme:"), -1)
+}
+
+test "loader contracts reject ambiguous data and invalid dependencies" {
+    assert_throws(| | { lumen_load({}, [""]) })
+    assert_throws(| | { lumen_load({}, "not-an-array") })
+    assert_throws(| | { _lumen_loader_result("not-a-struct") })
+}
+
+test "stream chunks preserve ordered lazy server work without client JS" {
+    let suffix = "later"
+    let chunks = _lumen_validate_stream_chunks(["<h1>now</h1>", | | { return "<p>" + suffix + "</p>" }])
+    assert_eq(chunks.len(), 2)
+    assert_eq(chunks[0], "<h1>now</h1>")
+    assert_eq(chunks[1](), "<p>later</p>")
+    assert_throws(| | { _lumen_validate_stream_chunks("not-an-array") })
+    assert_throws(| | { _lumen_validate_stream_chunks([42]) })
+}
+
+test "deferred boundaries validate fallback resolver contracts" {
+    let boundary = lumen_defer("sales.summary", "<p>Loading</p>", | | { return "<p>Ready</p>" }, "<p>Failed</p>")
+    let chunks = _lumen_validate_stream_chunks(["<main>", boundary, "</main>"])
+    assert_eq(chunks.len(), 3)
+    assert_eq(boundary.id, "sales.summary")
+    assert_eq((boundary.resolve)(), "<p>Ready</p>")
+    assert_throws(| | { lumen_defer("bad id", "", | | { return "" }, null) })
+    assert_throws(| | { lumen_defer("ok", 42, | | { return "" }, null) })
+    assert_throws(| | { lumen_defer("ok", "", "not-callable", null) })
+    assert_eq(_lumen_stream_document_tail_index("<p>x</p></body></html>"), 8)
+    assert_eq(_lumen_stream_document_tail_index("<p>x</p>"), -1)
+}
+
+test "layout redirects short circuit child loading and rendering" {
+    let child_calls = [0]
+    let layout = lumen_component(
+        | | { return { children: "" } },
+        |state| { return "<main>" + state.children + "</main>" },
+        ["load"],
+        [|req| { return lumen_redirect("/sign-in?next=%2Fprivate-unique", 303) }]
+    )
+    let page = lumen_component(
+        | | { return {} },
+        |state| { child_calls[0] = child_calls[0] + 100; return "<p>private</p>" },
+        ["load"],
+        [|req| { child_calls[0] = child_calls[0] + 1; return {} }]
+    )
+    lumen_register_component("PrivateUniqueLayout", layout)
+    let app = new_app()
+    lumen_mount(app, "/private-unique", page)
+    let response = app.handle(http.test_request("GET", "/private-unique", ""))
+    assert_eq(response.status, 303)
+    assert_eq(response.body, "")
+    assert_eq(_validate.get_field(response.headers, "Location"), "/sign-in?next=%2Fprivate-unique")
+    assert_eq(child_calls[0], 0)
+    assert_throws(| | { lumen_redirect("/bad\nheader", 302) })
+    assert_throws(| | { lumen_redirect("/bad-status", 304) })
 }

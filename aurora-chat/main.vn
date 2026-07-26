@@ -1,0 +1,44 @@
+// Aurora Chat Shop — main.vn entry point.
+// Second Aurora example: an AI shopping assistant (text to buy) over a full store.
+// Run: vn run build_pages.vn && vn run main.vn   (from inside aurora-chat/, using ../vn)
+
+use "lib/app_config.vn"
+use "lib/app_db.vn"
+use "lib/app_middleware.vn"
+use "lib/app_misc.vn"
+use "lib/app_products.vn"
+use "lib/app_cart.vn"
+use "lib/app_chat.vn"
+use "lib/app_orders.vn"
+use "lib/app_auth.vn"
+use "lib/pages.vn"
+use ".gen/pages.vn"
+
+let c = cfg()
+let conn = db_init(c.db_path)
+run_migrations(conn)
+
+let app = new_app()
+app.title = "Aurora Chat Shop"
+
+let bus = app_bus()
+
+install_middleware(app, c)
+register_product_api(app, conn, c)
+register_cart_api(app, conn, c)
+register_chat_api(app, conn, c)
+register_order_api(app, conn, c, bus)
+register_auth(app, conn, c)
+mount_pages(app, conn, c)
+
+app.enable_docs("/docs")
+app.serve_static("/public", "public")
+app.on_error(|err, req| {
+    return http.create_struct(
+        ["status", "body", "content_type"],
+        [500, "<!DOCTYPE html><html><body><h1>Server Error</h1></body></html>", "text/html"]
+    )
+})
+
+print("Aurora Chat Shop on http://localhost:" + c.port)
+app.listen(c.port)

@@ -49,7 +49,7 @@
             }
 
             <span class="token-comment">// Lambda closures</span>
-            <span class="token-keyword">let</span> double <span class="token-keyword">=</span> |x| { <span class="token-keyword">return</span> x <span class="token-operator">*</span> <span class="token-number">2</span> }
+            <span class="token-keyword">let</span> double <span class="token-keyword">=</span> |x| &#123; <span class="token-keyword">return</span> x <span class="token-operator">*</span> <span class="token-number">2</span> &#125;
             <span class="token-function">print</span>(<span class="token-function">double</span>(<span class="token-number">21</span>))
 
             @<span class="token-function">cache</span>

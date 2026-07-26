@@ -60,5 +60,5 @@ test "lumen_mount registers page and live routes" {
     assert_eq(page_resp.status, 200)
     assert_eq(page_resp.content_type, "text/html")
     let live_resp = app.handle(http.test_request("GET", "/test/live", ""))
-    assert_eq(live_resp.status, 400)
+    assert_eq(live_resp.status, 403)
 }

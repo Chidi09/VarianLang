@@ -1,0 +1,438 @@
+// main.vn — Entry point for Zenith backend.
+// Serves API endpoints, initializes database, spawns crawler tasks, and mounts Lumen frontend pages.
+
+use "lib/config.vn"
+use "lib/db.vn"
+use "lib/scraper_worker.vn"
+use ".gen/pages.vn"
+use "lib/app_pages.vn"
+
+// Helper function to return JSON response
+fn json_res(data, status) {
+    return Response {
+        status: status,
+        body: json_encode(data),
+        content_type: "application/json"
+    }
+}
+
+fn err_res(msg, status) {
+    return json_res(http.create_struct(["error"], [msg]), status)
+}
+
+// Initialize configuration and database
+let cfg = get_config()
+let conn = db_connect(cfg.db_path)
+
+let app = new_app()
+app.title = "Aurora Web Scraper & Analyzer"
+
+// Auth Middleware Guard
+app.add_middleware(|req, next| {
+    let path = req.path
+    let needs_auth = false
+    if path.starts_with("/api") { needs_auth = true }
+    if path == "/dashboard" or path == "/library" or path == "/datasets" or path == "/workflow" or path == "/settings" or path == "/ai" { needs_auth = true }
+
+    // Whitelist specific paths
+    if path == "/api/health" or path == "/api/webhooks" or path.starts_with("/auth/") or path == "/login" or path == "/register" or path == "/" { needs_auth = false }
+
+    if needs_auth {
+        let session = session_get(req, cfg.session_secret)
+        let valid = false
+        if session != null {
+            let uid = _validate.get_field(session, "user_id")
+            if uid == null { uid = _validate.get_field(session, "uid") }
+            if uid != null { valid = true }
+        }
+
+        if !valid {
+            if path.starts_with("/api") {
+                return err_res("Unauthorized", 401)
+            } else {
+                return Response { status: 302, body: "", content_type: "text/plain", headers: http.create_struct(["Location"], ["/login"]) }
+            }
+        }
+    }
+    return next(req)
+})
+
+app.post("/auth/register", |req| {
+    let body = null
+    try { body = json_decode(req.body) } catch e { return err_res("Invalid JSON body", 400) }
+
+    let email = _validate.get_field(body, "email")
+    let pass  = _validate.get_field(body, "password")
+    let name  = _validate.get_field(body, "name")
+    if email == null or pass == null or name == null { return err_res("Missing fields", 400) }
+
+    let existing = sqlite.query(conn, "SELECT id FROM users WHERE email = ?", [email])
+    if existing.len() > 0 { return err_res("Email already registered", 409) }
+
+    let hashed = auth.hash_password(pass)
+    sqlite.query(conn, "INSERT INTO users (email, pass_hash, name) VALUES (?,?,?)", [email, hashed, name])
+    let uid_rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+    let uid = uid_rows[0].id
+
+    let session_data = http.create_struct(["uid", "email", "name"], [uid, email, name])
+    let resp = json_res(http.create_struct(["ok"], [true]), 201)
+    return session_set(resp, session_data, cfg.session_secret, null)
+}, "Register new user", null)
+
+app.post("/auth/login", |req| {
+    let body = null
+    try { body = json_decode(req.body) } catch e { return err_res("Invalid JSON body", 400) }
+
+    let email = _validate.get_field(body, "email")
+    let pass  = _validate.get_field(body, "password")
+    if email == null or pass == null { return err_res("Email and password required", 400) }
+
+    let rows = sqlite.query(conn, "SELECT * FROM users WHERE email = ?", [email])
+    if rows.len() == 0 { return err_res("Invalid credentials", 401) }
+    if !auth.verify_password(pass, rows[0].pass_hash) { return err_res("Invalid credentials", 401) }
+
+    let u = rows[0]
+    let session_data = http.create_struct(["uid", "email", "name"], [u.id, email, u.name])
+    let resp = json_res(http.create_struct(["ok"], [true]), 200)
+    return session_set(resp, session_data, cfg.session_secret, null)
+}, "Authenticate user", null)
+
+app.get("/logout", |req| {
+    let resp = redirect("/login")
+    return session_clear(resp)
+}, "Logout user", null)
+
+// 1. Healthcheck Route
+app.get("/api/health", |req| {
+    return json_res(http.create_struct(["ok"], [true]), 200)
+}, "Health check endpoint", null)
+
+// 2. Launch Scraper Job
+app.post("/api/jobs", |req| {
+    let body = null
+    try {
+        body = json_decode(req.body)
+    } catch e {
+        return err_res("Invalid JSON body", 400)
+    }
+
+    let target_url = _validate.get_field(body, "target_url")
+    let depth_val = _validate.get_field(body, "depth")
+    let scraper_id = _validate.get_field(body, "scraper_id")
+    let custom_prompt = _validate.get_field(body, "prompt")
+
+    if target_url == null or target_url == "" {
+        return err_res("Target URL is required", 400)
+    }
+
+    let depth = 1
+    if depth_val != null {
+        depth = depth_val
+    }
+
+    let prompt = "Extract key details"
+    if scraper_id != null {
+        let rows = sqlite.query(conn, "SELECT prompt FROM scrapers WHERE id = ?", [scraper_id])
+        if rows.len() > 0 {
+            prompt = rows[0].prompt
+        }
+    } else if custom_prompt != null and custom_prompt != "" {
+        prompt = custom_prompt
+    }
+
+    // Create job record
+    sqlite.query(conn, "INSERT INTO jobs (scraper_id, target_url, depth, status) VALUES (?, ?, ?, 'pending')", [scraper_id, target_url, depth])
+    let job_rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+    if job_rows.len() == 0 {
+        return err_res("Failed to create job", 500)
+    }
+    let job_id = job_rows[0].id
+
+    // Spawn async green thread to execute crawl
+    let gemini_key = cfg.gemini_key
+    task.spawn(start_scraper_job, [conn, job_id, prompt, target_url, depth, gemini_key])
+
+    return json_res(http.create_struct(["job_id", "status"], [job_id, "running"]), 202)
+}, "Create and execute scraper job", null)
+
+// 3. Get Job Status
+app.get("/api/jobs/:id", |req| {
+    let id = _validate.get_field(req.params, "id")
+    let rows = sqlite.query(conn, "SELECT * FROM jobs WHERE id = ?", [id])
+    if rows.len() == 0 {
+        return err_res("Job not found", 404)
+    }
+    let job = rows[0]
+
+    // Fetch scraped pages under this job
+    let page_rows = sqlite.query(conn, "SELECT * FROM datasets WHERE job_id = ?", [id])
+    let pages = []
+    for i in 0..page_rows.len() {
+        let p = page_rows[i]
+        pages = pages.push(http.create_struct(
+            ["url", "title", "status", "extracted_json"],
+            [p.url, p.title, p.status, p.extracted_json]
+        ))
+    }
+
+    return json_res(http.create_struct(
+        ["id", "target_url", "depth", "status", "progress", "started_at", "finished_at", "pages"],
+        [job.id, job.target_url, job.depth, job.status, job.progress, job.started_at, job.finished_at, pages]
+    ), 200)
+}, "Fetch details and status of job", null)
+
+// Cancel Job
+app.delete("/api/jobs/:id", |req| {
+    let id = _validate.get_field(req.params, "id")
+    sqlite.query(conn, "UPDATE jobs SET status = 'failed' WHERE id = ? AND status IN ('pending', 'running')", [id])
+    return json_res(http.create_struct(["ok"], [true]), 200)
+}, "Cancel a pending or running job", null)
+
+// Retry Job
+app.post("/api/jobs/:id/retry", |req| {
+    let id = _validate.get_field(req.params, "id")
+    let rows = sqlite.query(conn, "SELECT * FROM jobs WHERE id = ?", [id])
+    if rows.len() == 0 { return err_res("Job not found", 404) }
+    let job = rows[0]
+
+    // Create new job with same parameters
+    let prompt = "Extract key details"
+    if job.scraper_id != null {
+        let sc_rows = sqlite.query(conn, "SELECT prompt FROM scrapers WHERE id = ?", [job.scraper_id])
+        if sc_rows.len() > 0 { prompt = sc_rows[0].prompt }
+    }
+
+    sqlite.query(conn, "INSERT INTO jobs (scraper_id, target_url, depth, status) VALUES (?, ?, ?, 'pending')", [job.scraper_id, job.target_url, job.depth])
+    let job_rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+    let new_job_id = job_rows[0].id
+
+    task.spawn(start_scraper_job, [conn, new_job_id, prompt, job.target_url, job.depth, cfg.gemini_key])
+
+    return json_res(http.create_struct(["job_id", "status"], [new_job_id, "running"]), 202)
+}, "Retry a failed or completed job", null)
+
+// 4. Save Scraper Configuration
+app.post("/api/scrapers", |req| {
+    let body = null
+    try {
+        body = json_decode(req.body)
+    } catch e {
+        return err_res("Invalid JSON body", 400)
+    }
+
+    let name = _validate.get_field(body, "name")
+    let prompt = _validate.get_field(body, "prompt")
+
+    if name == null or name == "" or prompt == null or prompt == "" {
+        return err_res("Name and Prompt are required", 400)
+    }
+
+    sqlite.query(conn, "INSERT INTO scrapers (name, prompt) VALUES (?, ?)", [name, prompt])
+    let scraper_rows = sqlite.query(conn, "SELECT last_insert_rowid() AS id")
+    if scraper_rows.len() == 0 {
+        return err_res("Failed to save scraper", 500)
+    }
+
+    return json_res(http.create_struct(["id", "name"], [scraper_rows[0].id, name]), 201)
+}, "Save scraper configuration prompt", null)
+
+app.delete("/api/scrapers/:id", |req| {
+    let id = _validate.get_field(req.params, "id")
+    let rows = sqlite.query(conn, "SELECT COUNT(*) as c FROM jobs WHERE scraper_id = ? AND status IN ('running', 'pending')", [id])
+    if rows.len() > 0 and rows[0].c > 0 {
+        return err_res("Cannot delete agent with active jobs", 400)
+    }
+    sqlite.query(conn, "DELETE FROM scrapers WHERE id = ?", [id])
+    return json_res(http.create_struct(["ok"], [true]), 200)
+}, "Delete a configured scraper agent", null)
+
+// Settings Management
+app.put("/api/settings", |req| {
+    let body = null
+    try { body = json_decode(req.body) } catch e { return err_res("Invalid JSON body", 400) }
+
+    let keys = _validate.get_keys(body)
+    for i in 0..keys.len() {
+        let k = keys[i]
+        let v = _validate.get_field(body, k)
+        sqlite.query(conn, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated = datetime('now')", [k, ""+v])
+    }
+    return json_res(http.create_struct(["ok"], [true]), 200)
+}, "Update global configuration settings", null)
+
+// 5. Create API Key
+app.post("/api/keys", |req| {
+    let body = null
+    try {
+        body = json_decode(req.body)
+    } catch e {
+        return err_res("Invalid JSON body", 400)
+    }
+
+    let name = _validate.get_field(body, "name")
+    if name == null or name == "" {
+        return err_res("Key name is required", 400)
+    }
+
+    // Generate dummy token
+    let token = "aur_key_" + auth.generate_token()
+    sqlite.query(conn, "INSERT INTO api_keys (name, token) VALUES (?, ?)", [name, token])
+
+    return json_res(http.create_struct(["token"], [token]), 201)
+}, "Generate new API Key", null)
+
+// 6. Save Webhook
+app.post("/api/webhooks", |req| {
+    let body = null
+    try { body = json_decode(req.body) } catch e { return err_res("Invalid JSON body", 400) }
+
+    let name = _validate.get_field(body, "name")
+    let url = _validate.get_field(body, "url")
+    let events = _validate.get_field(body, "events")
+
+    if name == null or name == "" or url == null or url == "" { return err_res("Webhook Name and URL are required", 400) }
+
+    sqlite.query(conn, "INSERT INTO webhooks (name, url, events) VALUES (?, ?, ?)", [name, url, events])
+    return json_res(http.create_struct(["ok"], [true]), 201)
+}, "Register new Webhook endpoint", null)
+
+// Workflows API
+app.get("/api/workflows", |req| {
+    let rows = sqlite.query(conn, "SELECT * FROM workflows ORDER BY id DESC")
+    let w_list = []
+    for i in 0..rows.len() {
+        let w = rows[i]
+        w_list = w_list.push(http.create_struct(
+            ["id", "name", "definition", "schedule", "last_run", "created"],
+            [w.id, w.name, w.definition, w.schedule, w.last_run, w.created]
+        ))
+    }
+    return json_res(http.create_struct(["workflows"], [w_list]), 200)
+}, "List workflows", null)
+
+app.post("/api/workflows", |req| {
+    let body = null
+    try { body = json_decode(req.body) } catch e { return err_res("Invalid JSON body", 400) }
+
+    let name = _validate.get_field(body, "name")
+    let definition = _validate.get_field(body, "definition")
+    let schedule = _validate.get_field(body, "schedule")
+    if name == null or definition == null { return err_res("Name and definition required", 400) }
+
+    sqlite.query(conn, "INSERT INTO workflows (name, definition, schedule) VALUES (?, ?, ?)", [name, json_encode(definition), schedule])
+    return json_res(http.create_struct(["ok"], [true]), 201)
+}, "Save a workflow draft", null)
+
+// 7. Synthetic AI Chat Endpoint
+app.post("/api/ai/query", |req| {
+    let body = null
+    try {
+        body = json_decode(req.body)
+    } catch e {
+        return err_res("Invalid JSON body", 400)
+    }
+
+    let user_message = _validate.get_field(body, "message")
+    if user_message == null or user_message == "" {
+        return err_res("Message is required", 400)
+    }
+
+    // Initialize Gemini Client
+    let gemini_key = cfg.gemini_key
+    if gemini_key == null or gemini_key == "" {
+        return err_res("Gemini API key is not configured on the server", 500)
+    }
+
+    let ai = ai_client(http.create_struct(
+        ["provider", "api_key", "model"],
+        ["gemini", gemini_key, "gemini-2.5-flash"]
+    ))
+
+    // Fetch last 20 extracted datasets to provide as context
+    let data_rows = sqlite.query(conn, "SELECT url, title, extracted_json FROM datasets WHERE extracted_json != '{}' ORDER BY id DESC LIMIT 20")
+    let context_lines = []
+    for i in 0..data_rows.len() {
+        let d = data_rows[i]
+        context_lines = context_lines.push("URL: " + d.url + " | Title: " + d.title + " | Extracted Data: " + d.extracted_json)
+    }
+    let context = _join_strings(context_lines, "\n")
+
+    let system_prompt = "You are an intelligence assistant. Answer the user's questions about the scraped datasets. Here is the dataset context:\n" + context
+
+    let conv = ai_conversation(system_prompt)
+    conv.add("user", user_message)
+
+    try {
+        let resp = ai.chat(conv, null)
+        if resp != null and resp.message != null {
+            return json_res(http.create_struct(["response"], [resp.message.content]), 200)
+        }
+    } catch e {
+        return err_res("AI Chat error: " + e, 500)
+    }
+
+    return err_res("No response from AI", 500)
+}, "Chat query over datasets", null)
+
+fn _join_strings(arr, sep) {
+    let res = ""
+    for i in 0..arr.len() {
+        if i > 0 { res = res + sep }
+        res = res + arr[i]
+    }
+    return res
+}
+
+// Enable API Swagger Docs & Mount Pages
+app.enable_docs("/docs")
+app.serve_static("/public", "public")
+
+app.get("/manifest.json", |req| {
+    let text = io.read_text("public/manifest.json")
+    if text != null {
+        return Response { status: 200, body: text, content_type: "application/json" }
+    }
+    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+}, "Manifest", null)
+
+app.get("/favicon.ico", |req| {
+    let bytes = io.read_bytes("public/favicon.ico")
+    if bytes != null {
+        return Response { status: 200, body: bytes, content_type: "image/x-icon" }
+    }
+    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+}, "Favicon", null)
+
+app.get("/favicon-16x16.png", |req| {
+    let bytes = io.read_bytes("public/favicon-16x16.png")
+    if bytes != null {
+        return Response { status: 200, body: bytes, content_type: "image/png" }
+    }
+    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+}, "Favicon 16", null)
+
+app.get("/favicon-32x32.png", |req| {
+    let bytes = io.read_bytes("public/favicon-32x32.png")
+    if bytes != null {
+        return Response { status: 200, body: bytes, content_type: "image/png" }
+    }
+    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+}, "Favicon 32", null)
+
+app.get("/apple-touch-icon.png", |req| {
+    let bytes = io.read_bytes("public/apple-touch-icon.png")
+    if bytes != null {
+        return Response { status: 200, body: bytes, content_type: "image/png" }
+    }
+    return Response { status: 404, body: "Not Found", content_type: "text/plain" }
+}, "Apple Touch", null)
+mount_app_pages(app, conn, cfg)
+
+print("\x1b[38;2;0;219;233m    _                             \x1b[0m")
+print("\x1b[38;2;0;180;240m   / \\  _   _ _ __ ___  _ __ __ _ \x1b[0m")
+print("\x1b[38;2;50;100;250m  / _ \\| | | | '__/ _ \\| '__/ _` |\x1b[0m")
+print("\x1b[38;2;100;50;230m / ___ \\ |_| | | | (_) | | | (_| |\x1b[0m")
+print("\x1b[38;2;119;1;208m/_/   \\_\\__,_|_|  \\___/|_|  \\__,_|\x1b[0m")
+print("\x1b[38;2;80;0;150m==================================\x1b[0m")
+print("Aurora Scraper on http://localhost:" + cfg.port)
+app.listen(cfg.port)

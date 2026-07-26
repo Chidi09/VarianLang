@@ -40,7 +40,7 @@ else
 endif
 
 CFLAGS = -Wall -Wextra -std=gnu11 -g -Iinclude -D_POSIX_C_SOURCE=200809L
-LDFLAGS = -lm -lcurl -lcrypto -lssl -lpthread
+LDFLAGS = -lm -lcurl -lcrypto -lssl -lpthread -lz
 
 ifeq ($(PLATFORM),Linux)
     CFLAGS  += -I/usr/include/x86_64-linux-gnu
@@ -219,8 +219,24 @@ $(LIB_TARGET): $(LIB_OBJS)
 	ar rcs $@ $^
 
 test: $(TARGET)
-	@echo "Running lexer/parser tests..."
-	@./$(TARGET) examples/test.vn 2>&1 || true
+	@echo "Running semantic analysis and regression test suite..."
+	./tests/semantic_test.sh
+	./tests/formatter_test.sh
+	./tests/aot_reachability_test.sh
+	./tests/suspend_analysis_test.sh
+	./tests/ssa_dump_test.sh
+	./tests/ssa_type_inference_test.sh
+	./tests/ssa_escape_analysis_test.sh
+	./tests/ssa_differential_test.sh
+	./tests/mail_builder_test.sh
+	./$(TARGET) run examples/hello.vn
+	./$(TARGET) run examples/generics.vn
+	./$(TARGET) run examples/enums.vn
+	./$(TARGET) run examples/union_type_test.vn
+	./$(TARGET) run examples/named_args_test.vn
+	./$(TARGET) run examples/traits.vn
+	./$(TARGET) run tests/closures_test.vn
+	./$(TARGET) run tests/closure_capture_test.vn
 
 run: $(TARGET)
 	@echo "Varian REPL (type 'exit' to quit)"

@@ -1,6 +1,6 @@
-#ifndef _SYS_WAIT_H_
-#define _SYS_WAIT_H_
+#pragma once
 
+#ifdef _WIN32
 #define WNOHANG 1
 #define WUNTRACED 2
 
@@ -10,5 +10,9 @@
 #define WTERMSIG(s) ((s) & 0x7F)
 #define WIFSTOPPED(s) (((s) & 0xFF) == 0x7F)
 #define WSTOPSIG(s) (((s) >> 8) & 0xFF)
-
+#else
+/* This compatibility header is found first because Varian's include directory
+ * precedes the system paths. Unix builds must use the platform declaration and
+ * status macros, including the real waitpid prototype. */
+#include_next <sys/wait.h>
 #endif

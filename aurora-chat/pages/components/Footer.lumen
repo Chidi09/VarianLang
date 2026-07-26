@@ -1,0 +1,64 @@
+<template>
+<footer class="aurora-footer">
+  <div class="footer-inner">
+    <p class="footer-text">&copy; 2026 Aurora Chat Store. Built with Varian + Lumen.</p>
+    <div class="footer-links">
+      <a href="/catalog" class="footer-link">Catalog</a>
+      <a href="/chat" class="footer-link">Chat</a>
+      <a href="/login" class="footer-link">Account</a>
+    </div>
+  </div>
+</footer>
+</template>
+
+<style scoped>
+.aurora-footer {
+  border-top:1px solid var(--lumen-border);
+  padding:2rem 0;
+  margin-top:4rem;
+}
+.footer-inner {
+  max-width:1040px;
+  margin:0 auto;
+  padding:0 1.25rem;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.footer-text {
+  margin:0;
+  font-size:0.875rem;
+  color:var(--lumen-muted-fg);
+}
+.footer-links {
+  display:flex;
+  gap:1.25rem;
+}
+.footer-link {
+  position:relative;
+  font-size:0.875rem;
+  color:var(--lumen-muted-fg);
+  text-decoration:none;
+  transition:color 0.15s ease;
+}
+.footer-link::after {
+  content:'';
+  position:absolute;
+  bottom:-2px;
+  left:0;
+  width:0;
+  height:1px;
+  background:var(--lumen-fg);
+  transition:width 0.2s ease;
+}
+.footer-link:hover {
+  color:var(--lumen-fg);
+}
+.footer-link:hover::after {
+  width:100%;
+}
+</style>
+
+<script>
+fn state() { return {} }
+</script>
